@@ -1,4 +1,6 @@
-import { bindWirelessForm } from "../web/js/ui/sections/wireless-form.mjs";
+import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
+import { CliScreen } from "../../web/js/ui/cli-screen.mjs";
+import { createConsoleRenderer } from "../../web/js/ui/console.mjs";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {
@@ -27,7 +29,7 @@ const run = async (name, action) => {
 const dashboard = document.querySelector("#dashboard");
 dashboard.style.width = "1000px";
 dashboard.style.height = "800px";
-dashboard.src = "../web/index.html";
+dashboard.src = "../../web/index.html";
 await new Promise((resolve, reject) => {
   dashboard.addEventListener("load", resolve, { once: true });
   dashboard.addEventListener("error", reject, { once: true });
@@ -76,6 +78,8 @@ await run("invalid Bluetooth key stays visible while disconnected", async () => 
 
 await run("Wi-Fi selection and cancellation failure/retry keep accurate state", async () => {
   let cancelAttempts = 0;
+  let completeCancel;
+  let notifications = 0;
   const form = bindWirelessForm({
     scan: async () => [
       { ssid: "First", ssid_hex: "4669727374", secured: false, rssi: -40 },
@@ -84,9 +88,11 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
     test: async () => ({ remaining_seconds: 600, ipv4: "192.0.2.2" }),
     cancelTest: async () => {
       if (++cancelAttempts === 1) throw new Error("temporary failure");
+      if (cancelAttempts === 3) await new Promise(resolve => { completeCancel = resolve; });
     },
     ready: () => true,
     supported: () => true,
+    changed: () => notifications++,
   });
   form.update({ wireless: {
     ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
@@ -134,5 +140,53 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   check(cancelAttempts === 2, "cancellation retry was not attempted");
   check(form.canSave(), "saving remained blocked after cancellation succeeded");
   check(document.activeElement === wifi, "focus was not restored after cancellation retry");
+  wifi.value = "configure";
+  wifi.dispatchEvent(new Event("input", { bubbles: true }));
+  ssid.value = "tested";
+  ssid.dispatchEvent(new Event("input", { bubbles: true }));
+  document.querySelector("#direct-wifi-connect").click();
+  await waitFor(() => form.request()?.use_tested_wifi && !form.operationBusy(), "second test did not finish");
+  wifi.blur();
+  wifi.focus();
+  wifi.value = "0";
+  wifi.dispatchEvent(new Event("input", { bubbles: true }));
+  await waitFor(() => Boolean(completeCancel), "cancellation did not start");
+  form.reset();
+  const before = notifications;
+  completeCancel();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  check(!dialog.open, "obsolete cancellation reopened the dialog");
+  check(notifications === before, "obsolete cancellation changed the dashboard");
   form.dispose();
 });
+
+await run("bounded console scrollback remains correct during cursor edits", async () => {
+  const screen = new CliScreen();
+  screen.write(`${"x".repeat(512)}\r\n`.repeat(999));
+  const terminal = document.createElement("pre");
+  document.body.append(terminal);
+  const render = createConsoleRenderer(terminal, document);
+  const nodes = [...terminal.childNodes];
+  const times = [];
+  try {
+    for (let index = 0; index < 60; index++) {
+      screen.write(`${String.fromCharCode(65 + index % 26)}\b`);
+      const start = performance.now();
+      render(screen);
+      if (index >= 10) times.push(performance.now() - start);
+    }
+    check(terminal.textContent.length === 512488, "bounded scrollback or cursor content changed");
+    check(nodes.every((node, index) => terminal.childNodes[index] === node), "cursor edits replaced terminal nodes");
+    check(nodes[1].textContent === String.fromCharCode(65 + 59 % 26), "cursor text did not update");
+    times.sort((a, b) => a - b);
+    results.dataset.consoleMedianMs = times[Math.floor(times.length / 2)].toFixed(2);
+    results.dataset.consoleP95Ms = times[Math.floor(times.length * 0.95)].toFixed(2);
+    // Measurements are diagnostic, not hardware-independent timing assertions.
+    console.info(`Console render median ${results.dataset.consoleMedianMs}ms, p95 ${results.dataset.consoleP95Ms}ms`);
+    screen.write("\r<svg onload='throw new Error(\"unsafe\")'>");
+    render(screen);
+    check(!terminal.querySelector("svg"), "console output was rendered as HTML");
+  } finally { terminal.remove(); }
+});
+
+results.dataset.complete = "true";

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { readdirSync, readFileSync } from "node:fs";
 
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
-  const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../../web/index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
   assert.match(html, /http-equiv="Content-Security-Policy"/);
   assert.match(html, /name="referrer" content="no-referrer"/);
@@ -22,7 +22,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   assert.match(html, /value="1">High-Speed/);
   assert.match(html, /id="settings-save"[^>]*>Save&amp;Reboot/);
   assert.match(html, /id="settings-reboot"[^>]*>Reboot/);
-  for (const path of ["../web/index.html"]) {
+  for (const path of ["../../web/index.html"]) {
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");
     const settings = dashboard.split('aria-labelledby="settings-title"')[1].split("</section>")[0];
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
@@ -90,10 +90,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   }
 });
 
+
 test("page assets and local modules use stable same-origin URLs without hand-maintained cache versions", () => {
-  const read = path => readFileSync(new URL(`../web/${path}`, import.meta.url), "utf8");
+  const read = path => readFileSync(new URL(`../../web/${path}`, import.meta.url), "utf8");
   const sources = ["index.html", "console.html",
-    ...readdirSync(new URL("../web/js/", import.meta.url), { recursive: true })
+    ...readdirSync(new URL("../../web/js/", import.meta.url), { recursive: true })
       .filter(name => name.endsWith(".mjs")).map(name => `js/${name}`)];
   for (const path of sources) {
     const text = read(path);
@@ -103,3 +104,4 @@ test("page assets and local modules use stable same-origin URLs without hand-mai
     }
   }
 });
+

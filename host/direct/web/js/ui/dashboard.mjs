@@ -10,8 +10,17 @@ import { deriveDashboardViewModel } from "./sections/status-model.mjs";
 import { describe } from "./messages.mjs";
 
 /**
+ * @typedef {{secure: boolean, hid: boolean, ble: boolean, now: () => number,
+ *   clipboard: Pick<Clipboard, "writeText"> | null}} DashboardEnvironment
+ * @typedef {{session: import("../board/session.mjs").BoardSession,
+ *   selectTransport: (kind: "usb" | "ble") => import("../board/session.mjs").BoardSession,
+ *   timers: ReturnType<typeof import("../timers.mjs").createTimerScope>,
+ *   environment: DashboardEnvironment}} DashboardOptions
+ */
+
+/**
  * @brief Wire the dashboard DOM to a board session: subscribe to its domain store, send user intents to it, render.
- * @param environment Injected browser facts: `{secure, hid, ble, now, clipboard}`; the UI never reads globals.
+ * @param {DashboardOptions} options Injected session, timers, intents and browser facts.
  */
 export function mountDashboard({ session, selectTransport, timers, environment }) {
   const element = id => queryElement(`#${id}`);
@@ -46,6 +55,7 @@ export function mountDashboard({ session, selectTransport, timers, environment }
     queueMicrotask(refresh);
   };
   const bluetoothLink = () => client.state.link === "ble";
+  /** @type {ReturnType<typeof bindWirelessForm>} */
   let wirelessForm;
   wirelessForm = bindWirelessForm({
     supported: () => Boolean(client.state.hardware?.capabilities & CAP.WIRELESS),
@@ -93,7 +103,7 @@ export function mountDashboard({ session, selectTransport, timers, environment }
       recovery_message: describe(board.recovery_message), wireless_error: describe(board.wireless_error),
       wireless_poll_error: describe(board.wireless_poll_error) };
     const viewModel = deriveDashboardViewModel(state, view.wireless_form_busy);
-    renderStatus({ ...state, ...viewModel, open_console: consoleLink.open });
+    renderStatus({ ...state, ...viewModel, open_console: consoleLink.open }, viewModel);
     renderControls(state, { eligibility: viewModel.eligibility, formBusy: view.wireless_form_busy,
       settingsMessage: view.settings_message, bleName: client.transport.name, settingsDirty: view.settings_dirty,
       wirelessDirty: wirelessForm.dirty(), wirelessCanSave: wirelessForm.canSave() }, environment);

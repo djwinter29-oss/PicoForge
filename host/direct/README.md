@@ -92,6 +92,8 @@ Uncoded browser errors render as `UNEXPECTED` with the raw message kept as detai
 and phase state stays local to its form controller and never enters domain state. Rendering never triggers device I/O.
 The wireless form owns radio and TCP CLI control availability; dashboard controls own clock, storage, and action buttons.
 Disconnect resets drafts once, without erasing newly reported action errors on subsequent disconnected renders.
+Async form completions are fenced by the captured lifecycle signal, including cancellation and clipboard results.
+The device section reuses the dashboard's render-local presentation snapshot; action-time safety checks remain live.
 Display-only storage retention belongs to each mounted view, not module-global state. The architecture contract test
 checks these boundaries, the opcode table and the connection transitions.
 
@@ -121,6 +123,8 @@ dashboard's board authentication instead of asking for the Control key again; it
 the exact same-origin dashboard popup without putting a pairing secret in the URL. Keep that dashboard connected
 when connecting or reconnecting in the same console tab. Each connection requires a fresh challenge proof from the
 original dashboard, and the console remains bound to the board it was opened for.
+The terminal caches text for unedited rows and reuses three text-only DOM nodes for scrollback and cursor updates.
+It retains the existing 1000-row/512-column limits; retired row caches are garbage-collectable.
 The bridge permits one terminal session and closes it after 15 seconds without a
 request. Run the included server instead of a generic static-file server to enable this feature. See the
 [console guide](../../docs/guides/console.md#direct-dashboard-authentication) for the rationale and security limits.
@@ -202,24 +206,59 @@ even without another board report, and stops the countdown timer. Expired creden
 
 ## Checks
 
+JavaScript module tests mirror paths below `web/js`: for example, `board/commands.mjs` is covered by
+`tests/board/commands.test.mjs`, and `ui/sections/wireless-form.mjs` by
+`tests/ui/sections/wireless-form.test.mjs`. The exceptions are explicit:
+
+- `tests/integration/`: composition-root and cross-layer scenarios.
+- `tests/contracts/`: architecture and test-layout invariants.
+- `tests/web/`: HTML and asset contracts.
+- `tests/browser/`: real Chromium interaction checks and their test-only dependency.
+- `tests/types/`: static-only negative type contracts; never executed by Node.
+- `tests/support/`: shared Direct-only device and view fixtures, not runnable suites.
+- `tests/test_server.py`: the matching test for root-level `server.py`.
+
+The Node runner discovers every nested `*.test.mjs` file without shell-dependent glob expansion. To investigate a
+failure, run its source-matching file directly, or pass a Node test-name filter to the full runner:
+
 ```sh
-node --test host/direct/tests/*.test.mjs
+node --test host/direct/tests/board/commands.test.mjs
+node host/direct/tests/run-tests.mjs --test-name-pattern="timeout"
+```
+
+```sh
+node host/direct/tests/run-tests.mjs
 python3 -m unittest discover -s host/direct/tests -p 'test_*.py'
 npx --yes --package typescript@5.9.3 tsc --project host/direct/web/js/tsconfig.json
 ```
 
 The no-emit JSDoc check covers protocol/state modules, the transport contract and its implementations, timer helpers,
-and selected UI helpers. Explicit board/UI state and pending-operation types reuse the codec output shapes;
-`tests/state-types.mjs` checks that invalid field values and cross-store writes are rejected by the type checker.
+dashboard/form composition, and console rendering. Explicit board/UI state and pending-operation types reuse the
+codec output shapes; `tests/types/state-types.mjs` checks invalid field values, cross-store writes, form callback contracts,
+browser environment facts, and command/configuration intents.
 It is a development check, not a build or a claim that every UI module is fully typed.
 
+For automated Chromium checks, install the test-only pinned dependency and its browser:
+
+```sh
+python3 -m pip install -r host/direct/tests/browser/requirements.txt
+python3 -m playwright install chromium
+python3 host/direct/tests/browser/run.py
+```
+
+The runner starts and stops an ephemeral loopback server, fails on incomplete checks or browser errors, and runs
+in the Ubuntu/Python 3.12 host-validation job. No browser automation dependency is needed by the dashboard itself.
+
 For browser interaction checks from a repository checkout, use a separate test-only static server and open
-`http://127.0.0.1:8000/tests/browser.html` in a supported browser:
+`http://127.0.0.1:8000/tests/browser/index.html` in a supported browser:
 
 ```sh
 python3 -m http.server 8000 --bind 127.0.0.1 --directory host/direct
 ```
 
-The page reports dialog focus and Escape behavior, narrow viewport overflow, invalid-key errors, Wi-Fi network
-selection, and cancellation failure/retry using mocked device operations. This test server does not provide the
-terminal bridge; the normal Direct runner serves only browser assets.
+The page reports dialog focus and Escape behavior, narrow viewport overflow, invalid-key errors, Wi-Fi selection,
+cancellation failure/retry/reset, and bounded terminal rendering using mocked device operations. It reports the
+median and p95 rendering times for cursor edits with 999 full scrollback rows; timing is diagnostic, not a portable
+performance assertion. BLE unit checks cover delayed status reads overlapping commands, explicit GATT write rejection,
+single-flight wireless polling, and late reads after disconnect; they do not qualify real GATT platform behavior.
+This test server does not provide the terminal bridge; the normal Direct runner serves only browser assets.

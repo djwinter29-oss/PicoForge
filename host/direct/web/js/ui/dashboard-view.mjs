@@ -8,9 +8,9 @@ export { renderControls } from "./sections/controls.mjs";
 
 export function createDashboardView() {
   const renderStorage = createStorageSection();
-  return state => {
+  return (state, dashboard) => {
     renderClockOptions(state);
-    renderDevice(state);
+    renderDevice(state, dashboard);
     renderWirelessStatus(state);
     renderStorage(state);
     renderSelfTest(state);

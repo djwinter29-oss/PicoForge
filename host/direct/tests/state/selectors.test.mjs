@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canRun, deriveOperationEligibility } from "../web/js/state/selectors.mjs";
-import { describe } from "../web/js/ui/messages.mjs";
+import { canRun, deriveOperationEligibility } from "../../web/js/state/selectors.mjs";
+import { describe } from "../../web/js/ui/messages.mjs";
 
 const readyState = (changes = {}) => ({
   link: "usb",
@@ -59,6 +59,7 @@ test("operation eligibility is one rule table for storage, settings, wireless an
     true);
 });
 
+
 test("canRun is the one gate and names the first failing precondition per operation", () => {
   const ready = readyState({ hardware: { capabilities: 1 | 2 | 4 | 32 | 128 }, runtime: { led_available: true } });
   for (const operation of ["led", "reboot", "msc", "selfTest", "settings", "wireless"]) {
@@ -84,3 +85,4 @@ test("canRun is the one gate and names the first failing precondition per operat
       `${operation} ${JSON.stringify(changes)}`);
   }
 });
+

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm, formTransition } from "../web/js/ui/sections/wireless-form.mjs";
-import { renderWirelessStatus } from "../web/js/ui/sections/wireless.mjs";
+import { bindWirelessForm, formTransition } from "../../../web/js/ui/sections/wireless-form.mjs";
+import { renderWirelessStatus } from "../../../web/js/ui/sections/wireless.mjs";
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
   const previous = globalThis.document;
@@ -27,6 +27,7 @@ test("keyless Bluetooth reports that a control key is needed; unavailable report
     assert.equal(elements.get("#direct-wifi-state").title, "Read failed");
   } finally { globalThis.document = previous; }
 });
+
 
 test("scan selection retains raw SSID bytes, manual edits drop hex, "
   + "and failed-test cancellation clears staging", async () => {
@@ -87,6 +88,7 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
   } finally { form.reset(); globalThis.document = previous; }
 });
 
+
 test("connected Wi-Fi CLI status links to the console in a new tab", () => {
   const previous = globalThis.document;
   const elements = new Map();
@@ -111,6 +113,7 @@ test("connected Wi-Fi CLI status links to the console in a new tab", () => {
     assert.equal(wifi.children[0].rel, "noopener noreferrer");
   } finally { globalThis.document = previous; }
 });
+
 
 test("TCP switch is saved explicitly and expired test credentials block saving", async context => {
   const previous = globalThis.document;
@@ -224,6 +227,7 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
   }
 });
 
+
 test("one form phase serializes scan, test and cancel, and a reset drops late results", async () => {
   const previous = globalThis.document;
   const elements = new Map();
@@ -290,6 +294,7 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
   } finally { globalThis.document = previous; }
 });
 
+
 test("formTransition serializes one phase and requires reconnect recovery before a retry", () => {
   const step = (form, ...events) => events.reduce((value, type) =>
     formTransition(value, typeof type === "string" ? { type } : type), form);
@@ -304,3 +309,62 @@ test("formTransition serializes one phase and requires reconnect recovery before
   assert.equal(step(failed, "recovered", "cancel", "cleared").phase, "idle");
   assert.equal(step(idle, "test", "reset").phase, "idle", "reset drops any in-flight phase");
 });
+
+
+test("obsolete cancellation and clipboard completions cannot mutate a reset wireless form", async () => {
+  const previous = globalThis.document;
+  const elements = new Map();
+  const el = id => {
+    if (!elements.has(id)) elements.set(id, {
+      value: "", children: [], handlers: {}, open: false, textContent: "",
+      options: ["0", "1", "configure"].map(value => ({ value })),
+      addEventListener(event, callback) { this.handlers[event] = callback; },
+      replaceChildren(...children) { this.children = children; },
+      close() { this.open = false; }, showModal() { this.open = true; },
+    });
+    return elements.get(id);
+  };
+  globalThis.document = { querySelector: selector => el(selector.slice(1)) };
+  try {
+    for (const trigger of ["disable", "button", "escape"]) {
+      for (const outcome of ["resolve", "reject"]) {
+        let resolve, reject, resolveCopy, rejectCopy, notifications = 0;
+        const form = bindWirelessForm({
+          ready: () => true, supported: () => true, changed: () => notifications++,
+          test: async () => ({ ipv4: "192.0.2.2", remaining_seconds: 600 }),
+          cancelTest: () => new Promise((ok, fail) => { resolve = ok; reject = fail; }),
+          clipboard: { writeText: () => new Promise((ok, fail) => { resolveCopy = ok; rejectCopy = fail; }) },
+        });
+        el("direct-settings-wifi").value = "1";
+        el("direct-settings-ble").value = "0";
+        form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
+        el("direct-wifi-ssid").value = "tested";
+        await el("direct-wifi-connect").handlers.click();
+        const copying = el("direct-ble-copy").handlers.click();
+        if (trigger === "disable") {
+          el("direct-settings-wifi").handlers.focus();
+          el("direct-settings-wifi").value = "0";
+          el("direct-settings-wifi").handlers.input();
+        } else if (trigger === "button") el("direct-wifi-cancel").handlers.click();
+        else el("direct-wifi-dialog").handlers.cancel({ preventDefault() {} });
+        form.reset();
+        const afterReset = notifications;
+        // A newer lifecycle may already have opened its own dialog.
+        el("direct-wifi-dialog").open = trigger !== "disable";
+        el("direct-ble-status").textContent = "new lifecycle";
+        const radio = el("direct-settings-wifi").value;
+        if (outcome === "resolve") { resolve(); resolveCopy(); }
+        else { reject(new Error("old connection failed")); rejectCopy(new Error("old clipboard failure")); }
+        await copying;
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(el("direct-wifi-dialog").open, trigger !== "disable", `${trigger}/${outcome}: dialog`);
+        assert.equal(el("direct-settings-wifi").value, radio, `${trigger}/${outcome}: radio`);
+        assert.equal(notifications, afterReset, `${trigger}/${outcome}: notification`);
+        assert.equal(el("direct-ble-status").textContent, "new lifecycle", `${trigger}/${outcome}: clipboard`);
+        assert.equal(form.operationBusy(), false);
+        form.dispose();
+      }
+    }
+  } finally { globalThis.document = previous; }
+});
+

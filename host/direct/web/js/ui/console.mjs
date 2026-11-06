@@ -9,6 +9,28 @@ import {
 import { createTimerScope } from "../timers.mjs";
 
 /**
+ * @brief Reuse three text-only nodes so cursor edits do not rebuild the entire bounded scrollback DOM.
+ * @param {HTMLElement} terminal
+ * @param {Document} document
+ * @return {(screen: CliScreen) => void}
+ */
+export function createConsoleRenderer(terminal, document) {
+  const beforeText = document.createTextNode("");
+  const cursor = document.createElement("span");
+  const afterText = document.createTextNode("");
+  cursor.className = "terminal-cursor";
+  terminal.replaceChildren(beforeText, cursor, afterText);
+  return screen => {
+    const [before, current, after] = screen.display();
+    if (beforeText.data === before && cursor.textContent === current && afterText.data === after) return;
+    if (beforeText.data !== before) beforeText.data = before;
+    if (cursor.textContent !== current) cursor.textContent = current;
+    if (afterText.data !== after) afterText.data = after;
+    terminal.scrollTop = terminal.scrollHeight;
+  };
+}
+
+/**
  * @brief Mount the console on its page. Browser globals are injected by console-app.mjs, the composition root.
  * @param env Page `document`, `window`, `location` and `fetch`.
  */
@@ -20,6 +42,7 @@ export function mountConsole({ document, window, location, fetch }) {
   const ipv4 = query.get("ipv4") ?? "";
   const encoder = new TextEncoder();
   const timers = createTimerScope();
+  const renderScreen = createConsoleRenderer(terminal, document);
   let screen = new CliScreen();
   let decoder = new TextDecoder();
   let session = null;
@@ -61,15 +84,6 @@ export function mountConsole({ document, window, location, fetch }) {
     }
   }
 
-  function render() {
-    const [before, current, after] = screen.display();
-    const cursor = document.createElement("span");
-    cursor.className = "terminal-cursor";
-    cursor.textContent = current;
-    terminal.replaceChildren(document.createTextNode(before), cursor, document.createTextNode(after));
-    terminal.scrollTop = terminal.scrollHeight;
-  }
-
   /** Show one Connect/Disconnect toggle; the connected state also drives the top-bar light via CSS. */
   function setButton(label, disabled, connected = false) {
     connect.textContent = label;
@@ -103,7 +117,7 @@ export function mountConsole({ document, window, location, fetch }) {
         const text = decoder.decode(bytes, { stream: !result.closed });
         if (text) {
           screen.write(text);
-          render();
+          renderScreen(screen);
         }
         if (result.closed) {
           await close("Connection closed by board; check terminal output before retrying commands");
@@ -218,7 +232,7 @@ export function mountConsole({ document, window, location, fetch }) {
       screen = new CliScreen();
       decoder = new TextDecoder();
       input = "";
-      render();
+      renderScreen(screen);
       status.textContent = "Connected";
       setButton("Disconnect", false, true);
       terminal.setAttribute("aria-readonly", "false");

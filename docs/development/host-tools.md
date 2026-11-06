@@ -116,7 +116,7 @@ They can also be run individually:
 
 ```sh
 python3 -m unittest discover -s host/python/tests -v
-node --test host/direct/tests/*.test.mjs
+node host/direct/tests/run-tests.mjs
 node --test host/web/tests/*.test.mjs
 dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo --filter "Category!=Performance"
 ```

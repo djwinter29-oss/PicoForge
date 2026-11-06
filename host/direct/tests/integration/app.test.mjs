@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { BoardSession } from "../web/js/board/session.mjs";
-import { BleTransport } from "../web/js/transport/ble.mjs";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../web/js/protocol/codec.mjs";
-import { identity, config, selfTest, patchState } from "./support/fixtures.mjs";
+import { webcrypto } from "node:crypto";
+import { BoardSession } from "../../web/js/board/session.mjs";
+import { BleTransport } from "../../web/js/transport/ble.mjs";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../../web/js/protocol/codec.mjs";
+import { identity, config, selfTest, patchState } from "../support/fixtures.mjs";
 
 const memorySessionStorage = () => {
   const saved = new Map();
@@ -58,7 +58,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   };
   BoardSession.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
   try {
-    await import(`../web/js/app.mjs?test=${Date.now()}`);
+    await import(`../../web/js/app.mjs?test=${Date.now()}`);
     await el("#usb-open").click();
     await el("#usb-connect").click();
     assert.equal(el("#settings-storage").value, "1");
@@ -236,6 +236,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   }
 });
 
+
 test("Bluetooth dialog takes the control key, then scans, and preserves transport safety", async () => {
   const saved = {
     document: globalThis.document, window: globalThis.window,
@@ -328,7 +329,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     return Uint8Array.from({ length: 16 }, (_, index) => index);
   };
   try {
-    await import(`../web/js/app.mjs?connections=${Date.now()}`);
+    await import(`../../web/js/app.mjs?connections=${Date.now()}`);
     windowHandlers.get("pageshow")({ persisted: false });
     assert.equal(reloads, 0, "initial page display must not reload");
     el("#usb-open").click(); await null;
@@ -484,3 +485,4 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     }
   }
 });
+

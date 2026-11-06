@@ -15,7 +15,7 @@ export const validSettings = settings => Boolean(settings) && CLOCKS_MHZ.include
 /** @brief Encode save-settings arguments: clock (LE16), SD profile, radios | TCP CLI << 2. */
 export const encodeSettings = (settings, tcpCliEnabled) => [settings.system_clock_mhz & 255,
   settings.system_clock_mhz >> 8, settings.sdcard_profile, (settings.radios ?? 0) | Number(tcpCliEnabled) << 2];
-/** @brief Decode the four save-settings argument bytes produced by encodeSettings. */
+/** @brief Decode the four save-settings argument bytes produced by encodeSettings. @param {ArrayLike<number>} args */
 export const decodeSettings = args => ({ system_clock_mhz: args[0] | args[1] << 8, sdcard_profile: args[2],
   radios: args[3] & 3, tcp_cli_enabled: Boolean(args[3] & 4) });
 const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sdcard_profile === b.sdcard_profile

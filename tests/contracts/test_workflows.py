@@ -281,7 +281,7 @@ def test_release_gates_packages_on_reusable_complete_host_validation():
     assert "tools/validation/setup-ceedling-testing.sh test:all" in host
     assert "tools/validation/test-host.sh" in host
     runner = (ROOT / "tools/validation/test-host.sh").read_text()
-    for suite in ("host/python/tests", "host/direct/tests/*.test.mjs", "host/web/tests/*.test.mjs",
+    for suite in ("host/python/tests", "host/direct/tests/run-tests.mjs", "host/web/tests/*.test.mjs",
                   "host/dotnet/PicoForge.sln"):
         assert suite in runner
 

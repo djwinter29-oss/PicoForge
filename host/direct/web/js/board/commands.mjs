@@ -11,6 +11,11 @@ import { commandBlocked, commandPending } from "../state/selectors.mjs";
 import { withTimeout } from "../timers.mjs";
 
 const PENDING_OPERATION_KEY = "picoforge.direct.pending-operation";
+/**
+ * @typedef {{flags?: number, args?: ArrayLike<number>, signal?: AbortSignal,
+ *   lifecycle?: import("../state/reducer.mjs").WirelessLifecycle,
+ *   commitMask?: number, workflow?: symbol}} CommandOptions
+ */
 const isUid = value => typeof value === "string" && /^[A-F0-9]{16}$/i.test(value);
 const hasExactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -141,8 +146,7 @@ export class Commands {
    * @brief Send one control request and wait for its authoritative result; the outcome stays journalled until known.
    * A successful command whose descriptor `reboots` marks the board as rebooting.
    * @param {number} opcode
-   * @param {{flags?: number, args?: ArrayLike<number>, signal?: AbortSignal, lifecycle?: object,
-   *   commitMask?: number, workflow?: symbol}} [options]
+   * @param {CommandOptions} [options]
    */
   async command(opcode, options = {}) {
     const s = this.session;

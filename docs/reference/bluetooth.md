@@ -356,7 +356,7 @@ force a save, or change USB storage ownership.
 | --- | --- | --- |
 | BT-001 | Startup/auth, indication confirmation/timeout disconnect, reconnect-persistent rate limit, CCCD, snapshots, isolation and timers. | `tests/contracts/test_bluetooth.py` |
 | BT-002 | HMAC-SHA256 BLE and TCP proof vectors, including the worked vector above. | `tests/contracts/test_wireless_auth.py` |
-| BT-003 | Service Changed subscription/fallback, UUID lookup, proof signing and the restricted 9-byte command envelope. | `host/direct/tests/wireless.test.mjs` |
+| BT-003 | Service Changed subscription/fallback, UUID lookup, proof signing and the restricted 9-byte command envelope. | [Direct BLE tests](../../host/direct/tests/transport/ble.test.mjs) |
 
 ## Implementation
 

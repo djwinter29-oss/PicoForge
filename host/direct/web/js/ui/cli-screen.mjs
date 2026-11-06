@@ -1,7 +1,7 @@
 /**
  * @file Direct-owned screen model for the firmware Embedded CLI relayed over the TCP console.
  * The firmware line editor emits only CR, LF, BS, TAB and the CSI finals C/D (cursor), s/u (save/restore),
- * @ (insert blanks) and P (delete); every other escape is consumed and dropped.
+ * `@` (insert blanks) and P (delete); every other escape is consumed and dropped.
  * ponytail: plain-text rows capped at MAX_ROWS x MAX_COLUMNS with no colours or full VT100; adopt a terminal
  * emulator if the firmware starts emitting other terminal protocols.
  */
@@ -22,6 +22,8 @@ const KEY_SEQUENCES = new Map([
 export class CliScreen {
   /** @type {string[][]} retained rows, oldest first */
   #rows = [[]];
+  /** @type {WeakMap<string[], string>} Completed row strings; edits invalidate them, retired keys are reclaimed. */
+  #text = new WeakMap();
   #row = 0;
   #column = 0;
   /** @type {[number, number]} row and column stored by CSI s */
@@ -48,7 +50,10 @@ export class CliScreen {
    */
   display() {
     const line = this.#rows[this.#row];
-    const text = rows => rows.map(row => row.join(""));
+    const text = rows => rows.map(row => {
+      if (!this.#text.has(row)) this.#text.set(row, row.join(""));
+      return this.#text.get(row);
+    });
     const lead = Array.from({ length: this.#column }, (_, index) => line[index] ?? " ").join("");
     return [
       [...text(this.#rows.slice(0, this.#row)), lead].join("\n"),
@@ -76,13 +81,18 @@ export class CliScreen {
     else if (final === "s") this.#saved = [this.#row, this.#column];
     else if (final === "u") [this.#row, this.#column] = this.#saved;
     else if (final === "@") {
+      this.#text.delete(line);
       line.splice(this.#column, 0, ...Array(count).fill(" "));
       line.length = Math.min(line.length, MAX_COLUMNS);
-    } else if (final === "P") line.splice(this.#column, count);
+    } else if (final === "P") {
+      this.#text.delete(line);
+      line.splice(this.#column, count);
+    }
   }
 
   #print(character) {
     const line = this.#rows[this.#row];
+    this.#text.delete(line);
     while (line.length < this.#column) line.push(" ");
     line[this.#column] = character;
     this.#moveTo(this.#column + 1);

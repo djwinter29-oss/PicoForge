@@ -66,6 +66,7 @@ export class BoardSession {
 
   connect(options) { return this.connection.connect(options); }
   disconnect() { return this.connection.disconnect(); }
+  /** @param {number} opcode @param {import("./commands.mjs").CommandOptions} [options] */
   command(opcode, options) { return this.commands.command(opcode, options); }
   expireReports(suspended) { this.polling.expireReports(suspended); }
   readWireless(signal) { return this.polling.readWireless(signal); }
@@ -75,10 +76,20 @@ export class BoardSession {
   setMsc(enable, force) { return this.operations.setMsc(enable, force); }
   setSelfTest(action, sizeMiB) { return this.operations.setSelfTest(action, sizeMiB); }
   saveSettings(settings, force, tcpCliEnabled) { return this.operations.saveSettings(settings, force, tcpCliEnabled); }
+  /** @param {import("./operations.mjs").ConfigurationIntent} intent */
   saveConfiguration(intent) { return this.operations.saveConfiguration(intent); }
   scanWireless(signal) { return this.operations.scanWireless(signal); }
+  /**
+   * @param {import("./operations.mjs").WirelessPair} settings
+   * @param {(progress: import("../state/reducer.mjs").ReasonValue) => void} [onProgress]
+   * @param {AbortSignal} [signal]
+   */
   testWireless(settings, onProgress, signal) { return this.operations.testWireless(settings, onProgress, signal); }
   cancelWireless(signal) { return this.operations.cancelWireless(signal); }
+  /**
+   * @param {import("./operations.mjs").WirelessConfiguration & {board: import("./operations.mjs").BootSettings}} settings
+   * @param {AbortSignal} [signal]
+   */
   saveWireless(settings, signal) { return this.operations.saveWireless(settings, signal); }
   authorizeConsole(nonce, uid) { return this.operations.authorizeConsole(nonce, uid); }
 }

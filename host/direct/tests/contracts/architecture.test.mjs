@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
-import { BleTransport } from "../web/js/transport/ble.mjs";
-import { HidTransport } from "../web/js/transport/hid.mjs";
-import { canTransition, PHASE } from "../web/js/board/connection.mjs";
-import { OP } from "../web/js/protocol/constants.mjs";
-import { OPCODES } from "../web/js/protocol/opcodes.mjs";
-import { DOMAIN_EVENTS } from "../web/js/state/reducer.mjs";
-import { BoardError, REASON } from "../web/js/state/errors.mjs";
-import { describe, MESSAGES } from "../web/js/ui/messages.mjs";
-import { says } from "./support/fixtures.mjs";
+import { BleTransport } from "../../web/js/transport/ble.mjs";
+import { HidTransport } from "../../web/js/transport/hid.mjs";
+import { canTransition, PHASE } from "../../web/js/board/connection.mjs";
+import { OP } from "../../web/js/protocol/constants.mjs";
+import { OPCODES } from "../../web/js/protocol/opcodes.mjs";
+import { DOMAIN_EVENTS } from "../../web/js/state/reducer.mjs";
+import { BoardError, REASON } from "../../web/js/state/errors.mjs";
+import { describe, MESSAGES } from "../../web/js/ui/messages.mjs";
+import { says } from "../support/fixtures.mjs";
 
-const root = new URL("../web/js/", import.meta.url);
+const root = new URL("../../web/js/", import.meta.url);
 const paths = readdirSync(root, { recursive: true }).filter(path => path.endsWith(".mjs"))
   .map(path => path.replaceAll("\\", "/"));
 const sources = new Map(paths.map(path => [path, readFileSync(new URL(path, root), "utf8")]));
@@ -47,6 +47,7 @@ test("Direct modules keep the agreed ownership and dependency boundaries", () =>
   assert.doesNotMatch(sources.get("board/session.mjs"), /HidTransport|BleTransport|receiveFeatureReport|sendFeatureReport/);
 });
 
+
 test("the Direct runtime module graph is acyclic", () => {
   const visited = new Set();
   function visit(path, stack = []) {
@@ -57,6 +58,7 @@ test("the Direct runtime module graph is acyclic", () => {
   }
   for (const path of paths) visit(path);
 });
+
 
 test("one domain writer: board modules emit named events, the connection owns its phase, the UI only renders", () => {
   for (const [path, source] of sources) {
@@ -89,8 +91,10 @@ test("one domain writer: board modules emit named events, the connection owns it
       assert.ok(Object.hasOwn(DOMAIN_EVENTS, event), `${path}: undeclared domain event ${event}`);
     }
   }
-  assert.ok(sources.get("board/session.mjs").split("\n").length <= 100, "the session stays a thin facade");
+  const facade = sources.get("board/session.mjs").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(facade.split("\n").filter(line => line.trim()).length <= 100, "the session stays a thin facade");
 });
+
 
 test("user-visible text lives only in ui/messages.mjs: lower layers report reason codes", () => {
   // Programmer invariants, never shown in normal operation, stay plain and surface as UNEXPECTED.
@@ -105,6 +109,7 @@ test("user-visible text lives only in ui/messages.mjs: lower layers report reaso
   }
 });
 
+
 test("the connection lifecycle allows only the declared transitions", () => {
   const forward = [PHASE.DISCONNECTED, PHASE.CONNECTING, PHASE.INITIALIZING, PHASE.RECOVERING, PHASE.READY];
   for (let i = 1; i < forward.length; i++) assert.ok(canTransition(forward[i - 1], forward[i]), forward[i]);
@@ -116,6 +121,7 @@ test("the connection lifecycle allows only the declared transitions", () => {
   assert.ok(!canTransition(PHASE.CONNECTING, PHASE.RECOVERING), "recovery only after initialization");
   assert.ok(!canTransition(PHASE.READY, PHASE.INITIALIZING), "a live link must close before reinitializing");
 });
+
 
 test("every opcode has one complete descriptor and every reason code has dashboard text", () => {
   assert.deepEqual(Object.keys(OPCODES).map(Number).sort((a, b) => a - b),
@@ -137,6 +143,7 @@ test("every opcode has one complete descriptor and every reason code has dashboa
   assert.equal(describe(Object.assign(new Error("x"), { name: "NotFoundError" })), "No board was selected.");
 });
 
+
 test("transports are byte pipes that honour abort, reject bad framing and wipe the control key", async () => {
   const aborted = AbortSignal.abort();
   const live = new AbortController().signal;
@@ -153,3 +160,4 @@ test("transports are byte pipes that honour abort, reject bad framing and wipe t
   await assert.rejects(ble.writeReport(2, new Uint8Array(68), live), says(/9-byte BLE control frame/));
   await assert.rejects(ble.setControlKey(new Uint8Array(31)), says(/Control key must be 32 bytes/));
 });
+

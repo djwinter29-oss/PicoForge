@@ -19,7 +19,7 @@ function uptimeLabel(milliseconds) {
   return days > 0 ? `${days}d ${hours}h ${minutes}m` : `${hours}h ${minutes}m ${seconds % 60}s`;
 }
 
-export function deriveDeviceViewModel(state) {
+export function deriveDeviceViewModel(state, dashboard = deriveDashboardViewModel(state)) {
   const hardware = state.hardware;
   const runtime = state.runtime;
   const config = state.settings;
@@ -30,7 +30,7 @@ export function deriveDeviceViewModel(state) {
   const signals = spi ? ["CLK", "MOSI", "MISO", "CS"] : ["CLK", "CMD", "DAT0", "DAT1", "DAT2", "DAT3"];
   const pin = value => !config ? "--" : value === 255 || value == null ? "Unassigned" : `GP${value}`;
   return {
-    ...deriveDashboardViewModel(state),
+    ...dashboard,
     active: Boolean(state.connected && runtime),
     error: Boolean(state.error),
     cdcActive: runtime?.cdc_open,
@@ -78,8 +78,8 @@ export function deriveDeviceViewModel(state) {
   };
 }
 
-export function renderDevice(state) {
-  const model = deriveDeviceViewModel(state);
+export function renderDevice(state, dashboard) {
+  const model = deriveDeviceViewModel(state, dashboard);
   setText({ ...model.text, "connection-label": model.connection_label, "status-message": model.status_message });
   queryElement("#connection").dataset.state = model.connection_state;
   const cdc = queryElement("#cdc-state");

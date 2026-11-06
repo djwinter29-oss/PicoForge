@@ -12,6 +12,16 @@ import { encodeSettings, validSettings } from "../protocol/opcodes.mjs";
 import { BoardError, errorValue, REASON } from "../state/errors.mjs";
 import { canRun } from "../state/selectors.mjs";
 
+/**
+ * @typedef {{ssid?: string, ssid_hex?: string, password?: string}} WirelessPair
+ * @typedef {WirelessPair & {wifi_enabled: boolean, ble_enabled: boolean, tcp_cli_enabled?: boolean,
+ *   use_tested_wifi?: boolean, ble_key?: string}} WirelessConfiguration
+ * @typedef {Pick<import("../state/reducer.mjs").BoardSettings, "system_clock_mhz" | "sdcard_profile" | "radios">
+ *   & {tcp_cli_enabled?: boolean}} BootSettings
+ * @typedef {{settings: BootSettings, force: boolean,
+ *   tcpCliEnabled?: boolean, wireless: WirelessConfiguration | null}} ConfigurationIntent
+ */
+
 async function stage(context, opcode, bytes, signal) {
   try { return await context.command(opcode, { args: [bytes.length, ...bytes], signal }); }
   finally { bytes.fill(0); }
@@ -107,7 +117,7 @@ export class Operations {
 
   /**
    * @brief The dashboard's one Save action: boot settings alone, or with staged wireless credentials over USB.
-   * @param intent `{settings, force, tcpCliEnabled, wireless}`; `wireless` is the credential form request, or null.
+   * @param {ConfigurationIntent} intent `wireless` is the credential form request, or null.
    * @return Wireless facts the form should adopt (`saveWireless` result or `{tcp_cli_enabled}`), or null.
    */
   async saveConfiguration({ settings, force, tcpCliEnabled, wireless }) {
@@ -173,6 +183,11 @@ export class Operations {
     });
   }
 
+  /**
+   * @param {WirelessPair} settings
+   * @param {(progress: import("../state/reducer.mjs").ReasonValue) => void} [onProgress]
+   * @param {AbortSignal} [signal]
+   */
   async testWireless(settings, onProgress, signal) {
     return this.runWirelessWorkflow(async context => {
       const previous = await context.read(signal);
@@ -192,6 +207,10 @@ export class Operations {
     });
   }
 
+  /**
+   * @param {WirelessConfiguration & {board: BootSettings}} settings
+   * @param {AbortSignal} [signal]
+   */
   async saveWireless(settings, signal) {
     return this.runWirelessWorkflow(async context => {
       const previous = await context.read(signal);
