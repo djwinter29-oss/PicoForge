@@ -87,7 +87,7 @@ public sealed class DashboardBoardsTests
 
         clock.Advance(TimeSpan.FromSeconds(1));
         boards.Boards();
-        Assert.True(created[0].Disposed);
+        Assert.True(SpinWait.SpinUntil(() => created[0].Disposed, TimeSpan.FromSeconds(2)));
         Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
 
         attached = [new("/hid/new-a", "board-A", "PicoForge")];
@@ -113,7 +113,7 @@ public sealed class DashboardBoardsTests
         attached = [];
         boards.Boards();
 
-        Assert.True(created[0].Disposed);
+        Assert.True(SpinWait.SpinUntil(() => created[0].Disposed, TimeSpan.FromSeconds(2)));
         Assert.Throws<BoardNotFoundException>(() => boards.Snapshot(id));
         attached = [new("/hid/a", "different-board", "PicoForge")];
         Assert.NotEqual(id, boards.Boards().Boards[0].Id);

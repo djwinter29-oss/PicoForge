@@ -6,7 +6,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import BootSettings, ControlResult, SupportedHardwareIdentity, WirelessNetwork
+    from .models import BootSettings, ControlResult, SupportedHardwareIdentity, WirelessNetwork
 
 from .common import (
     CAP_LED, CAP_REBOOT, CAP_SAVE_SETTINGS, CAP_SELF_TEST, CAP_WIRELESS,

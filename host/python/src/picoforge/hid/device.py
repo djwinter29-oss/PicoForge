@@ -6,9 +6,9 @@ from math import ceil
 from functools import wraps
 from threading import Event, RLock
 from time import monotonic, sleep
-from typing import Any, Callable
+from typing import Any, Callable, Concatenate, ParamSpec, TypeVar
 
-from .models import (
+from ..reports.models import (
     BoardConfiguration,
     BootSettings,
     ControlResult,
@@ -71,6 +71,8 @@ PRODUCT_IDS = {0x4011, 0x4012}
 USAGE_PAGE = 0xFF00
 USAGE = 0x0001
 PRODUCT_STRING = "PicoForge"
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 try:
     import hid
@@ -93,10 +95,10 @@ def _path_string(path: Any) -> str:
     return str(path or "")
 
 
-def _parse_report(parser: Callable[..., Any], *args: Any) -> Any:
+def _parse_report(parser: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
     """Classify malformed device replies separately from host-side ValueErrors."""
     try:
-        return parser(*args)
+        return parser(*args, **kwargs)
     except ProtocolError:
         raise
     except ValueError as error:
@@ -150,10 +152,12 @@ class WirelessTestCancelled(RuntimeError):
     """A connection test stopped after this client sent the Wi-Fi cancel command."""
 
 
-def _serialized(method):
+def _serialized(
+    method: Callable[Concatenate[PicoForgeHid, _P], _T],
+) -> Callable[Concatenate[PicoForgeHid, _P], _T]:
     """Keep the result slot and multi-command wireless lifecycles owned by one caller."""
     @wraps(method)
-    def call(self, *args, **kwargs):
+    def call(self: PicoForgeHid, *args: _P.args, **kwargs: _P.kwargs) -> _T:
         with self._control_lock:
             return method(self, *args, **kwargs)
     return call
@@ -425,7 +429,7 @@ class PicoForgeHid:
 
     @_serialized
     def test_wireless(
-        self, ssid: str, password: str = "", *, on_poll: Callable[[], None] | None = None,
+        self, ssid: str | bytes, password: str = "", *, on_poll: Callable[[], None] | None = None,
         on_progress: Callable[[str], None] | None = None, cancel: Event | None = None,
     ) -> WirelessTestResult:
         """Test a temporary network join; firmware retains credentials only in RAM after success."""

@@ -6,7 +6,7 @@ import struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import BoardConfiguration, HardwareIdentity, SupportedHardwareIdentity
+    from .models import BoardConfiguration, HardwareIdentity, SupportedHardwareIdentity
 
 from .common import (
     BOARD_NAMES,

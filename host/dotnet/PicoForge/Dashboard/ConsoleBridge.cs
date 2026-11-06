@@ -14,6 +14,8 @@ internal sealed class ConsoleBridge : IDisposable
     private readonly int port;
     private readonly bool allowLoopbackForTests;
     private Socket? connection;
+    private Socket? opening;
+    private bool closed;
     private string? session;
     // TimeProvider timestamp of the last session request, guarded by gate.
     private long lastRequest;
@@ -43,12 +45,16 @@ internal sealed class ConsoleBridge : IDisposable
         if (!wireless.BleKeyConfigured || signProof is null)
             throw new BoardStateException("USB Control key proof is unavailable");
         const string Busy = "A web console is already connected; disconnect it first";
-        lock (gate)
-            if (connection is not null) throw new BoardStateException(Busy);
-        // Connect and authenticate (up to 6 s) without the gate, so reads, writes and expiry never wait on them.
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         try
         {
+            lock (gate)
+            {
+                if (closed) throw new BoardStateException("Console bridge is shutting down");
+                if (connection is not null || opening is not null) throw new BoardStateException(Busy);
+                opening = socket;
+            }
+            // Neither the 3 s connect nor the 8 s authentication budget holds the session lock.
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             timeout.CancelAfter(TimeSpan.FromSeconds(3));
             await socket.ConnectAsync(new IPEndPoint(address, port), timeout.Token);
@@ -56,6 +62,7 @@ internal sealed class ConsoleBridge : IDisposable
             socket.SendTimeout = 100;
             lock (gate)
             {
+                if (closed) throw new BoardStateException("Console bridge is shutting down");
                 if (connection is not null) throw new BoardStateException(Busy);
                 connection = socket;
                 session = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -64,17 +71,29 @@ internal sealed class ConsoleBridge : IDisposable
                 return session;
             }
         }
-        catch
+        catch (Exception error)
         {
             socket.Dispose();
+            lock (gate)
+                if (closed && error is ObjectDisposedException or SocketException or IOException
+                    or OperationCanceledException or BoardStateException)
+                    throw new BoardStateException("Console bridge is shutting down");
             throw;
+        }
+        finally
+        {
+            lock (gate)
+                if (ReferenceEquals(opening, socket)) opening = null;
         }
     }
 
     private async Task AuthenticateAsync(Socket socket, Func<byte[], byte[], byte[]> signProof,
         CancellationToken cancel)
     {
-        var challenge = await ReadChallengeAsync(socket, cancel);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        var started = time.GetTimestamp();
+        var challenge = await ReadChallengeAsync(socket, timeout.Token);
         var fields = challenge[..^2].Split(' ');
         if (fields.Length != 4 || fields[0] != "PicoForge" || fields[1] != "AUTH" ||
             fields[2].Length != 32 || fields[2].Any(character => !Uri.IsHexDigit(character)) ||
@@ -85,12 +104,15 @@ internal sealed class ConsoleBridge : IDisposable
         byte[] proof = [];
         try
         {
-            cancel.ThrowIfCancellationRequested();
+            timeout.Token.ThrowIfCancellationRequested();
             proof = signProof(nonce, uid);
+            timeout.Token.ThrowIfCancellationRequested();
+            if (time.GetElapsedTime(started) >= TimeSpan.FromSeconds(8))
+                throw new TimeoutException("TCP CLI authentication timed out");
             if (proof.Length != 16) throw new InvalidDataException("The board returned an invalid TCP CLI proof");
             var response = System.Text.Encoding.ASCII.GetBytes(
                 $"AUTH {Convert.ToHexString(proof).ToLowerInvariant()}\r\n");
-            try { await SendAllAsync(socket, response, cancel); }
+            try { await SendAllAsync(socket, response, timeout.Token); }
             finally
             {
                 CryptographicOperations.ZeroMemory(response);
@@ -254,7 +276,14 @@ internal sealed class ConsoleBridge : IDisposable
 
     public void Dispose()
     {
-        lock (gate) CloseConnection();
-        expiry.Dispose();
+        lock (gate)
+        {
+            if (closed) return;
+            closed = true;
+            opening?.Dispose();
+            opening = null;
+            CloseConnection();
+            expiry.Dispose();
+        }
     }
 }

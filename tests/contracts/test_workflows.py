@@ -161,11 +161,21 @@ def test_host_packages_and_publishers_share_validated_artifacts():
     assert 'assert b"PicoForge Dashboard | .NET" in page' in dotnet
     assert 'assert b"PicoForge Console | .NET" in page' in dotnet
     assert 'assert f"App v{version}<".encode() in page' in dotnet
-    assert 'assert version("picoforge") == os.environ["VERSION"]' in packages
-    assert 'web = files("picoforge").joinpath("web")' in packages
-    assert 'assert b"PicoForge Dashboard | Python" in response.data' in packages
-    assert 'assert b"PicoForge Console | Python" in response.data' in packages
-    assert 'assert __version__ == os.environ["VERSION"]' in packages
+    assert 'assert deployed == assets' in dotnet
+    assert 'assert response.read() == content' in dotnet
+    assert '/api/status' in dotnet
+    assert 'assert json.load(response)["connected"] is False' in dotnet
+    assert 'assert error.code == expected' in dotnet
+    check = (ROOT / "tools/validation/check-python-wheel.py").read_text()
+    assert 'version("picoforge") == args.version' in check
+    assert 'web = files("picoforge").joinpath("web")' in check
+    assert "PicoForge Dashboard | Python" in check
+    assert "PicoForge Console | Python" in check
+    assert "picoforge.__version__ == args.version" in check
+    assert 'check-python-wheel.py "$VERSION"' in packages
+    assert "create_app(monitor=" not in packages
+    host = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    assert "python -I tools/validation/check-python-wheel.py 0.0.0.dev0" in host
     for name, artifact, pattern in (
         ("pypi", "release-python", "picoforge-$version-py3-none-any.whl"),
         ("direct", "release-direct", "picoforge-direct-v$version.zip"),

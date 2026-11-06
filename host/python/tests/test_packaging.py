@@ -1,4 +1,6 @@
 import unittest
+import subprocess
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -11,6 +13,24 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 
 class PackagingTests(unittest.TestCase):
+    def test_public_packages_import_independently_without_hardware(self):
+        for module in ("picoforge.reports", "picoforge.dashboard.console",
+                       "picoforge.hid", "picoforge.dashboard.server", "picoforge.reports.models",
+                       "picoforge.hid.models"):
+            with self.subTest(module=module):
+                result = subprocess.run(
+                    [sys.executable, "-c", f"import {module}"], capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_legacy_model_imports_keep_the_same_report_types(self):
+        from picoforge.hid import models as legacy
+        from picoforge.reports import models
+
+        for name in legacy.__all__:
+            with self.subTest(name=name):
+                self.assertIs(getattr(legacy, name), getattr(models, name))
+
     def test_public_apis_live_in_their_domain_packages(self):
         from picoforge.dashboard import console as dashboard_console
         from picoforge.dashboard import monitor as dashboard_monitor
@@ -35,6 +55,20 @@ class PackagingTests(unittest.TestCase):
         for module in ("console", "device", "monitor", "protocol", "web"):
             self.assertFalse((package / f"{module}.py").exists(), module)
         self.assertFalse((package / "reports" / "hid.py").exists())
+
+    @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
+    def test_lock_matches_declared_runtime_dependencies(self):
+        project = tomllib.loads((PROJECT / "pyproject.toml").read_text())["project"]
+        packages = tomllib.loads((PROJECT / "uv.lock").read_text())["package"]
+        locked = next(package for package in packages if package["name"] == project["name"])
+        declared = {requirement.lower() for requirement in project["dependencies"]}
+        self.assertEqual(
+            {requirement["name"] + requirement["specifier"] for requirement in locked["metadata"]["requires-dist"]},
+            declared,
+        )
+        for dependency in declared:
+            name, version = dependency.split("==")
+            self.assertEqual(next(package["version"] for package in packages if package["name"] == name), version)
 
     @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
     def test_package_metadata_includes_repository_license(self):

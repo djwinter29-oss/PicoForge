@@ -189,7 +189,7 @@ public sealed class ProtocolTests
     [Fact]
     public void OpcodesAndFlagBitsMatchFirmware()
     {
-        var usb = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "../../firmware/src/app/usb");
+        var usb = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "../../../firmware/src/app/usb");
         var source = File.ReadAllText(Path.Combine(usb, "usb_hid.h")) +
             File.ReadAllText(Path.Combine(usb, "usb_hid.c"));
         int Define(string name)

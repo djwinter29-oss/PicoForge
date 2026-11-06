@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -8,6 +10,13 @@ from picoforge.cli import _read_status_reports, main
 
 
 class StatusCommandTests(unittest.TestCase):
+    def test_module_entry_point_exposes_the_cli_without_hardware(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "picoforge", "--help"], capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("{status,web,reboot}", result.stdout)
+
     def test_status_keeps_settings_and_board_configuration_output(self):
         configuration = {
             "system_clock_mhz": 200,

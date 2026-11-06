@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 namespace PicoForge.Tests;
 
 /// <summary>
-/// Hot-path timings for the docs' .NET baseline. The ceilings are 10-50x the measured values so the check only fails on
+/// Hot-path timings for the docs' .NET baseline. Generous ceilings ensure the check only fails on
 /// a real regression, not on a slow CI host.
 /// </summary>
 [Trait("Category", "Performance")]
@@ -29,10 +29,14 @@ public sealed class PerformanceTests(ITestOutputHelper output)
             {
                 Msc = new(false, false, false), FilesystemFormat = "fat32"
             },
-            BoardConfiguration: new(200, 1, 0, 0, 1, [2, 3, 4, 5, 255, 255], 0x38, 2, 25, 255));
+            BoardConfiguration: new(200, 1, 0, 0, 1, [2, 3, 4, 5, 255, 255], 0x38, 2, 25, 255),
+            Wireless: new() { WifiEnabled = true, BleEnabled = true, WifiState = WifiState.Connected,
+                BleState = BleState.Advertising, Ssid = "benchmark", SsidHex = "62656e63686d61726b",
+                Ipv4 = "192.0.2.1", TcpCliEnabled = true, TcpCliStarted = true,
+                NetworkConfigured = true, BleKeyConfigured = true });
         using var monitor = new DeviceMonitor();
         monitor.Attach(new ForcedSaveTests.Commands(), status);
-        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var options = DashboardJson.Options;
 
         var snapshotUs = Measure(10_000, () => _ = monitor.Snapshot);
         var serializeUs = Measure(10_000, () => _ = JsonSerializer.SerializeToUtf8Bytes(monitor.Snapshot, options));
@@ -40,11 +44,8 @@ public sealed class PerformanceTests(ITestOutputHelper output)
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.ClearProviders();
-        builder.Services.ConfigureHttpJsonOptions(json => DashboardJson.Configure(json.SerializerOptions));
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
-        await using var app = builder.Build();
-        app.UseApiErrors();
-        app.MapStatusEndpoints();
+        await using var app = await DashboardApplication.BuildAsync(builder);
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         for (var i = 0; i < 100; i++) await client.GetFromJsonAsync<JsonElement>("/api/status?board=board-a");

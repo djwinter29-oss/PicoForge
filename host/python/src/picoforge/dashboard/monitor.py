@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 import logging
 import threading
 import time
-from typing import Any, Callable, Iterator, cast
+from typing import Any, Callable, Generator, ParamSpec, TypeVar, cast
 
 from ..hid.device import PicoForgeHid, WirelessTestCancelled
-from ..hid.models import (
+from ..reports.models import (
     BoardConfiguration,
     BootSettings,
     ControlResult,
@@ -24,7 +24,11 @@ from ..hid.models import (
 )
 from ..reports import ProtocolError
 from .models import (
+    ControlResponse,
     DashboardSnapshot,
+    MscResponse,
+    ResyncResponse,
+    SettingsResponse,
     WirelessSaveResponse,
 )
 
@@ -35,6 +39,8 @@ _IDLE_INPUT_POLL_INTERVAL_SECONDS = 0.5
 _IDLE_WIRELESS_POLL_INTERVAL_SECONDS = 5.0
 _VIEWER_IDLE_TIMEOUT_SECONDS = 5.0
 _BUSY_WAIT_SECONDS = 2.0
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 # Input report kind -> (maximum age before the section is withheld, stale flag); matches .NET.
 _REPORTS = {
     "runtime": (0.750, "telemetry_stale"),
@@ -45,6 +51,10 @@ _REPORTS = {
 
 class CommandOutcomeUncertain(RuntimeError):
     """A control command was delivered but its final outcome was not confirmed."""
+
+
+class BoardConflict(RuntimeError):
+    """An expected board lifecycle conflict; the caller must wait or change board state."""
 
 
 def _empty_snapshot() -> DashboardSnapshot:
@@ -97,6 +107,8 @@ class DeviceMonitor:
         self._lock = threading.RLock()
         self._device_lock = threading.RLock()
         self._active_client: PicoForgeHid | None = None
+        self._close_error: Exception | None = None
+        self._failed_client: PicoForgeHid | None = None
         self._stop = threading.Event()
         self._snapshot = _empty_snapshot()
         self._input_received_at: dict[str, float] = {}
@@ -142,27 +154,44 @@ class DeviceMonitor:
         self._stop.set()
         if self._thread.ident is not None and threading.current_thread() is not self._thread:
             self._thread.join()
+        if self._close_error is not None:
+            raise RuntimeError("HID cleanup failed; restart the dashboard before reconnecting") from self._close_error
+
+    def try_retire(self) -> bool:
+        """Claim idle, resolved command ownership without waiting; prevent subsequent commands from starting."""
+        if not self._device_lock.acquire(blocking=False):
+            return False
+        try:
+            if self._command_outcome_uncertain:
+                return False
+            self._stop.set()
+            return True
+        finally:
+            self._device_lock.release()
 
     def _client(self) -> PicoForgeHid:
         if self._stop.is_set():
-            raise RuntimeError("device monitor is shutting down")
+            raise BoardConflict("device monitor is shutting down")
         if self._active_client is None:
             raise ConnectionError("PicoForge HID is not connected")
         return self._active_client
 
     @contextmanager
-    def _device(self) -> Iterator[None]:
+    def _device(self) -> Generator[None, None, None]:
         """Own the board for one API command, or refuse quickly while a long Wi-Fi operation holds it."""
         # ponytail: a 2 s wait turns a 15 s scan or 35 s test into a quick 409 instead of a hung request; queue
         # commands per board if users need them to run after the operation instead of retrying.
         if not self._device_lock.acquire(timeout=_BUSY_WAIT_SECONDS):
-            raise RuntimeError("Board is busy with another command; retry when it finishes")
+            raise BoardConflict("Board is busy with another command; retry when it finishes")
         try:
+            if self._stop.is_set():
+                raise BoardConflict("device monitor is shutting down")
             yield
         finally:
             self._device_lock.release()
 
-    def _send_control(self, method: Callable[..., Any], *args: object, **kwargs: object) -> Any:
+    def _send_control(self, method: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        """Delegate transaction state to HID; preserve unresolved references across client replacement."""
         if self._command_outcome_uncertain:
             raise RuntimeError("a prior command outcome is uncertain; no further writes are allowed")
         client = self._active_client
@@ -205,7 +234,7 @@ class DeviceMonitor:
             if self._snapshot.get("connected"):
                 self._snapshot["control_result"] = cast(ControlResult, result)
 
-    def set_led(self, on: bool) -> dict[str, Any]:
+    def set_led(self, on: bool) -> ControlResponse:
         with self._device():
             client = self._client()
             hardware = self.snapshot().get("hardware")
@@ -219,7 +248,7 @@ class DeviceMonitor:
                 runtime["led_on"] = on
         return {"control_result": result}
 
-    def set_msc(self, enable: bool, *, force: bool = False) -> dict[str, Any]:
+    def set_msc(self, enable: bool, *, force: bool = False) -> MscResponse:
         if force and enable:
             raise RuntimeError("Force return requires disabling MSC")
         with self._device():
@@ -243,19 +272,19 @@ class DeviceMonitor:
                 self._msc_reconnect_enabled = enable if changing_owner else None
         return {"msc": status, "control_result": result}
 
-    def reboot(self) -> dict[str, Any]:
+    def reboot(self) -> ControlResponse:
         with self._device():
             result = self._send_control(self._client().reboot)
             PicoForgeHid._require_completed(result, "reboot")
             return {"control_result": result}
 
-    def set_self_test(self, action: str, size_mib: int | None = None) -> dict[str, Any]:
+    def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResponse:
         with self._device():
             result = self._send_control(self._client().set_self_test, action, size_mib)
             PicoForgeHid._require_completed(result, "self-test")
             return {"control_result": result}
 
-    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> dict[str, Any]:
+    def set_settings(self, settings: dict[str, object], *, force: bool = False) -> SettingsResponse:
         with self._device():
             snapshot = self.snapshot()
             client = self._client()
@@ -293,7 +322,7 @@ class DeviceMonitor:
         with self._device():
             return self._send_control(self._client().tcp_cli_auth_proof, nonce, uid)
 
-    def resync_command(self) -> dict[str, Any]:
+    def resync_command(self) -> ResyncResponse:
         """Clear uncertainty only when the board reports the exact pending operation as final."""
         with self._device():
             if not self._command_outcome_uncertain:
@@ -518,7 +547,11 @@ class DeviceMonitor:
                                 self._input_received_at = {}
                         try:
                             client.close()
-                        except OSError:
-                            pass
+                        except Exception as error:
+                            _LOGGER.exception("Failed to close HID connection; stopping monitor to prevent overlap")
+                            self._close_error = error
+                            self._failed_client = client
+                            self._stop.set()
+                            self._reset_snapshot(error="HID cleanup failed; restart the dashboard")
                 # Every exit path, including the unsupported-product `continue`, must back off before reopening.
                 self._stop.wait(1.0)

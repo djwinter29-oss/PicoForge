@@ -90,12 +90,17 @@ def main() -> None:
                     errors: list[str] = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.add_init_script(MOCK)
+                    page.route("**/__browser_checks__.mjs", lambda route: route.fulfill(
+                        status=200, content_type="text/javascript", body=CHECKS))
                     response = page.goto(origin)
                     assert response.status == 200
                     assert "script-src 'self'" in response.headers["content-security-policy"]
                     assert name in page.locator(".brand-copy").inner_text()
-                    reports = page.evaluate("async () => { globalThis.sharedBrowserHosted = true;\n"
-                                            + CHECKS + "\nreturn globalThis.sharedBrowserResults; }")
+                    reports = page.evaluate("""async () => {
+                        globalThis.sharedBrowserHosted = true;
+                        await import('/__browser_checks__.mjs');
+                        return globalThis.sharedBrowserResults;
+                    }""")
                     for report in reports:
                         print(f"{name}: {'FAIL' if report['error'] else 'PASS'} {report['name']}"
                               + (f": {report['error']}" if report["error"] else ""))

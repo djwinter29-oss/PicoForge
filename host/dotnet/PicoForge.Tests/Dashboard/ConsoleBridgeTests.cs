@@ -9,6 +9,93 @@ namespace PicoForge.Tests;
 
 public sealed class ConsoleBridgeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ShutdownDuringProofCannotPublishASessionOrHideAProofBug(bool proofBug)
+    {
+        var (listener, port) = Listen();
+        using var proofEntered = new ManualResetEventSlim();
+        using var releaseProof = new ManualResetEventSlim();
+        using var bridge = new ConsoleBridge(null, port, true);
+        Task<string>? opening = null;
+        try
+        {
+            opening = bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) =>
+            {
+                proofEntered.Set();
+                Assert.True(releaseProof.Wait(TimeSpan.FromSeconds(5)));
+                if (proofBug) throw new InvalidOperationException("proof bug");
+                return new byte[16];
+            });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r\n"),
+                SocketFlags.None, timeout.Token);
+            Assert.True(proofEntered.Wait(TimeSpan.FromSeconds(2)));
+            bridge.Dispose();
+            bridge.Dispose();
+            releaseProof.Set();
+            if (proofBug) await Assert.ThrowsAsync<InvalidOperationException>(() => opening);
+            else await Assert.ThrowsAsync<BoardStateException>(() => opening);
+            await Assert.ThrowsAsync<BoardStateException>(() =>
+                bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) => new byte[16]));
+        }
+        finally
+        {
+            releaseProof.Set();
+            listener.Stop();
+            if (opening is not null) await Record.ExceptionAsync(() => opening);
+        }
+    }
+
+    [Fact]
+    public async Task AuthenticationBudgetIncludesSynchronousProofAndDoesNotSendALateResponse()
+    {
+        var (listener, port) = Listen();
+        var time = new ManualTime();
+        using var bridge = new ConsoleBridge(time, port, true);
+        try
+        {
+            var opening = bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) =>
+            {
+                time.Advance(TimeSpan.FromSeconds(9));
+                return new byte[16];
+            });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r\n"),
+                SocketFlags.None, timeout.Token);
+            await Assert.ThrowsAsync<TimeoutException>(() => opening);
+            var buffer = new byte[64];
+            Assert.Equal(0, await peer.ReceiveAsync(buffer, SocketFlags.None, timeout.Token));
+        }
+        finally { listener.Stop(); }
+    }
+
+    [Fact]
+    public async Task PendingOpenReservesTheOnlySessionAndShutdownClosesItsSocket()
+    {
+        var (listener, port) = Listen();
+        using var bridge = new ConsoleBridge(null, port, true);
+        try
+        {
+            var opening = bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) => new byte[16]);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var peer = await listener.AcceptSocketAsync(timeout.Token);
+            await Assert.ThrowsAsync<BoardStateException>(() =>
+                bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) => new byte[16]));
+            bridge.Dispose();
+            await Assert.ThrowsAsync<BoardStateException>(() => opening);
+            try { Assert.Equal(0, await peer.ReceiveAsync(new byte[64], SocketFlags.None, timeout.Token)); }
+            catch (SocketException error) when (error.SocketErrorCode is
+                SocketError.ConnectionReset or SocketError.ConnectionAborted) { }
+        }
+        finally { listener.Stop(); }
+    }
+
     private static WirelessStatusResponse Wireless(string address, bool keyConfigured = true) => new()
     {
         WifiEnabled = true,

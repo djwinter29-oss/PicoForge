@@ -15,6 +15,8 @@ for tool in "$PYTHON" "$NODE" "$DOTNET"; do
 done
 
 printf '%s\n' '=== Python host tests ==='
+"$PYTHON" -m uv lock --check --project "$REPO_ROOT/host/python"
+"$PYTHON" -m pyright --project "$REPO_ROOT/host/python/pyproject.toml"
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/python/tests" -v
 
 printf '%s\n' '=== Direct dashboard tests ==='

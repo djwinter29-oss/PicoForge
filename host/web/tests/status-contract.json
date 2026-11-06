@@ -1,7 +1,7 @@
 {
   "required": [
     "board_configuration", "command_outcome_uncertain", "connected", "error", "hardware", "memory",
-    "reboot_pending", "reconnecting", "runtime", "self_test", "self_test_stale", "settings_supported",
+    "reboot_pending", "reconnecting", "runtime", "self_test", "self_test_stale", "settings_message", "settings_supported",
     "storage_stale", "telemetry_stale", "updated_at", "wireless", "wireless_error", "wireless_phase"
   ],
   "nested": {

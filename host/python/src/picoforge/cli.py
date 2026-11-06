@@ -9,7 +9,7 @@ from math import ceil
 from time import monotonic
 
 from .hid.device import PicoForgeHid
-from .hid.models import MemoryStatus, RuntimeStatus, SelfTestStatus
+from .reports.models import MemoryStatus, RuntimeStatus, SelfTestStatus
 
 _STATUS_REPORT_TIMEOUT_SECONDS = 5.0
 

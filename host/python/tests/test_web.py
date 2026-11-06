@@ -2,6 +2,7 @@ import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from unittest.mock import Mock
 
 from picoforge.dashboard.server import create_app
 from picoforge.dashboard.monitor import CommandOutcomeUncertain
@@ -114,6 +115,81 @@ class FalseyBoards(FakeBoards):
 
 
 class WebTests(unittest.TestCase):
+    def test_shared_malformed_request_contract_precedes_board_lookup(self):
+        cases = json.loads((Path(__file__).resolve().parents[3]
+                            / "tests/fixtures/host-invalid-requests.json").read_text())
+        boards = Mock()
+        client = create_app(boards).test_client()
+        for state in (LookupError("unknown"), ConnectionError("disconnected"), RuntimeError("busy"), None):
+            boards.monitor.side_effect = state
+            for case in cases:
+                with self.subTest(state=state, case=case):
+                    response = client.post(case["route"] + "?board=a", json=case["body"])
+                    self.assertEqual(response.status_code, 400, response.json)
+                    self.assertTrue(response.json["error"])
+                    boards.monitor.assert_not_called()
+
+    def test_invalid_requests_are_rejected_before_board_lookup_in_every_board_state(self):
+        board_settings = {"system_clock_mhz": 0, "sdcard_profile": 0, "radios": 1}
+        cases = [
+            ("/api/settings", {**board_settings, "system_clock_mhz": 1}),
+            ("/api/settings", {**board_settings, "extra": True}),
+            ("/api/self-test", {"action": "start", "size_mib": "huge"}),
+            ("/api/self-test", {"action": "start", "size_mib": True}),
+            ("/api/wireless/test", {"ssid": "Pico", "password": "short"}),
+            ("/api/wireless/test", {"ssid": "x" * 33}),
+            ("/api/wireless/test", {"ssid_hex": "zz"}),
+        ]
+        for state in (LookupError("unknown board"), ConnectionError("disconnected"),
+                      RuntimeError("busy"), None):
+            boards = Mock()
+            boards.monitor.side_effect = state
+            client = create_app(boards).test_client()
+            for path, body in cases:
+                with self.subTest(state=state, path=path, body=body):
+                    response = client.post(path + "?board=a", json=body)
+                    self.assertEqual(response.status_code, 400, response.json)
+                    boards.monitor.assert_not_called()
+
+    def test_resync_uses_the_same_public_wireless_shape_without_mutating_the_monitor_result(self):
+        boards = Mock()
+        wireless = {"wifi_state": "connected", "wifi_state_id": 2, "tcp_cli_auth_required": True,
+                    "age_ms": 1, "error": 0, "ssid_hex": "4100ff"}
+        result = {"uncertain": False, "control_result": None, "wireless": wireless}
+        boards.monitor.return_value.resync_command.return_value = result
+        client = create_app(boards).test_client()
+        response = client.post("/api/control/resync?board=a", json={"confirm": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["wireless"], {"wifi_state": "connected", "ssid_hex": "4100ff"})
+        self.assertEqual(wireless["wifi_state_id"], 2)
+        self.assertIs(result["wireless"], wireless)
+        result["wireless"] = None
+        self.assertIsNone(client.post("/api/control/resync?board=a", json={"confirm": True}).json["wireless"])
+
+    def test_monitor_lifecycle_conflicts_have_an_explicit_http_mapping(self):
+        from picoforge.dashboard.monitor import BoardConflict
+
+        boards = Mock()
+        boards.monitor.side_effect = BoardConflict("device monitor is shutting down")
+        response = create_app(boards).test_client().post("/api/led", json={"on": True})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json, {"error": "device monitor is shutting down"})
+
+    def test_write_body_limits_are_json_errors_before_any_board_operation(self):
+        boards = FakeBoards()
+        client = create_app(boards).test_client()
+        for path in ("/api/led", "/api/settings", "/api/msc", "/api/reboot", "/api/control/resync",
+                     "/api/self-test", "/api/msc/force-return", "/api/wireless", "/api/wireless/test",
+                     "/api/wireless/scan", "/api/wireless/cancel", "/api/console"):
+            with self.subTest(path=path):
+                response = client.post(path + "?board=board-a", data=b" " * 4097,
+                                       content_type="application/json")
+                self.assertEqual(response.status_code, 413)
+                self.assertIn("size limit", response.json["error"])
+                self.assertIsNone(boards.last_board_id)
+        self.assertEqual(client.put("/api/console", data=b" " * 2049,
+                                    content_type="application/json").status_code, 413)
+
     def test_pages_display_the_resolved_package_version(self):
         from picoforge import __version__
 

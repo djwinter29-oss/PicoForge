@@ -36,3 +36,10 @@ packages = ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", 
 
 [tool.setuptools.package-data]
 "picoforge.web" = ["index.html", "console.html", "favicon.svg", "css/*.css", "js/*.mjs"]
+
+[tool.pyright]
+include = ["src/picoforge/dashboard/console.py", "tests/types/command_types.py"]
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+reportUnnecessaryIsInstance = false
+reportUnnecessaryTypeIgnoreComment = true

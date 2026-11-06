@@ -18,9 +18,10 @@ status/command requests include its ID as `?board=<id>`. `GET /api/status` retur
 identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
 board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
 Serial-identified boards retain their monitor for at least 30 seconds after disappearing from a successful rescan,
-allowing brief USB reconnects without losing selection. Monitors with uncertain command outcomes remain pinned
-until host shutdown so reconnects cannot clear the write block. Boards without serial numbers use their HID device
-path as identity and are removed from the registry on the first successful rescan where they are absent. A path-only
+allowing brief USB reconnects without losing selection. Active commands postpone retirement; uncertain outcomes keep
+the monitor until confirmed re-sync or shutdown. Cleanup must finish before a replacement can open.
+Boards without serial numbers use their HID device
+path as identity and become eligible for removal on the first successful rescan where they are absent. A path-only
 identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
 `POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
 MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
@@ -49,6 +50,8 @@ Self-tests and transitions still block saving; standalone reboot remains blocked
 - `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
 
 The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
+See the [.NET lifecycle design](../../../docs/development/host-tools.md#net-host-lifecycle) for retirement, shutdown,
+cleanup failures, configuration diagnostics, pending-reboot gates, console deadlines and production-pipeline test ownership.
 Build and publish always copy the current `host/web/src` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
@@ -62,9 +65,6 @@ TCP CLI access always requires the saved Control key and the board's fixed opcod
 The shared dashboard and HID/API checks run with
 `dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
 These host tests do not validate physical USB detach/reconnect or storage durability.
-The host polls HID input every 50 ms, below firmware's 250 ms telemetry and 500 ms storage/self-test report periods,
-and reuses an input buffer per HID client to reduce idle wakeups and recurring allocations.
-
 The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
 startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
 USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
@@ -72,5 +72,5 @@ Wait for fresh mounted status after return, not merely HID reconnection. Start u
 free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
 Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
 Board monitoring starts asynchronously on first access, so the first status response can briefly show that it is
-waiting for HID while identity and configuration are read in the background. The monitor polls every 50 ms and
+waiting for HID while identity and configuration are read in the background. The monitor polls every 100 ms and
 reuses input and feature report buffers per HID client to reduce idle wakeups and recurring allocations.

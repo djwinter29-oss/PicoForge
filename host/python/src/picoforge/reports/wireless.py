@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ..hid.models import WirelessNetwork, WirelessReportStatus
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import WirelessNetwork, WirelessReportStatus
 from .common import (
     REPORT_VERSION, WIRELESS_REPORT_ID, BleState, ControlOpcode, InvalidRequest,
     WifiState, WirelessFlags, WirelessStagedFlags, _feature_payload, _validate_settings,

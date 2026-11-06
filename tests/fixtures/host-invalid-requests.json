@@ -1,0 +1,11 @@
+[
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "password": null}},
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "passwrod": "password"}},
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "password": "password", "unknown": true}},
+  {"route": "/api/wireless/test", "body": {"ssid": null, "password": "password"}},
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "ssid_hex": null}},
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "password": "short"}},
+  {"route": "/api/wireless/test", "body": {"ssid": "Pico", "password": 123}},
+  {"route": "/api/settings", "body": {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0, "unknown": true}},
+  {"route": "/api/settings", "body": {"system_clock_mhz": null, "sdcard_profile": 1, "radios": 0}}
+]

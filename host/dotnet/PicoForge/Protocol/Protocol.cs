@@ -82,7 +82,7 @@ public sealed record StatusResponse(bool Connected, string? Error, HardwareInfoR
     bool TelemetryStale = true, bool StorageStale = true, bool SelfTestStale = true,
     bool CommandOutcomeUncertain = false, bool RebootPending = false, bool Reconnecting = false,
     string? WirelessPhase = null, WirelessStatusResponse? Wireless = null, string? WirelessError = null,
-    bool CommandResyncSupported = true)
+    bool CommandResyncSupported = true, string? SettingsMessage = null)
 {
     public bool SettingsSupported => BoardConfiguration is not null;
 }

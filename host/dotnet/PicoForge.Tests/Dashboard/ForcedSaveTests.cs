@@ -475,6 +475,7 @@ public sealed class ForcedSaveTests
         var normal = await client.PostAsJsonAsync("/api/settings?board=board-a",
             new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0 });
         Assert.Equal(HttpStatusCode.OK, normal.StatusCode);
+        monitor.Attach(commands, Ready(false));
         var unconfirmed = await client.PostAsJsonAsync("/api/settings?board=board-a",
             new { system_clock_mhz = 200, sdcard_profile = 1, radios = 0, confirm_data_loss = false });
         Assert.Equal(HttpStatusCode.OK, unconfirmed.StatusCode);

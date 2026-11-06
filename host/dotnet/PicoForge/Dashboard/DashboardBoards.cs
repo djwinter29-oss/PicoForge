@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PicoForge;
 
@@ -16,8 +17,10 @@ internal interface IDashboardBoards
     IDeviceMonitor Monitor(string? boardId);
 }
 
-internal sealed class DashboardBoards : IDisposable, IDashboardBoards
+internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboardBoards
 {
+    // ponytail: 16 active/retiring owners bound local resources; add managed eviction only for larger fleets.
+    private const int MaximumMonitors = 16;
     private static readonly TimeSpan StaleSerialBoardGracePeriod = TimeSpan.FromSeconds(30);
     private readonly object gate = new();
     private readonly object discoveryGate = new();
@@ -26,24 +29,27 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
     private readonly Func<HidBoard[]> discover;
     private readonly Func<string?, string?, IDeviceMonitor> createMonitor;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger logger;
     private readonly Dictionary<string, DashboardBoard> known = new();
     private readonly Dictionary<string, DateTimeOffset> lastSeen = new();
     private readonly Dictionary<string, MonitorEntry> monitors = new();
     private bool closed;
+    private Task? disposal;
 
     public DashboardBoards(string? serialNumber = null, string? devicePath = null, ILoggerFactory? loggerFactory = null)
         : this(serialNumber, devicePath, PicoForgeHid.Discover,
             (serial, path) => new DeviceMonitor(serial, path, loggerFactory?.CreateLogger<DeviceMonitor>()),
-            TimeProvider.System) { }
+            TimeProvider.System, loggerFactory?.CreateLogger<DashboardBoards>()) { }
 
     internal DashboardBoards(string? serialNumber, string? devicePath, Func<HidBoard[]> discover,
-        Func<string?, string?, IDeviceMonitor> createMonitor, TimeProvider? timeProvider = null)
+        Func<string?, string?, IDeviceMonitor> createMonitor, TimeProvider? timeProvider = null, ILogger? logger = null)
     {
         this.serialNumber = serialNumber;
         this.devicePath = devicePath;
         this.discover = discover;
         this.createMonitor = createMonitor;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.logger = logger ?? NullLogger.Instance;
     }
 
     public DashboardBoardList Boards()
@@ -68,45 +74,30 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                 ? Array.Empty<string>()
                 : [$"Skipped {duplicateIds.Count} ambiguous board identity group(s); " +
                     "serial numbers or paths must be unique"];
-            MonitorEntry[] expiredMonitors;
             DashboardBoardList listing;
             lock (gate)
             {
                 ObjectDisposedException.ThrowIf(closed, this);
+                foreach (var id in monitors.Where(pair => pair.Value.RetirementCompleted)
+                    .Select(pair => pair.Key).ToArray())
+                    monitors.Remove(id);
                 var now = timeProvider.GetUtcNow();
                 foreach (var board in boards)
                 {
                     known[board.Id] = board;
                     lastSeen[board.Id] = now;
                 }
-                var ambiguousIds = duplicateIds
-                    .Where(id => !monitors.TryGetValue(id, out var monitor) ||
-                        !monitor.Snapshot.CommandOutcomeUncertain)
-                    .ToArray();
-                var ambiguousMonitors = ambiguousIds.Where(monitors.ContainsKey).Select(id => monitors[id]).ToArray();
-                foreach (var id in ambiguousIds)
-                {
-                    known.Remove(id);
-                    lastSeen.Remove(id);
-                    monitors.Remove(id);
-                }
                 var expiredIds = known
                     .Where(entry => !seen.Contains(entry.Key) &&
                         (entry.Value.SerialNumber is null ||
-                         now - lastSeen[entry.Key] >= StaleSerialBoardGracePeriod) &&
-                        (!monitors.TryGetValue(entry.Key, out var monitor) ||
-                         !monitor.Snapshot.CommandOutcomeUncertain))
+                         now - lastSeen[entry.Key] >= StaleSerialBoardGracePeriod))
                     .Select(entry => entry.Key)
                     .ToArray();
-                expiredMonitors = ambiguousMonitors.Concat(expiredIds
-                    .Where(monitors.ContainsKey)
-                    .Select(id => monitors[id])
-                    ).ToArray();
-                foreach (var id in expiredIds)
+                foreach (var id in duplicateIds.Concat(expiredIds).Distinct())
                 {
+                    if (monitors.TryGetValue(id, out var monitor) && !monitor.TryRetire()) continue;
                     known.Remove(id);
                     lastSeen.Remove(id);
-                    monitors.Remove(id);
                 }
                 var preferred = boards.FirstOrDefault(board =>
                     (serialNumber is not null && board.SerialNumber == serialNumber)
@@ -114,7 +105,6 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                 listing = new DashboardBoardList(boards, preferred?.Id
                     ?? (serialNumber is null && devicePath is null ? boards.FirstOrDefault()?.Id : null), warnings);
             }
-            foreach (var monitor in expiredMonitors) monitor.Dispose();
             return listing;
         }
     }
@@ -133,58 +123,49 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
                 throw new BoardNotFoundException("unknown board; rescan and select a listed board");
             if (!monitors.TryGetValue(boardId, out var current))
             {
+                if (monitors.Count >= MaximumMonitors)
+                    throw new BoardStateException("Monitor capacity reached; wait for cleanup or restart the dashboard");
                 entry = new MonitorEntry(createMonitor(
-                    board.SerialNumber, board.SerialNumber is null ? board.DevicePath : null));
+                    board.SerialNumber, board.SerialNumber is null ? board.DevicePath : null), logger);
                 monitors.Add(boardId, entry);
             }
             else entry = current;
         }
-        try
-        {
-            return entry.GetStarted();
-        }
-        catch
-        {
-            lock (gate)
-                if (monitors.TryGetValue(boardId!, out var current) && ReferenceEquals(current, entry))
-                    monitors.Remove(boardId!);
-            entry.Dispose();
-            throw;
-        }
+        return entry.GetStarted();
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
-        MonitorEntry[] readers;
         lock (gate)
         {
-            if (closed) return;
             closed = true;
-            readers = monitors.Values.ToArray();
+            disposal ??= Task.WhenAll(monitors.Values.Select(entry => entry.StopAsync()));
+            return new(disposal);
         }
-        foreach (var reader in readers) reader.Dispose();
     }
 
-    private sealed class MonitorEntry(IDeviceMonitor monitor) : IDisposable
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    private sealed class MonitorEntry(IDeviceMonitor monitor, ILogger logger)
     {
         private readonly object gate = new();
         private bool started;
-        private bool disposed;
+        private Task? retirement;
 
-        public StatusResponse Snapshot => monitor.Snapshot;
+        public bool RetirementCompleted => Volatile.Read(ref retirement)?.IsCompletedSuccessfully == true;
 
         public IDeviceMonitor GetStarted()
         {
             lock (gate)
             {
-                ObjectDisposedException.ThrowIf(disposed, this);
+                if (retirement is not null) throw new BoardStateException(
+                    "Board monitor is shutting down or cleanup failed; wait for rescan or restart the dashboard");
                 if (!started)
                 {
                     try { monitor.Start(); }
                     catch
                     {
-                        monitor.Dispose();
-                        disposed = true;
+                        BeginStop();
                         throw;
                     }
                     started = true;
@@ -193,13 +174,33 @@ internal sealed class DashboardBoards : IDisposable, IDashboardBoards
             }
         }
 
-        public void Dispose()
+        public bool TryRetire()
         {
-            lock (gate)
+            if (!System.Threading.Monitor.TryEnter(gate)) return false;
+            try
             {
-                if (disposed) return;
-                disposed = true;
-                monitor.Dispose();
+                if (retirement is not null) return true;
+                if (!monitor.TryRetire()) return false;
+                BeginStop();
+                return true;
+            }
+            finally { System.Threading.Monitor.Exit(gate); }
+        }
+
+        public Task StopAsync()
+        {
+            lock (gate) return BeginStop();
+        }
+
+        private Task BeginStop() => retirement ??= StopMonitorAsync();
+
+        private async Task StopMonitorAsync()
+        {
+            try { await monitor.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                logger.LogError(error, "Failed to stop board monitor; retaining ownership until dashboard restart");
+                throw;
             }
         }
     }

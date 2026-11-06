@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using static PicoForge.StatusEndpoints;
 
 namespace PicoForge;
@@ -7,7 +8,8 @@ internal static class WirelessEndpoints
 {
     private const string Retry = "Restart the dashboard and reconnect the board before retrying.";
 
-    public sealed record WirelessTestRequest(string? Ssid, string? Password = null, string? SsidHex = null);
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+    public sealed record WirelessTestRequest(string? Ssid = null, string? Password = "", string? SsidHex = null);
     public sealed record WirelessScanResponse(IReadOnlyList<WirelessNetworkResponse> Networks);
     public sealed record WirelessTestResponse(WirelessOperationResponse Test);
     public sealed record WirelessCancelResponse(bool Cancelled);
@@ -67,6 +69,9 @@ internal static class WirelessEndpoints
         {
             test = request.Deserialize<WirelessTestRequest>(DashboardJson.Options)
                 ?? throw new ApiInputException("Expected SSID and optional password");
+            if (test.Password is null || request.TryGetProperty("ssid_hex", out var hex) &&
+                hex.ValueKind == JsonValueKind.Null)
+                throw new ApiInputException("Invalid SSID or password");
             if (HidProtocol.EncodeSsid(test.Ssid, test.SsidHex).Length == 0)
                 throw new ApiInputException("Invalid SSID or password");
             HidProtocol.ValidatePassword(test.Password ?? "");

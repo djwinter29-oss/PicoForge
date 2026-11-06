@@ -6,10 +6,12 @@ namespace PicoForge;
 /// One board's monitor. Commands throw instead of returning a flag: see <c>UseApiErrors</c>. <c>cancel</c> stops only
 /// the wait for the board (an aborted request); a command that reached the board always runs to completion.
 /// </summary>
-internal interface IDeviceMonitor : IDisposable
+internal interface IDeviceMonitor : IDisposable, IAsyncDisposable
 {
     StatusResponse Snapshot { get; }
     void Start();
+    /// <summary>Claims idle, resolved command ownership without waiting; refuses all subsequent commands.</summary>
+    bool TryRetire();
     CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default);
     void SetLed(bool on, CancellationToken cancel = default);
     MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default);
@@ -68,6 +70,10 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private readonly ILogger<DeviceMonitor> logger;
     private readonly TimeProvider time;
     private readonly object gate = new();
+    private readonly object lifecycleGate = new();
+    private Task? disposal;
+    private int stopping;
+    private Exception? cleanupError;
     // Handle operations always acquire deviceGate before the snapshot gate. Not reentrant.
     private readonly SemaphoreSlim deviceGate = new(1, 1);
     private IHidCommands? activeClient;
@@ -96,7 +102,62 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         this.time = time ?? TimeProvider.System;
     }
 
-    public void Start() => _ = StartAsync(CancellationToken.None);
+    public void Start()
+    {
+        lock (lifecycleGate)
+        {
+            if (Volatile.Read(ref stopping) != 0) throw new BoardStateException("Board monitor is shutting down");
+            StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+    }
+
+    public bool TryRetire()
+    {
+        if (!deviceGate.Wait(0)) return false;
+        try
+        {
+            if (Snapshot.CommandOutcomeUncertain) return false;
+            Interlocked.Exchange(ref stopping, 1);
+            return true;
+        }
+        finally { deviceGate.Release(); }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Exchange(ref stopping, 1);
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (lifecycleGate)
+        {
+            Interlocked.Exchange(ref stopping, 1);
+            disposal ??= Task.Run(StopAndDisposeAsync);
+            return new(disposal);
+        }
+    }
+
+    private async Task StopAndDisposeAsync()
+    {
+        try
+        {
+            await StopAsync(CancellationToken.None).ConfigureAwait(false);
+            if (ExecuteTask is { } worker)
+            {
+                try { await worker.ConfigureAwait(false); }
+                catch (OperationCanceledException) when (Volatile.Read(ref stopping) != 0) { }
+            }
+            using (Owner())
+            lock (gate) activeClient = null;
+            if (cleanupError is not null)
+                throw new IOException("HID cleanup failed; restart the dashboard before reconnecting", cleanupError);
+        }
+        finally { base.Dispose(); }
+    }
+
+    public override void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     /// <summary>Holds <see cref="deviceGate"/> until disposed.</summary>
     private readonly struct DeviceLease(SemaphoreSlim gate) : IDisposable
@@ -110,6 +171,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private DeviceLease Device(CancellationToken cancel)
     {
         if (!deviceGate.Wait(BusyWait, cancel)) throw new BoardBusyException();
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Board monitor is shutting down");
+        }
         return new(deviceGate);
     }
 
@@ -138,7 +204,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         using (Device(cancel))
         {
             if (!Snapshot.CommandOutcomeUncertain) return new(false);
-            var client = Client();
+            var client = Client(requireConfiguration: false);
             CommandResyncResult? result;
             try
             {
@@ -157,6 +223,9 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 snapshot = snapshot with
                 {
                     CommandOutcomeUncertain = false,
+                    RebootPending = snapshot.RebootPending ||
+                        result.ControlResult is { Status: ControlStatus.Completed,
+                            Opcode: Opcode.Reboot or Opcode.SaveSettings },
                     Error = null,
                     Wireless = result.Wireless ?? snapshot.Wireless,
                     WirelessError = result.Wireless is null ? snapshot.WirelessError : null
@@ -193,7 +262,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     {
         using (Device(cancel))
         {
-            var client = Client();
+            var client = Client(requireConfiguration: false);
             if (Snapshot.Runtime?.LedAvailable != true)
                 throw new BoardStateException("The board LED is unavailable");
             ExecuteCommand(client, () => client.SetLed(on));
@@ -334,6 +403,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var client = Client();
             RequireIdleStorage(Snapshot, "rebooting");
             ExecuteCommand(client, client.Reboot);
+            lock (gate) snapshot = snapshot with { RebootPending = true };
         }
     }
 
@@ -347,9 +417,15 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     }
 
     /// <summary>Returns the open handle; call holding deviceGate so it cannot be replaced mid-command.</summary>
-    private IHidCommands Client()
+    private IHidCommands Client(bool requireConfiguration = true)
     {
-        lock (gate) return activeClient ?? throw new IOException("PicoForge HID is not connected");
+        lock (gate)
+        {
+            var client = activeClient ?? throw new IOException("PicoForge HID is not connected");
+            if (requireConfiguration && snapshot.BoardConfiguration is null)
+                throw new BoardStateException("Board configuration is unavailable; reconnect before sending commands");
+            return client;
+        }
     }
 
     /// <summary>Throws unless firmware owns idle storage, or for a forced save, the host owns it.</summary>
@@ -372,7 +448,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         if (current.Hardware?.WirelessSupported != true)
             throw new BoardStateException("Wireless provisioning is unavailable on this firmware");
         if (current.Memory?.Msc is not { Enabled: false, TransitionPending: false } ||
-            current.RebootPending || current.SelfTest?.Active == true ||
+            current.SelfTest?.Active == true ||
             ((current.Hardware.Capabilities & HidProtocol.CapabilitySelfTest) != 0 && current.SelfTest is null))
             throw new BoardStateException(
                 "Wireless scan and connection test require idle firmware-owned storage");
@@ -383,14 +459,22 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     {
         // ponytail: Yield before synchronous HID discovery so first API access does not wait for device startup.
         await Task.Yield();
-        while (!stoppingToken.IsCancellationRequested)
+        while (!stoppingToken.IsCancellationRequested && Volatile.Read(ref stopping) == 0)
         {
             IHidClient? client = null;
             try
             {
                 client = createClient();
                 var hardware = client.ReadInfo();
-                var configuration = client.ReadConfiguration();
+                BoardConfigurationResponse? configuration;
+                string? settingsMessage = null;
+                try { configuration = client.ReadConfiguration(); }
+                catch (Exception error) when (IsDeviceError(error))
+                {
+                    logger.LogWarning(error, "Board configuration unavailable; retaining read-only diagnostics");
+                    configuration = null;
+                    settingsMessage = $"Boot settings unavailable: {error.Message}";
+                }
                 using (await OwnerAsync(CancellationToken.None))
                 lock (gate)
                 {
@@ -398,7 +482,9 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     telemetryReceipt = storageReceipt = selfTestReceipt = 0;
                     var uncertain = snapshot.CommandOutcomeUncertain;
                     snapshot = new(true, uncertain ? UncertainMessage : null, hardware,
-                        BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain);
+                        BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain,
+                        SettingsMessage: settingsMessage,
+                        WirelessError: hardware.WirelessSupported ? settingsMessage : null);
                 }
 
                 long wirelessPollAt = 0;
@@ -407,14 +493,16 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     using (await OwnerAsync(stoppingToken))
                     {
                         PollInputs(client);
-                        if (hardware.WirelessSupported && time.GetTimestamp() >= wirelessPollAt)
+                        if (hardware.WirelessSupported && configuration is not null &&
+                            time.GetTimestamp() >= wirelessPollAt)
                             wirelessPollAt = PollWireless(client);
                     }
                     // ponytail: 100 ms stays below the 250 ms telemetry cadence and halves idle wakeups.
                     await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
                 }
             }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception error)
             {
                 // Any fault, including a code bug, must leave a visible error and a retrying monitor.
                 if (!IsDeviceError(error)) logger.LogError(error, "PicoForge HID monitor failed; retrying");
@@ -428,10 +516,19 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     {
                         if (ReferenceEquals(activeClient, client)) activeClient = null;
                     }
-                    client?.Dispose();
+                    try { client?.Dispose(); }
+                    catch (Exception error)
+                    {
+                        logger.LogError(error, "HID cleanup failed; stopping monitor to prevent overlapping handles");
+                        cleanupError = error;
+                        Interlocked.Exchange(ref stopping, 1);
+                        lock (gate) snapshot = new(false, "HID cleanup failed; restart the dashboard",
+                            CommandOutcomeUncertain: snapshot.CommandOutcomeUncertain);
+                    }
                 }
             }
 
+            if (Volatile.Read(ref stopping) != 0) break;
             try { await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
@@ -552,6 +649,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private T ExecuteCommand<T>(IHidCommands client, Func<T> command)
     {
         if (Snapshot.CommandOutcomeUncertain) throw new BoardStateException(UncertainMessage);
+        if (Snapshot.RebootPending) throw new BoardStateException("Board reboot is pending; wait for reconnection");
         try
         {
             return command();

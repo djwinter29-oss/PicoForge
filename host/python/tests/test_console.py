@@ -44,6 +44,7 @@ class ConsoleTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         self.monitor = Monitor()
         self.app = create_app(self.monitor)
+        self.addCleanup(self.app.extensions["picoforge_console"].close_all)
         self.client = self.app.test_client()
 
     def open(self):
@@ -200,6 +201,102 @@ class ConsoleTests(unittest.TestCase):
         self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}
         self.peer.sendall(f"PicoForge AUTH {'00' * 15}\t\t {'00' * 8}\r\n".encode("ascii"))
         self.assertEqual(self.client.post("/api/console", json={}).status_code, 503)
+
+    def test_unterminated_challenge_is_a_protocol_error_not_an_internal_bug(self):
+        self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}
+        self.peer.sendall(b"x" * 128)
+        response = self.client.post("/api/console", json={})
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Invalid TCP CLI authentication challenge", response.json["error"])
+        self.assertEqual(self.peer.recv(1), b"")
+
+    def test_challenge_uses_one_deadline_instead_of_a_timeout_per_byte(self):
+        connection = Mock()
+        clock = [100.0]
+        timeouts = []
+        connection.settimeout.side_effect = timeouts.append
+
+        def receive(_count):
+            clock[0] += 1.0
+            return b"x"
+
+        connection.recv.side_effect = receive
+        sign = Mock()
+        with patch("picoforge.dashboard.console.time.monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(TimeoutError, "challenge timed out"):
+                ConsoleBridge._authenticate(connection, sign)
+        self.assertEqual(timeouts, [3.0, 2.0, 1.0])
+        self.assertEqual(connection.recv.call_count, 3)
+        sign.assert_not_called()
+
+    def test_authentication_proof_and_write_share_the_overall_budget(self):
+        challenge = b"PicoForge AUTH " + b"00" * 16 + b" " + b"00" * 8 + b"\r\n"
+        for proof_elapsed, succeeds in ((4.0, True), (8.0, False)):
+            with self.subTest(proof_elapsed=proof_elapsed):
+                clock = [100.0]
+                connection = Mock()
+                connection.recv.side_effect = [bytes((value,)) for value in challenge]
+
+                def proof(*_):
+                    clock[0] += proof_elapsed
+                    return bytes(16)
+
+                with patch("picoforge.dashboard.console.time.monotonic", side_effect=lambda: clock[0]):
+                    if succeeds:
+                        ConsoleBridge._authenticate(connection, proof)
+                        self.assertEqual(connection.settimeout.call_args.args, (4.0,))
+                        connection.sendall.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(TimeoutError, "authentication timed out"):
+                            ConsoleBridge._authenticate(connection, proof)
+                        connection.sendall.assert_not_called()
+
+    def test_poll_failure_closes_session_and_returns_unavailable(self):
+        endpoint = self.open()
+        with patch("picoforge.dashboard.console.select.select", side_effect=OSError("poll failed")):
+            response = self.client.get(endpoint)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("poll failed", response.json["error"])
+        self.assertEqual(self.client.get(endpoint).status_code, 409)
+        self.assertEqual(self.peer.recv(1), b"")
+
+    def test_poll_invalid_descriptor_is_unavailable_but_a_close_race_is_conflict(self):
+        endpoint = self.open()
+        with patch("picoforge.dashboard.console.select.select", side_effect=ValueError("bad descriptor")):
+            self.assertEqual(self.client.get(endpoint).status_code, 503)
+        bridge = ConsoleBridge()
+        replacement, peer = socket.socketpair()
+        self.addCleanup(peer.close)
+        with patch("picoforge.dashboard.console.socket.create_connection", return_value=replacement):
+            session = bridge.open(self.monitor.wireless)
+
+        def closed_during_select(*_):
+            bridge.close_all()
+            raise ValueError("closed descriptor")
+
+        with patch("picoforge.dashboard.console.select.select", side_effect=closed_during_select):
+            with self.assertRaisesRegex(RuntimeError, "disconnected"):
+                bridge.read(session)
+
+    def test_expiry_timer_is_cancelled_on_disconnect_and_cannot_expire_a_replacement(self):
+        bridge = ConsoleBridge()
+        with patch("picoforge.dashboard.console.threading.Timer") as timer_factory:
+            old_timer, new_timer = Mock(), Mock()
+            timer_factory.side_effect = [old_timer, new_timer]
+            first = bridge.open(self.monitor.wireless)
+            bridge.close(first)
+            old_timer.cancel.assert_called_once()
+            replacement, peer = socket.socketpair()
+            self.addCleanup(peer.close)
+            with patch("picoforge.dashboard.console.socket.create_connection", return_value=replacement):
+                second = bridge.open(self.monitor.wireless)
+            bridge._expire(first)
+            self.assertEqual(bridge._session, second)
+            bridge.close_all()
+            new_timer.cancel.assert_called_once()
+            self.assertIsNone(bridge._expiry_timer)
+            with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                bridge.open(self.monitor.wireless)
 
     def test_tcp_authentication_does_not_accept_control_keys_from_the_browser(self):
         self.monitor.wireless = {**self.monitor.wireless, "ble_key_configured": True}

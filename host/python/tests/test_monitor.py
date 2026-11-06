@@ -162,6 +162,24 @@ class MonitorMscTests(unittest.TestCase):
 
 
 class MonitorReconnectTests(unittest.TestCase):
+    def test_native_close_failure_stops_reconnect_and_is_reported_by_shutdown(self):
+        client = Mock()
+        client.read_info.return_value = {"supported": False, "product_name": "Other"}
+        client.close.side_effect = OSError("native close failed")
+        factory = Mock(return_value=client)
+        monitor = DeviceMonitor(client_factory=factory, autostart=False)
+        with self.assertLogs("picoforge.dashboard.monitor", "ERROR"):
+            monitor._run()
+        self.assertTrue(monitor._stop.is_set())
+        self.assertIs(monitor._failed_client, client)
+        self.assertFalse(monitor.snapshot()["connected"])
+        self.assertIn("cleanup failed", monitor.snapshot()["error"])
+        with self.assertRaisesRegex(RuntimeError, "HID cleanup failed") as error:
+            monitor.close()
+        self.assertIs(error.exception.__cause__, client.close.side_effect)
+        factory.assert_called_once()
+        client.close.assert_called_once()
+
     def test_unsupported_product_backs_off_before_reopening(self):
         client = Mock()
         client.read_info.return_value = {"supported": False, "product_name": "Other"}

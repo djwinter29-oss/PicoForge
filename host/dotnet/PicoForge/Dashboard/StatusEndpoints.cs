@@ -7,6 +7,7 @@ internal static class StatusEndpoints
 {
     public sealed record SetLedRequest(bool? On);
     /// <summary>Requested next-boot clock, SD-card profile and radio enables.</summary>
+    [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
     public sealed record SetSettingsRequest(int? SystemClockMhz,
         [property: JsonPropertyName("sdcard_profile")] int? SdCardProfile, bool ConfirmDataLoss = false,
         int? Radios = null);
@@ -63,7 +64,15 @@ internal static class StatusEndpoints
         var logger = app.ApplicationServices.GetRequiredService<ILoggerFactory>().CreateLogger("PicoForge.Api");
         return app.Use(async (context, next) =>
         {
-            try { await next(); }
+            try
+            {
+                await next();
+                // Minimal-API body binding may set 413 without throwing through this middleware.
+                if (context.Request.Path.StartsWithSegments("/api") &&
+                    context.Response.StatusCode == StatusCodes.Status413PayloadTooLarge &&
+                    !context.Response.HasStarted)
+                    await context.Response.WriteAsJsonAsync(new ApiError("Request body exceeds the allowed size"));
+            }
             catch (Exception error) when (!context.Response.HasStarted
                 && context.Request.Path.StartsWithSegments("/api")
                 && !context.RequestAborted.IsCancellationRequested)
@@ -75,6 +84,7 @@ internal static class StatusEndpoints
                     ApiInputException or JsonException => (400, error.Message),
                     BoardNotFoundException => (404, error.Message),
                     BoardStateException => (409, error.Message),
+                    WirelessTestCancelledException => (409, error.Message),
                     _ when unavailable is { WithDetail: true } && IsUnavailable(error) =>
                         (503, $"{unavailable.Message}: {error.Message}"),
                     _ when IsUnavailable(error) => (503, unavailable?.Message ?? error.Message),
@@ -101,7 +111,7 @@ internal static class StatusEndpoints
         return builder;
     }
 
-    internal static readonly int[] CommandErrors = [400, 404, 409, 503];
+    internal static readonly int[] CommandErrors = [400, 404, 409, 413, 503];
 
     public static IEndpointRouteBuilder MapStatusEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -221,6 +231,9 @@ internal static class StatusEndpoints
     }
 
     private static IResult ResyncCommand(CommandResyncRequest request, string? board, IDashboardBoards dashboard,
-        CancellationToken cancel) =>
-        Results.Ok(dashboard.Monitor(board).ResyncCommand(request.Confirm, cancel));
+        CancellationToken cancel)
+    {
+        if (!request.Confirm) throw new ApiInputException("Explicit confirm: true is required");
+        return Results.Ok(dashboard.Monitor(board).ResyncCommand(true, cancel));
+    }
 }

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from ..hid.models import (
+from ..reports.models import (
     BoardConfiguration,
     BootSettings,
     ControlResult,
     HardwareIdentity,
     MemoryStatus,
+    MscStatus,
     RuntimeStatus,
     SelfTestStatus,
     WirelessStatus,
@@ -58,3 +59,22 @@ class WirelessSaveResponse(TypedDict):
     wireless: WirelessStatus
     reboot_pending: bool
     settings: BootSettings
+
+
+class ControlResponse(TypedDict):
+    control_result: ControlResult
+
+
+class MscResponse(ControlResponse):
+    msc: MscStatus
+
+
+class SettingsResponse(TypedDict):
+    settings: BootSettings
+    control_result: ControlResult | None
+
+
+class ResyncResponse(TypedDict):
+    uncertain: bool
+    control_result: ControlResult | None
+    wireless: WirelessStatus | None

@@ -492,11 +492,8 @@ public sealed class WirelessTests
         var dashboard = new WirelessMonitor();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.ConfigureHttpJsonOptions(options => DashboardJson.Configure(options.SerializerOptions));
         builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(dashboard));
-        await using var app = builder.Build();
-        app.UseApiErrors();
-        app.MapWirelessEndpoints();
+        await using var app = await DashboardApplication.BuildAsync(builder);
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         // Endpoints validate once; PicoForgeHid trusts them, so a bad password must never reach the monitor.
@@ -507,6 +504,14 @@ public sealed class WirelessTests
             Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         }
         Assert.Equal(0, dashboard.Tests);
+        foreach (var body in new[] { "{\"ssid\":\"Pico\"}", "{\"ssid\":\"Pico\",\"password\":\"\"}",
+            "{\"ssid_hex\":\"ff00\"}", "{\"ssid\":null,\"ssid_hex\":\"ff00\"}" })
+        {
+            var response = await client.PostAsync("/api/wireless/test?board=board-a",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        Assert.Equal(4, dashboard.Tests);
         foreach (var body in new[] { "null", "[]", "{}", "{\"password\":\"secret\\n12\"}" })
         {
             var response = await client.PostAsync("/api/wireless?board=board-a",
@@ -525,7 +530,7 @@ public sealed class WirelessTests
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
         Assert.True(dashboard.Saved!.UseTestedWifi);
         Assert.Equal("4100ff", dashboard.Saved.SsidHex);
-        var contractPath = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "tests/status-contract.json");
+        var contractPath = Path.Combine(SharedDashboardAssetsTests.WebRoot(), "../tests/status-contract.json");
         using var contract = JsonDocument.Parse(File.ReadAllText(contractPath));
         foreach (var route in contract.RootElement.GetProperty("removed_routes").EnumerateArray())
         {

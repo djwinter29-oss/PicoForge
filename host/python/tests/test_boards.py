@@ -7,9 +7,95 @@ from unittest.mock import Mock, patch
 
 from helpers import make_monitor
 from picoforge.dashboard.boards import DashboardBoards
+from picoforge.dashboard.monitor import BoardConflict, CommandOutcomeUncertain
+
+
+class IdleMonitor:
+    def try_retire(self):
+        return True
 
 
 class DashboardBoardsTests(unittest.TestCase):
+    def test_expiration_overlapping_a_command_preserves_the_result_and_write_block(self):
+        for uncertain in (False, True):
+            with self.subTest(uncertain=uncertain):
+                attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+                now = [0.0]
+                entered = threading.Event()
+                release = threading.Event()
+                errors = []
+                client = Mock()
+                monitor = make_monitor(client, {"connected": True, "hardware": {"led_available": True}})
+                factory = Mock(return_value=monitor)
+                boards = DashboardBoards(discover=lambda: attached, monitor_factory=factory, clock=lambda: now[0])
+                board_id = boards.boards()["boards"][0]["id"]
+                self.assertIs(boards.monitor(board_id), monitor)
+
+                def send(_on):
+                    entered.set()
+                    if not release.wait(2):
+                        raise AssertionError("command release timed out")
+                    if uncertain:
+                        client.command_uncertain = True
+                        client.uncertain_command = (1, 1)
+                        client.uncertain_wireless_operation = None
+                        raise TimeoutError("outcome not confirmed")
+                    return {"status": "completed", "error": "none"}
+
+                def command():
+                    try:
+                        monitor.set_led(True)
+                    except Exception as error:
+                        errors.append(error)
+
+                client.set_led.side_effect = send
+                worker = threading.Thread(target=command)
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    attached.clear()
+                    now[0] = 31.0
+                    boards.boards()
+                    self.assertFalse(monitor._stop.is_set(), "active command must prevent retirement")
+                    self.assertFalse(boards._retiring)
+                    self.assertIs(boards.monitor(board_id), monitor)
+                    release.set()
+                    worker.join(2)
+                    self.assertFalse(worker.is_alive())
+                    boards.boards()
+                    if uncertain:
+                        self.assertEqual(len(errors), 1)
+                        self.assertIsInstance(errors[0], CommandOutcomeUncertain)
+                        attached.append({"serial_number": "board-A", "device_path": "/hid/new"})
+                        boards.boards()
+                        self.assertIs(boards.monitor(board_id), monitor)
+                        self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+                        with self.assertRaisesRegex(RuntimeError, "uncertain"):
+                            monitor.set_led(False)
+                        client.set_led.assert_called_once()
+                        factory.assert_called_once()
+                    else:
+                        self.assertEqual(errors, [])
+                        self.assertTrue(monitor._stop.is_set())
+                        with self.assertRaisesRegex(LookupError, "unknown board"):
+                            boards.monitor(board_id)
+                finally:
+                    release.set()
+                    worker.join(2)
+                    boards.close()
+
+    def test_retirement_claim_prevents_already_obtained_monitors_from_starting_commands(self):
+        client = Mock()
+        monitor = make_monitor(client, {"connected": True, "hardware": {"led_available": True}})
+        self.assertTrue(monitor.try_retire())
+        with self.assertRaises(BoardConflict):
+            monitor.set_led(True)
+        with self.assertRaises(BoardConflict):
+            monitor.resync_command()
+        client.set_led.assert_not_called()
+        client.reconcile_outcome.assert_not_called()
+        monitor.close()
+
     def test_boards_are_lazily_monitored_and_reused_by_stable_serial_id(self):
         attached = [
             {"product_name": "PicoForge", "serial_number": "board-A", "device_path": "/hid/a"},
@@ -17,7 +103,7 @@ class DashboardBoardsTests(unittest.TestCase):
         ]
         created = []
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             def __init__(self, serial, path):
                 self.serial = serial
                 self.path = path
@@ -69,7 +155,7 @@ class DashboardBoardsTests(unittest.TestCase):
         created = []
         closed = threading.Event()
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             closed = False
 
             def snapshot(self):
@@ -121,7 +207,7 @@ class DashboardBoardsTests(unittest.TestCase):
         created = []
         closed = threading.Event()
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             closed = False
 
             def snapshot(self):
@@ -175,6 +261,7 @@ class DashboardBoardsTests(unittest.TestCase):
         now = [0.0]
         monitor = Mock()
         monitor.snapshot.return_value = {"command_outcome_uncertain": True}
+        monitor.try_retire.return_value = False
         boards = DashboardBoards(
             discover=lambda: attached, monitor_factory=lambda *_: monitor, clock=lambda: now[0]
         )
@@ -221,7 +308,7 @@ class DashboardBoardsTests(unittest.TestCase):
         release_close = threading.Event()
         created = []
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             def __init__(self, wait_on_close=False):
                 self.wait_on_close = wait_on_close
 
@@ -298,6 +385,87 @@ class DashboardBoardsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "shutting down"):
             boards.monitor(board_id)
         monitor.close.side_effect = None
+        with self.assertRaisesRegex(RuntimeError, "Failed to close 1"):
+            boards.close()
+        monitor.close.assert_called_once()
+
+    def test_shutdown_joins_retirement_without_closing_the_monitor_twice(self):
+        attached = [{"serial_number": "board-A", "device_path": "/hid/a"}]
+        now = [0.0]
+        closing = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        monitor = Mock()
+        monitor.snapshot.return_value = {"command_outcome_uncertain": False}
+
+        def close():
+            closing.set()
+            release.wait(2)
+
+        monitor.close.side_effect = close
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: monitor, clock=lambda: now[0])
+        boards.monitor(boards.boards()["boards"][0]["id"])
+        attached.clear()
+        now[0] = 30.0
+        boards.boards()
+        self.assertTrue(closing.wait(1))
+        shutdown = threading.Thread(target=lambda: (boards.close(), finished.set()))
+        shutdown.start()
+        try:
+            self.assertFalse(finished.wait(0.05))
+            monitor.close.assert_called_once()
+        finally:
+            release.set()
+            shutdown.join(2)
+        self.assertTrue(finished.is_set())
+        boards.close()
+        monitor.close.assert_called_once()
+
+    def test_discovery_does_not_hold_registry_lock_and_cannot_publish_after_shutdown(self):
+        discovering = threading.Event()
+        release = threading.Event()
+        errors = []
+        board = {"serial_number": "board-A", "device_path": "/hid/a"}
+        discover = Mock(return_value=[board])
+        monitor = Mock()
+        boards = DashboardBoards(discover=discover, monitor_factory=lambda *_: monitor)
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.monitor(board_id)
+
+        def slow_discover():
+            discovering.set()
+            release.wait(2)
+            return [board]
+
+        discover.side_effect = slow_discover
+
+        def rescan():
+            try:
+                boards.boards()
+            except RuntimeError as error:
+                errors.append(str(error))
+
+        worker = threading.Thread(target=rescan)
+        worker.start()
+        self.assertTrue(discovering.wait(1))
+        try:
+            acquired = boards._lock.acquire(timeout=0.2)
+            self.assertTrue(acquired)
+            if acquired:
+                boards._lock.release()
+            self.assertIs(boards.monitor(board_id), monitor)
+            boards.close()
+        finally:
+            release.set()
+            worker.join(2)
+        self.assertEqual(errors, ["dashboard is shutting down"])
+        monitor.close.assert_called_once()
+
+    def test_path_identity_preserves_non_utf8_bytes(self):
+        boards = DashboardBoards(discover=lambda: [{"device_path": "/hid/\udcff", "serial_number": None}])
+        first = boards.boards()["boards"][0]
+        self.assertEqual(first, boards.boards()["boards"][0])
+        self.assertEqual(first["device_path"].encode("utf-8", "surrogateescape"), b"/hid/\xff")
         boards.close()
 
     def test_managed_monitor_limit_bounds_retirement_backlog(self):
@@ -313,7 +481,7 @@ class DashboardBoardsTests(unittest.TestCase):
         count_lock = threading.Lock()
         created = []
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             def snapshot(self):
                 return {"command_outcome_uncertain": False}
 
@@ -359,7 +527,7 @@ class DashboardBoardsTests(unittest.TestCase):
         release_close = threading.Event()
         close_finished = threading.Event()
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             def snapshot(self):
                 return {"command_outcome_uncertain": False}
 
@@ -386,7 +554,7 @@ class DashboardBoardsTests(unittest.TestCase):
         ]
         closed: list[str | None] = []
 
-        class FakeMonitor:
+        class FakeMonitor(IdleMonitor):
             def __init__(self, serial: str | None):
                 self.serial = serial
 

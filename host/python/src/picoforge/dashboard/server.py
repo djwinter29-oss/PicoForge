@@ -6,34 +6,34 @@ from pathlib import Path
 import base64
 import binascii
 import secrets
-from typing import cast
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from .boards import DashboardBoards
 from .console import ConsoleBridge
-from .monitor import CommandOutcomeUncertain, _empty_snapshot
+from .monitor import BoardConflict, CommandOutcomeUncertain, _empty_snapshot
 from .. import __version__
 from ..hid.device import WirelessTestCancelled
-from ..hid.models import WirelessStatus
-from ..reports import InvalidRequest, ProtocolError
+from ..reports.models import WirelessStatus
+from ..reports import (
+    ControlOpcode, InvalidRequest, ProtocolError, build_self_test_command_report, build_wireless_command_report,
+)
+from ..reports.common import _validate_settings
 from ..reports.wireless import request_ssid, validate_wireless_configuration
 
 _INTERNAL_WIRELESS_FIELDS = frozenset({"wifi_state_id", "tcp_cli_auth_required", "age_ms", "error"})
 
 
-def _public_wireless(status: WirelessStatus) -> WirelessStatus:
-    return cast(WirelessStatus, {
+def _public_wireless(status: WirelessStatus) -> dict[str, object]:
+    """Serialize the HTTP shape without pretending it still contains every internal HID field."""
+    return {
         key: value for key, value in status.items() if key not in _INTERNAL_WIRELESS_FIELDS
-    })
+    }
 
 
 def _unavailable(message: str, *, uncertain: bool = False) -> tuple:
     return jsonify({"error": message, "uncertain": uncertain}), 503
-
-
-def _limit_console_request() -> None:
-    request.max_content_length = 2048
 
 
 def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None = None) -> Flask:
@@ -46,19 +46,29 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
     app.config.update(
         SECRET_KEY=secrets.token_bytes(32),
         TRUSTED_HOSTS=["localhost", "127.0.0.1"],
+        MAX_CONTENT_LENGTH=4096,
     )
 
     @app.before_request
     def same_origin_writes():
+        if request.path == "/api/console":
+            request.max_content_length = 2048
+        limit = request.max_content_length
+        if limit is not None and request.content_length is not None and request.content_length > limit:
+            raise RequestEntityTooLarge()
         origin = request.headers.get("Origin")
         if (request.method != "GET" and request.path.startswith("/api/")
                 and origin is not None and origin != request.host_url.rstrip("/")):
             return jsonify({"error": "API writes must be same-origin"}), 403
         return None
 
+    @app.errorhandler(RequestEntityTooLarge)
+    def request_too_large(_error: RequestEntityTooLarge):
+        return jsonify({"error": "Request body exceeds the API size limit"}), 413
+
     @app.errorhandler(RuntimeError)
     def conflict(error: RuntimeError):
-        if type(error) is RuntimeError or isinstance(error, WirelessTestCancelled):
+        if type(error) is RuntimeError or isinstance(error, (BoardConflict, WirelessTestCancelled)):
             return jsonify({"error": str(error)}), 409
         app.logger.exception("Unhandled RuntimeError")
         return jsonify({"error": "Internal server error"}), 500
@@ -138,7 +148,6 @@ def _board(boards: DashboardBoards):
 def _register_console_routes(app: Flask, boards: DashboardBoards, console: ConsoleBridge) -> None:
     @app.post("/api/console")
     def console_connect():
-        _limit_console_request()
         try:
             payload = request.get_json(silent=True)
             if not isinstance(payload, dict) or payload:
@@ -159,13 +168,11 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
 
     @app.get("/api/console")
     def console_read():
-        _limit_console_request()
         data, closed = console.read(request.args.get("session"))
         return jsonify({"data": base64.b64encode(data).decode("ascii"), "closed": closed})
 
     @app.put("/api/console")
     def console_write():
-        _limit_console_request()
         payload = request.get_json(silent=True)
         if (not isinstance(payload, dict) or set(payload) != {"data"}
                 or not isinstance(payload["data"], str) or len(payload["data"]) > 1368):
@@ -181,7 +188,6 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
 
     @app.delete("/api/console")
     def console_close():
-        _limit_console_request()
         console.close(request.args.get("session"))
         return jsonify({"ok": True})
 
@@ -195,7 +201,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         snapshot = boards.monitor(board_id).status_snapshot()
         wireless = snapshot.get("wireless")
         if wireless is not None:
-            snapshot["wireless"] = _public_wireless(wireless)
+            return jsonify({**snapshot, "wireless": _public_wireless(wireless)})
         return jsonify(snapshot)
 
     @app.get("/api/boards")
@@ -217,6 +223,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         force = payload.pop("confirm_data_loss", False)
         if type(force) is not bool:
             return jsonify({"error": "confirm_data_loss must be boolean"}), 400
+        _validate_settings(payload)
         return jsonify(_board(boards).set_settings(payload, force=force))
 
     @app.post("/api/msc")
@@ -238,7 +245,9 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or payload.get("confirm") is not True:
             return jsonify({"error": "Explicit confirm: true is required"}), 400
-        return jsonify(_board(boards).resync_command())
+        result = _board(boards).resync_command()
+        wireless = result["wireless"]
+        return jsonify({**result, "wireless": _public_wireless(wireless) if wireless is not None else None})
 
     @app.post("/api/self-test")
     def self_test():
@@ -249,6 +258,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         if action not in ("start", "cancel"):
             return jsonify({"error": "Self-test action must be start or cancel"}), 400
         size_mib = None if action == "cancel" else payload.get("size_mib")
+        build_self_test_command_report(action, size_mib)
         return jsonify(_board(boards).set_self_test(action, size_mib)), 202
 
     @app.post("/api/msc/force-return")
@@ -274,6 +284,8 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
         if not isinstance(payload, dict) or set(payload) - {"ssid", "ssid_hex", "password"}:
             return jsonify({"error": "Expected SSID and optional password"}), 400
         ssid = request_ssid(payload) if "ssid_hex" in payload else payload.get("ssid", "")
+        build_wireless_command_report(1, ControlOpcode.STAGE_SSID, value=ssid)
+        build_wireless_command_report(1, ControlOpcode.STAGE_PASSWORD, value=payload.get("password", ""))
         try:
             return jsonify(_board(boards).test_wireless(ssid, payload.get("password", "")))
         except TimeoutError:
@@ -299,8 +311,7 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
         validate_wireless_configuration(payload)  # Bad input is 400 whatever the board state.
         try:
             result = _board(boards).set_wireless(payload)
-            result["wireless"] = _public_wireless(result["wireless"])
-            return jsonify(result)
+            return jsonify({**result, "wireless": _public_wireless(result["wireless"])})
         except (OSError, ProtocolError):
             app.logger.exception("Wireless provisioning outcome is uncertain")
             return _unavailable("Wireless provisioning is unavailable")

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..hid.models import MemoryStatus, SupportedHardwareIdentity
+    from .models import MemoryStatus, SupportedHardwareIdentity
 
 from .common import (
     REPORT_VERSION,
