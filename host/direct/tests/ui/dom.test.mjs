@@ -21,4 +21,3 @@ test("text rendering only updates changed values", () => {
     assert.equal(writes, 3);
   } finally { globalThis.document = previous; }
 });
-

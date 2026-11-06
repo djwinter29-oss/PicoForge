@@ -59,7 +59,6 @@ test("operation eligibility is one rule table for storage, settings, wireless an
     true);
 });
 
-
 test("canRun is the one gate and names the first failing precondition per operation", () => {
   const ready = readyState({ hardware: { capabilities: 1 | 2 | 4 | 32 | 128 }, runtime: { led_available: true } });
   for (const operation of ["led", "reboot", "msc", "selfTest", "settings", "wireless"]) {
@@ -86,3 +85,19 @@ test("canRun is the one gate and names the first failing precondition per operat
   }
 });
 
+test("render gates reuse one eligibility snapshot while action gates still recompute", () => {
+  const state = readyState({ hardware: { capabilities: 1 | 2 | 4 | 32 | 128 },
+    runtime: { led_available: true } });
+  let reads = 0;
+  const freshness = state.freshness;
+  Object.defineProperty(state, "freshness", { get() { reads++; return freshness; } });
+  const eligibility = deriveOperationEligibility(state);
+  reads = 0;
+  for (const operation of ["led", "reboot", "msc", "selfTest", "settings", "wireless"]) {
+    assert.equal(canRun(state, operation, eligibility).allowed, true);
+  }
+  assert.equal(reads, 0, "render-time checks do not rederive eligibility");
+  state.busy = true;
+  assert.equal(canRun(state, "settings").allowed, false, "action-time checks never reuse a stale render cache");
+  assert.ok(reads > 0);
+});

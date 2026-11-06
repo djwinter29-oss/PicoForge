@@ -25,8 +25,8 @@ test("board pin tables are reused until the displayed configuration changes", ()
   assert.equal(el("#board-storage-pins").replaceCount, 2);
 }));
 
-
-test("identity RAM stays build accounting while stale inputs show no current values", () => withDocument((el, renderStatus) => {
+test("identity RAM stays build accounting while stale inputs show no current values", () =>
+  withDocument((el, renderStatus) => {
   const state = snapshot();
   state.runtime = { uptime_ms: 9007199254740993n, system_clock_hz: 200000000,
     cpu_usage_core0_basis_points: 1234, cpu_usage_core1_basis_points: null, led_available: true, led_on: true };
@@ -55,8 +55,8 @@ test("identity RAM stays build accounting while stale inputs show no current val
   assert.equal(el("#led-control")["aria-pressed"], "false");
 }));
 
-
-test("SPI pin table has two rows and keeps card detect after the four bus signals", () => withDocument((el, renderStatus) => {
+test("SPI pin table has two rows and keeps card detect after the four bus signals", () =>
+  withDocument((el, renderStatus) => {
   const state = snapshot();
   state.hardware = decodeIdentityReport(identity(1 | 2 | 4 | 8 | 32));
   state.settings = decodeConfigReport(config("spi"), state.hardware);
@@ -71,7 +71,6 @@ test("SPI pin table has two rows and keeps card detect after the four bus signal
   assert.ok(rows[0].children.every(cell => cell.scope === "col"));
 }));
 
-
 test("device rendering reuses the supplied dashboard presentation snapshot", () => {
   const state = { connected: true };
   const dashboard = deriveDashboardViewModel(state, true);
@@ -80,4 +79,3 @@ test("device rendering reuses the supplied dashboard presentation snapshot", () 
   assert.equal(device.eligibility.blocked, true, "the form lock survives section composition");
   assert.equal(device.connection_label, dashboard.connection_label);
 });
-

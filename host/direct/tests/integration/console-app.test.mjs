@@ -104,4 +104,3 @@ test("Direct console uses the connected dashboard for authentication without ask
     else delete globalThis.crypto;
   }
 });
-

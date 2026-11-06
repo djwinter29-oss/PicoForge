@@ -24,7 +24,6 @@ test("USB TCP CLI proof is board-bound and serialized through Feature 20 opcode 
   await client.disconnect();
 });
 
-
 test("stale/capability gates stop command writes, including self-test and confirmed reboot", async () => {
   let now = 0;
   const { client, device, sent } = fakeConnection({ now: () => now, capabilities: 16 | 1 });
@@ -40,7 +39,6 @@ test("stale/capability gates stop command writes, including self-test and confir
   await client.disconnect();
 });
 
-
 test("W-board settings save sends and verifies the radio enables", async () => {
   const { client, device, sent } = fakeConnection({ capabilities: 1 | 2 | 4 | 16 | 32 | 128 });
   await client.connect();
@@ -50,7 +48,6 @@ test("W-board settings save sends and verifies the radio enables", async () => {
   assert.equal(client.state.settings.radios, 2);
   await client.disconnect();
 });
-
 
 test("MSC/self-test acceptance waits for fresh status and settings save queues firmware reboot", async () => {
   const { client, device, sent } = fakeConnection();
@@ -87,7 +84,6 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   await client.disconnect();
 });
 
-
 test("configuration save selects the wireless workflow from the board link and intent", async () => {
   const calls = [];
   const session = {
@@ -115,7 +111,6 @@ test("configuration save selects the wireless workflow from the board link and i
   assert.deepEqual(calls, [["settings", settings, false, undefined]]);
 });
 
-
 test("scan lifecycle reads generation-indexed entries, keeps raw SSIDs and serializes the whole workflow", async () => {
   const setup = await connected();
   radio(setup, { scanEntries: [Uint8Array.from([0, 255, 65]), new TextEncoder().encode("normal")] });
@@ -132,7 +127,6 @@ test("scan lifecycle reads generation-indexed entries, keeps raw SSIDs and seria
   assert.equal(setup.client.state.pending_wireless, null);
   await setup.client.disconnect();
 });
-
 
 test("tested pair saves without restaging, key staging retains test, "
   + "save confirms exact switches and commit mask", async () => {
@@ -156,7 +150,6 @@ test("tested pair saves without restaging, key staging retains test, "
   await setup.client.disconnect();
 });
 
-
 test("password omission is safe only for the saved raw SSID; "
   + "explicit open/forget and cancel are supported", async () => {
   const setup = await connected();
@@ -176,7 +169,6 @@ test("password omission is safe only for the saved raw SSID; "
   await setup.client.disconnect();
 });
 
-
 test("failed tests leave discardable staging but do not claim a tested pair", async () => {
   const setup = await connected(); radio(setup, { testFailure: true });
   await assert.rejects(setup.client.testWireless({ ssid: "home", password: "password" }), says(/Password rejected/));
@@ -185,7 +177,6 @@ test("failed tests leave discardable staging but do not claim a tested pair", as
   await setup.client.cancelWireless();
   await setup.client.disconnect();
 });
-
 
 test("malformed save settings and credentials reject before the first SET", async () => {
   const setup = await connected(); radio(setup);
@@ -198,4 +189,3 @@ test("malformed save settings and credentials reject before the first SET", asyn
   }
   await setup.client.disconnect();
 });
-

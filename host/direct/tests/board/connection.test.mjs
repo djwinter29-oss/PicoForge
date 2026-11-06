@@ -26,7 +26,6 @@ test("mandatory connection reads reject malformed identity/config failures and g
   assert.match(describe(missing.client.state.error), /missing config/);
 });
 
-
 test("MSC-style re-enumeration reconnects by Feature 1 UID, not a non-standard serialNumber property", async () => {
   const { client, device, hid } = fakeConnection();
   assert.equal("serialNumber" in device, false);
@@ -54,7 +53,6 @@ test("MSC-style re-enumeration reconnects by Feature 1 UID, not a non-standard s
   await client.disconnect();
 });
 
-
 test("an aborted initialization cannot close or overwrite a newer same-board connection", async () => {
   const { client, device, hid } = fakeConnection();
   const receive = device.receiveFeatureReport;
@@ -79,4 +77,3 @@ test("an aborted initialization cannot close or overwrite a newer same-board con
   await client.disconnect();
   client.dispose();
 });
-

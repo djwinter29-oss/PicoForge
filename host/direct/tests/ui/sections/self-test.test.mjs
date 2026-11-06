@@ -5,7 +5,8 @@ import { decodeSelfTestReport } from "../../../web/js/protocol/codec.mjs";
 import { selfTest } from "../../support/fixtures.mjs";
 import { withDocument, snapshot } from "../../support/view.mjs";
 
-test("self-test writes require fresh, known, mounted, firmware-owned state and valid size", () => withDocument((el, renderStatus) => {
+test("self-test writes require fresh, known, mounted, firmware-owned state and valid size", () =>
+  withDocument((el, renderStatus) => {
   const state = snapshot();
   renderSelfTest(state);
   assert.equal(el("#self-test-start").disabled, false);
@@ -42,7 +43,6 @@ test("self-test writes require fresh, known, mounted, firmware-owned state and v
   assert.equal(el("#self-test-cancel").disabled, true);
 }));
 
-
 test("self-test presents retained throughput and unknown enums without obsolete request errors",
   () => withDocument((el, renderStatus) => {
   const state = snapshot();
@@ -69,11 +69,9 @@ test("self-test presents retained throughput and unknown enums without obsolete 
   assert.equal(el("#self-test-disclosure").open, false);
 }));
 
-
 test("self-test view models fail closed without a fresh controllable report", () => {
   const model = deriveSelfTestViewModel({ connected: true }, 32);
   assert.equal(model.text["self-test-state"], "Unavailable");
   assert.equal(model.startDisabled, true);
   assert.equal(model.cancelDisabled, true);
 });
-

@@ -1,33 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bindWirelessForm, formTransition } from "../../../web/js/ui/sections/wireless-form.mjs";
-import { renderWirelessStatus } from "../../../web/js/ui/sections/wireless.mjs";
+import { createDocument } from "../../support/dom.mjs";
 
-test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
+test("replacement tests invalidate the previous pair and require retry or cancellation after failure", async () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  globalThis.document = { querySelector(selector) {
-    if (!elements.has(selector)) elements.set(selector, {});
-    return elements.get(selector);
-  } };
-  const snapshot = { connected: true, hardware: { capabilities: 128, serial_number: "AB" }, wireless: {
-    wifi_enabled: true, ssid: "saved", wifi_state: "failed", ble_enabled: true, ble_state: "off",
-    ble_key_configured: false,
-  } };
+  const { document, element: el, fire } = createDocument();
+  globalThis.document = document;
+  let fails = false;
+  let cancelCount = 0;
+  const form = bindWirelessForm({
+    supported: () => true, ready: () => true, scan: async () => [],
+    test: async () => {
+      if (fails) throw new Error("Replacement failed");
+      return { remaining_seconds: 599 };
+    },
+    cancelTest: async () => { cancelCount++; },
+  });
   try {
-    renderWirelessStatus(snapshot);
-    assert.equal(elements.get("#direct-ble-state").textContent, "Off (no control key)");
-    assert.doesNotMatch(elements.get("#direct-wifi-state").textContent, /key/);
-    renderWirelessStatus({ ...snapshot, wireless: { ...snapshot.wireless, ble_key_configured: true } });
-    assert.equal(elements.get("#direct-ble-state").textContent, "PicoForge-AB (starting)");
-    renderWirelessStatus({ ...snapshot, connected: false });
-    assert.equal(elements.get("#direct-wifi-state").textContent, "--");
-    renderWirelessStatus({ ...snapshot, wireless_error: "Read failed" });
-    assert.equal(elements.get("#direct-wifi-state").textContent, "Unavailable");
-    assert.equal(elements.get("#direct-wifi-state").title, "Read failed");
-  } finally { globalThis.document = previous; }
-});
+    el("#direct-settings-wifi").value = "1";
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true } });
+    el("#direct-wifi-ssid").value = "first";
+    await fire("#direct-wifi-connect", "click");
+    assert.equal(form.request().ssid, "first");
+    assert.equal(form.request().use_tested_wifi, true);
 
+    fails = true;
+    el("#direct-wifi-ssid").value = "replacement";
+    await fire("#direct-wifi-connect", "click");
+    assert.match(el("#direct-wifi-status").textContent, /Replacement failed/);
+    assert.equal(form.canSave(), false);
+    assert.equal(form.dirty(), true, "firmware staging still needs clearing");
+    assert.throws(() => form.request(), /again or clear/);
+    assert.equal(el("#direct-wireless-summary").hidden, true, "old success/countdown is gone");
+
+    fails = false;
+    await fire("#direct-wifi-connect", "click");
+    assert.equal(form.canSave(), true);
+    assert.equal(form.request().ssid, "replacement");
+    fails = true;
+    await fire("#direct-wifi-connect", "click");
+    el("#direct-settings-wifi").focus();
+    el("#direct-settings-wifi").value = "0";
+    await fire("#direct-settings-wifi", "input");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(cancelCount, 1, "disabling also clears a failed replacement test");
+    assert.equal(form.canSave(), true);
+    assert.equal(Object.hasOwn(form.request(), "use_tested_wifi"), false);
+  } finally { form.dispose(); globalThis.document = previous; }
+});
 
 test("scan selection retains raw SSID bytes, manual edits drop hex, "
   + "and failed-test cancellation clears staging", async () => {
@@ -87,33 +108,6 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
     assert.equal(cancelCount, 3, "a failed test also leaves firmware staging that must be discarded");
   } finally { form.reset(); globalThis.document = previous; }
 });
-
-
-test("connected Wi-Fi CLI status links to the console in a new tab", () => {
-  const previous = globalThis.document;
-  const elements = new Map();
-  const wifi = { textContent: "", title: "", children: [], querySelector() { return this.children[0] ?? null; },
-    replaceChildren(...children) { this.children = children; } };
-  const makeElement = () => ({ textContent: "", title: "", hidden: false, dataset: {} });
-  elements.set("#direct-wifi-diagnostics", makeElement());
-  elements.set("#direct-wifi-state", wifi);
-  elements.set("#direct-ble-diagnostics", makeElement());
-  elements.set("#direct-ble-state", makeElement());
-  globalThis.document = { querySelector: selector => elements.get(selector), createElement: () => ({
-    dataset: {}, textContent: "", href: "", title: "",
-  }) };
-  try {
-    renderWirelessStatus({ connected: true, hardware: { capabilities: 128 },
-      console_url: "console.html?ipv4=192.168.1.9",
-      wireless: { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
-        ssid: "HomeDev", ipv4: "192.168.1.9", ble_enabled: false } });
-    assert.equal(wifi.children[0].textContent, "HomeDev (192.168.1.9)");
-    assert.equal(wifi.children[0].href, "console.html?ipv4=192.168.1.9");
-    assert.equal(wifi.children[0].target, "_blank");
-    assert.equal(wifi.children[0].rel, "noopener noreferrer");
-  } finally { globalThis.document = previous; }
-});
-
 
 test("TCP switch is saved explicitly and expired test credentials block saving", async context => {
   const previous = globalThis.document;
@@ -227,7 +221,6 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
   }
 });
 
-
 test("one form phase serializes scan, test and cancel, and a reset drops late results", async () => {
   const previous = globalThis.document;
   const elements = new Map();
@@ -294,7 +287,6 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
   } finally { globalThis.document = previous; }
 });
 
-
 test("formTransition serializes one phase and requires reconnect recovery before a retry", () => {
   const step = (form, ...events) => events.reduce((value, type) =>
     formTransition(value, typeof type === "string" ? { type } : type), form);
@@ -309,7 +301,6 @@ test("formTransition serializes one phase and requires reconnect recovery before
   assert.equal(step(failed, "recovered", "cancel", "cleared").phase, "idle");
   assert.equal(step(idle, "test", "reset").phase, "idle", "reset drops any in-flight phase");
 });
-
 
 test("obsolete cancellation and clipboard completions cannot mutate a reset wireless form", async () => {
   const previous = globalThis.document;
@@ -367,4 +358,3 @@ test("obsolete cancellation and clipboard completions cannot mutate a reset wire
     }
   } finally { globalThis.document = previous; }
 });
-

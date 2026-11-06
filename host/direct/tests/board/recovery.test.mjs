@@ -33,7 +33,6 @@ test("disconnect during GET clears caches and reconnect resolves only the origin
   await client.disconnect();
 });
 
-
 test("pending control transactions survive a page reload and reconcile without replay", async () => {
   const { client, device, hid, sent, pendingStore } = fakeConnection();
   await client.connect();
@@ -62,7 +61,6 @@ test("pending control transactions survive a page reload and reconcile without r
   assert.equal(sent.length, 1, "recovery reads the result and never resends the command");
   await restored.disconnect();
 });
-
 
 test("confirmed forced settings save reconnects to the original result without replay", async () => {
   for (const incorrect of [false, true]) {
@@ -98,7 +96,6 @@ test("confirmed forced settings save reconnects to the original result without r
   }
 });
 
-
 test("uncertain command recovery stores no secrets, reads same UID+tx+opcode and never replays SET", async () => {
   const setup = await connected(); radio(setup);
   const read = setup.device.receiveFeatureReport;
@@ -122,7 +119,6 @@ test("uncertain command recovery stores no secrets, reads same UID+tx+opcode and
   assert.equal(setup.sent.length, 1);
   await restored.disconnect(); await setup.client.disconnect();
 });
-
 
 test("accepted test lifecycle survives reload, enforces generation and never stores pair bytes", async () => {
   for (const wrongGeneration of [false, true]) {
@@ -148,4 +144,3 @@ test("accepted test lifecycle survives reload, enforces generation and never sto
     await restored.disconnect(); await setup.client.disconnect();
   }
 });
-

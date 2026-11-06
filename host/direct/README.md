@@ -218,8 +218,9 @@ JavaScript module tests mirror paths below `web/js`: for example, `board/command
 - `tests/support/`: shared Direct-only device and view fixtures, not runnable suites.
 - `tests/test_server.py`: the matching test for root-level `server.py`.
 
-The Node runner discovers every nested `*.test.mjs` file without shell-dependent glob expansion. To investigate a
-failure, run its source-matching file directly, or pass a Node test-name filter to the full runner:
+The Node runner discovers every nested `*.test.mjs` file without shell-dependent glob expansion. A layout contract
+checks that each module suite has a matching source file and that helpers stay outside runnable suites. To investigate
+a failure, run its source-matching file directly, or pass a Node test-name filter to the full runner:
 
 ```sh
 node --test host/direct/tests/board/commands.test.mjs

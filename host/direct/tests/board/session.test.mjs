@@ -16,7 +16,6 @@ test("a disposed client ignores HID events and stops its expiry timer", async ()
   assert.equal(client.polling.receipts.get(3), receipt, "input reports no longer reach a disposed client");
 });
 
-
 test("the same board session consumes either peer transport without HID-shaped device APIs", async () => {
   for (const kind of ["usb", "ble"]) {
     const sent = [];
@@ -46,4 +45,3 @@ test("the same board session consumes either peer transport without HID-shaped d
     session.dispose();
   }
 });
-

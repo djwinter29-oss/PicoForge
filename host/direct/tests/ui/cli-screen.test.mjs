@@ -10,7 +10,6 @@ test("CLI screen applies the Embedded CLI line-editing escapes", () => {
   assert.deepEqual(screen.display(), ["> hello\n> xjunkok", " ", ""], "non-CSI and unknown CSI escapes are dropped");
 });
 
-
 test("CLI screen bounds rows and columns", () => {
   const screen = new CliScreen();
   screen.write(`${"x".repeat(600)}\n`.repeat(1005));
@@ -20,7 +19,6 @@ test("CLI screen bounds rows and columns", () => {
   assert.equal(rows[0].length, 512);
   assert.deepEqual([cursor, after], [" ", ""]);
 });
-
 
 test("CLI keys map to the bytes the firmware expects", () => {
   const key = (name, modifiers = {}) => cliInputForKey({ key: name, ctrlKey: false, altKey: false,
@@ -33,7 +31,6 @@ test("CLI keys map to the bytes the firmware expects", () => {
   assert.equal(key("Shift"), null);
   assert.equal(key("é"), "é");
 });
-
 
 test("cached scrollback reflects edits to saved rows and drops retired rows", () => {
   const screen = new CliScreen();
@@ -51,4 +48,3 @@ test("cached scrollback reflects edits to saved rows and drops retired rows", ()
   assert.equal(before.split("\n").length, 1000);
   assert.ok(!before.includes("abZ"), "retired rows must not reappear from the cache");
 });
-

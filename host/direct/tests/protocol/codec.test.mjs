@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport, decodeSelfTestReport, decodeControlResult, buildControlRequest, decodeWireless, displaySsid, ssidBytes,
+  decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport, decodeSelfTestReport,
+  decodeControlResult, buildControlRequest, decodeWireless, displaySsid, ssidBytes,
 } from "../../web/js/protocol/codec.mjs";
 import { identity, config, telemetry, storage, selfTest, result } from "../support/fixtures.mjs";
 import { readFileSync } from "node:fs";
-import { status, connected } from "../support/wireless.mjs";
+import { status } from "../support/wireless.mjs";
 
 const vectors = JSON.parse(readFileSync(new URL("../../../../tests/fixtures/wireless-status.json", import.meta.url)));
 
@@ -35,7 +36,6 @@ test("identity validates exact WebHID payload, product, layout, capabilities, bo
   }
 });
 
-
 test("configuration validates profiles, selected-transport GPIOs, flags and LED capability", () => {
   const id = decodeIdentityReport(identity());
   const report = config();
@@ -57,7 +57,6 @@ test("configuration validates profiles, selected-transport GPIOs, flags and LED 
   assert.equal(decodeConfigReport(unknownReset, id).reset_cause, 255);
 });
 
-
 test("configuration accepts non-GPIO LEDs and preserves GPIO validation", () => {
   const report = config();
   report[13] &= ~2;
@@ -72,7 +71,6 @@ test("configuration accepts non-GPIO LEDs and preserves GPIO validation", () => 
   assert.equal(decodeConfigReport(report, noLed).led_gpio, 255);
   assert.throws(() => decodeConfigReport(config(), noLed));
 });
-
 
 test("telemetry preserves 64-bit uptime, load sentinels, temperature and exact length", () => {
   const report = telemetry();
@@ -96,7 +94,6 @@ test("telemetry preserves 64-bit uptime, load sentinels, temperature and exact l
   new DataView(absent.buffer).setInt16(2, 0, true);
   assert.equal(decodeTelemetryReport(absent).temperature_centidegrees, null);
 });
-
 
 test("storage validates independent SD sample, ownership, timing, capacity and CID", () => {
   const id = decodeIdentityReport(identity());
@@ -123,7 +120,6 @@ test("storage validates independent SD sample, ownership, timing, capacity and C
   assert.throws(() => decodeStorageReport(storage().slice(0, 33), id));
 });
 
-
 test("self-test validates retained states, execution/request errors and unknown diagnostics", () => {
   const idle = selfTest();
   assert.equal(decodeSelfTestReport(idle).state, "idle");
@@ -148,7 +144,6 @@ test("self-test validates retained states, execution/request errors and unknown 
   assert.throws(() => decodeSelfTestReport(queued));
 });
 
-
 test("control request builders encode exact 68-byte envelopes and reject malformed operations", () => {
   const padded = prefix => [...prefix, ...Array(68 - prefix.length).fill(0)];
   assert.deepEqual([...buildControlRequest(1, 1, { args: [1] })], padded([1, 1, 1, 0, 1]));
@@ -166,7 +161,6 @@ test("control request builders encode exact 68-byte envelopes and reject malform
   assert.throws(() => buildControlRequest(0, 1));
   assert.equal(buildControlRequest(1, 4, { args: [1, 0, 4, 0, 0] })[6], 4, "1024 MiB is the self-test ceiling");
 });
-
 
 test("control results enforce every opcode/status/error combination and zero result data", () => {
   const allowed = {
@@ -208,7 +202,6 @@ test("control results enforce every opcode/status/error combination and zero res
   assert.throws(() => decodeControlResult(saved));
 });
 
-
 test("all decoders reject padded, short and unsupported-layout payloads", () => {
   const id = decodeIdentityReport(identity());
   for (const [decode, bytes] of [[decodeIdentityReport, identity()],
@@ -223,7 +216,6 @@ test("all decoders reject padded, short and unsupported-layout payloads", () => 
     assert.doesNotThrow(() => decode(new DataView(buffer.buffer, 1, bytes.length)));
   }
 });
-
 
 test("Report12 uses exact48byte vectors, raw SSIDs and no fabricated removed diagnostics", () => {
   const wireless = decodeWireless(Buffer.from(vectors.tcp_cli_auth_required, "hex"),
@@ -254,7 +246,6 @@ test("Report12 uses exact48byte vectors, raw SSIDs and no fabricated removed dia
   assert.equal(decodeWireless(reserved).detail, 0, "reserved detail/flag bits are ignored");
 });
 
-
 test("opaque SSIDs escape invalid UTF8 and controls but round-trip raw bytes rather than the label", () => {
   const raw = Uint8Array.from([0x61, 0, 255, 0xc3, 0xa9, 0x3c, 10]);
   const wireless = decodeWireless(status({ ssid: raw }));
@@ -266,7 +257,6 @@ test("opaque SSIDs escape invalid UTF8 and controls but round-trip raw bytes rat
   assert.throws(() => ssidBytes({ ssid_hex: "aa".repeat(33) }));
   assert.throws(() => ssidBytes({ ssid: "é".repeat(17) }));
 });
-
 
 test("staging, scan index/generation and proof requests use64argument bytes with zero padding", () => {
   for (const [op, args] of [[6, [3, 0, 255, 1]], [7, [8, ...new TextEncoder().encode("password")]],
@@ -282,7 +272,6 @@ test("staging, scan index/generation and proof requests use64argument bytes with
     assert.throws(() => buildControlRequest(1, op, { args }));
   }
 });
-
 
 test("strict result validation enforces details, scan padding, commit masks and opcode status rules", () => {
   for (const [op, state, error, detail] of [[6, 3, 3, 16], [7, 3, 3, 17], [8, 3, 3, 18],
@@ -304,4 +293,3 @@ test("strict result validation enforces details, scan padding, commit masks and 
   assert.equal(decodeControlResult(saved).commit_mask, 7);
   saved[9] = 8; assert.throws(() => decodeControlResult(saved));
 });
-

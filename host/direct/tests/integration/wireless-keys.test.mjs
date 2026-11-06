@@ -27,4 +27,3 @@ test("all-zero32byte keys remain configured; only empty keys clear", async () =>
   await assert.rejects(client.setControlKey(short), says(/32 bytes/));
   assert.ok(short.every(byte => byte === 0), "the transport wipes the caller's key bytes");
 });
-

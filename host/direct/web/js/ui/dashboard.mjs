@@ -1,4 +1,4 @@
-import { CAP, STAGED_EXPIRED } from "../protocol/constants.mjs";
+import { CAP, OP, STAGED_EXPIRED } from "../protocol/constants.mjs";
 import { createDashboardView, renderControls } from "./dashboard-view.mjs";
 import { bindWirelessForm } from "./sections/wireless-form.mjs";
 import { bindConsoleLink } from "./sections/console-link.mjs";
@@ -97,17 +97,22 @@ export function mountDashboard({ session, selectTransport, timers, environment }
   }
 
   /** View update: reads board and UI state, writes only DOM and the form's adopted snapshot. */
+  /** @param {import("../state/reducer.mjs").DashboardState} board
+   * @param {import("../state/reducer.mjs").UiState} view */
   function render(board, view) {
     // Domain state carries reason codes; this is the one place they become text.
     const state = { ...board, error: describe(board.error) ?? view.action_error,
       recovery_message: describe(board.recovery_message), wireless_error: describe(board.wireless_error),
       wireless_poll_error: describe(board.wireless_poll_error) };
     const viewModel = deriveDashboardViewModel(state, view.wireless_form_busy);
+    const settingsReady = canRun(board, "settings", viewModel.eligibility).allowed;
+    const wirelessReady = canRun(board, "wireless", viewModel.eligibility).allowed;
     renderStatus({ ...state, ...viewModel, open_console: consoleLink.open }, viewModel);
     renderControls(state, { eligibility: viewModel.eligibility, formBusy: view.wireless_form_busy,
       settingsMessage: view.settings_message, bleName: client.transport.name, settingsDirty: view.settings_dirty,
       wirelessDirty: wirelessForm.dirty(), wirelessCanSave: wirelessForm.canSave() }, environment);
-    wirelessForm.update(board);
+    wirelessForm.update(board, { wireless: wirelessReady, settings: !bluetoothLink() && settingsReady,
+      tcp: bluetoothLink() ? settingsReady : wirelessReady && Number(settingsRadios[0].value) === 1 });
   }
 
   async function run(operation) {
@@ -203,6 +208,9 @@ export function mountDashboard({ session, selectTransport, timers, environment }
     if (settingsSave.disabled) return;
     const force = ui.getState().configuration_force_save;
     if (Boolean(client.state.msc?.enabled) !== force) return;
+    const owner = client;
+    const signal = wirelessForm.signal;
+    const current = () => !disposed && client === owner && !signal.aborted;
     const bluetooth = bluetoothLink();
     const tcpCliEnabled = bluetooth && wirelessForm.dirty()
       ? element("direct-settings-tcp-cli").value === "1" : undefined;
@@ -213,9 +221,15 @@ export function mountDashboard({ session, selectTransport, timers, environment }
       wireless = wirelessForm.request();
       const saved = await client.saveConfiguration({ settings, force, tcpCliEnabled,
         wireless });
+      // Forced saves intentionally cross a reconnect; only a verified result with no newer draft may update the UI.
+      const recovered = force && !disposed && client === owner && owner.state.recovered_opcode === OP.SAVE_SETTINGS
+        && !ui.getState().settings_dirty && !wirelessForm.dirty();
+      if (!current() && !recovered) return;
       if (saved) wirelessForm.finish(saved);
-      setUi({ settings_dirty: false, settings_message: "Settings saved. Waiting for the board to reboot." });
+      setUi({ settings_dirty: false, settings_message: recovered
+        ? "Settings saved and confirmed after reconnect." : "Settings saved. Waiting for the board to reboot." });
     } catch (error) {
+      if (!current()) return;
       if (!bluetooth && wirelessForm.dirty()) wirelessForm.finish(null, describe(error));
       setUi({ settings_message: `Save failed: ${describe(error)}` });
     }

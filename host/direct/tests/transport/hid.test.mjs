@@ -25,7 +25,6 @@ test("explicit connect always requests selection regardless of previously author
   }
 });
 
-
 test("cancelled or denied selection never opens a previously authorized device", async () => {
   for (const denied of [false, true]) {
     const { client, hid, device } = fakeConnection();
@@ -41,11 +40,9 @@ test("cancelled or denied selection never opens a previously authorized device",
   }
 });
 
-
 test("development HID filter uses authorized vendor collection and both USB configurations", () => {
   const { device } = fakeConnection();
   assert.equal(matchesPicoForge(device), true);
   device.productId = 0x4012; assert.equal(matchesPicoForge(device), true);
   device.collections[0].usage = 2; assert.equal(matchesPicoForge(device), false);
 });
-

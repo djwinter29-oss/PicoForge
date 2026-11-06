@@ -90,7 +90,6 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   }
 });
 
-
 test("page assets and local modules use stable same-origin URLs without hand-maintained cache versions", () => {
   const read = path => readFileSync(new URL(`../../web/${path}`, import.meta.url), "utf8");
   const sources = ["index.html", "console.html",
@@ -104,4 +103,3 @@ test("page assets and local modules use stable same-origin URLs without hand-mai
     }
   }
 });
-

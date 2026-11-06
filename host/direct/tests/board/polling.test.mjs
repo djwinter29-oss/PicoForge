@@ -49,7 +49,6 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   await client.disconnect();
 });
 
-
 test("USB sharing stays pending through delivery, old reports, reconnect and ownership transitions", async () => {
   const { client, device, hid } = fakeConnection();
   await client.connect();
@@ -90,7 +89,6 @@ test("USB sharing stays pending through delivery, old reports, reconnect and own
   await client.disconnect();
 });
 
-
 test("rejected USB sharing releases pending state without inventing ownership", async () => {
   for (const commandRejected of [false, true]) {
     const { client, device } = fakeConnection();
@@ -110,7 +108,6 @@ test("rejected USB sharing releases pending state without inventing ownership", 
     await client.disconnect();
   }
 });
-
 
 test("self-test acceptance keeps controls pending until a newer report, including sequence rollover", async () => {
   const { client, device } = fakeConnection();
@@ -141,7 +138,6 @@ test("self-test acceptance keeps controls pending until a newer report, includin
   await client.disconnect();
 });
 
-
 test("Report12 freshness uses active500ms/idle2s and invalid reads never refresh the receipt", async () => {
   let now = 0;
   const setup = fakeConnection({ capabilities: 128 | 55, now: () => now });
@@ -161,7 +157,6 @@ test("Report12 freshness uses active500ms/idle2s and invalid reads never refresh
   now = 7500; setup.client.expireReports(); assert.equal(setup.client.state.wireless, null);
   await setup.client.disconnect();
 });
-
 
 test("delayed BLE status reads preserve command matching and never replay a rejected GATT write", async () => {
   const setup = await connected();
@@ -228,7 +223,6 @@ test("delayed BLE status reads preserve command matching and never replay a reje
   } finally { client.dispose(); }
 });
 
-
 test("lifecycleOutcome reads one Feature 12 snapshot against the accepted generation", () => {
   const scan = { operation: OP.SCAN, generation: 4 };
   assert.equal(lifecycleOutcome({ scan_generation: 4, scan_state: 1 }, scan), null);
@@ -242,7 +236,6 @@ test("lifecycleOutcome reads one Feature 12 snapshot against the accepted genera
   assert.ok(says(/^Password rejected$/)(lifecycleOutcome({ test_generation: 2, state: 6, detail: 3 }, wifiTest).error));
 });
 
-
 test("report receipts expire each snapshot after its own lifetime and on suspend", () => {
   let now = 0;
   const receipts = new ReportReceipts(globalThis, () => now, () => null);
@@ -255,4 +248,3 @@ test("report receipts expire each snapshot after its own lifetime and on suspend
   assert.equal(receipts.expire({ 10: "fresh" }, true).freshness[10], "stale", "suspend expires everything");
   assert.equal(receipts.size, 0);
 });
-

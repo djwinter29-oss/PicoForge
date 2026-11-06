@@ -24,4 +24,3 @@ test("dashboard view model derives connection messaging, readiness, and same-ori
   assert.equal(error.connection_label, "Attention");
   assert.equal(error.status_message, "Connection failed");
 });
-

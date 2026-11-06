@@ -16,7 +16,6 @@ test("page timer scopes cancel child work when an owner is disposed", async () =
   page.dispose();
 });
 
-
 test("timeouts and sleeps abort promptly with the owning connection signal", async () => {
   const controller = new AbortController();
   const pending = new Promise(() => {});
@@ -26,4 +25,3 @@ test("timeouts and sleeps abort promptly with the owning connection signal", asy
   await assert.rejects(timeout, { name: "AbortError", message: "Connection changed" });
   await assert.rejects(sleep, { name: "AbortError", message: "Connection changed" });
 });
-

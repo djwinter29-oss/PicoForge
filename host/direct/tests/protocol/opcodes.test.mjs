@@ -10,4 +10,3 @@ test("settings codec round-trips the four save-settings argument bytes", () => {
   assert.deepEqual(decodeSettings(encodeSettings({ ...settings, radios: undefined }, false)),
     { ...settings, radios: 0, tcp_cli_enabled: false });
 });
-

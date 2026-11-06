@@ -5,6 +5,68 @@ import { BoardSession } from "../../web/js/board/session.mjs";
 import { BleTransport } from "../../web/js/transport/ble.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../../web/js/protocol/codec.mjs";
 import { identity, config, selfTest, patchState } from "../support/fixtures.mjs";
+import { fakeConnection, storage, emit } from "../support/fixtures.mjs";
+import { createDocument } from "../support/dom.mjs";
+import { mountDashboard } from "../../web/js/ui/dashboard.mjs";
+import { createTimerScope } from "../../web/js/timers.mjs";
+import { OP } from "../../web/js/protocol/constants.mjs";
+
+test("save completions own their original draft, including verified forced-save recovery", async () => {
+  const previous = { document: globalThis.document, window: globalThis.window };
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  try {
+    for (const outcome of ["resolve", "reject", "forced", "forced-new-draft", "dispose"]) {
+      const { document, element: el, fire } = createDocument();
+      globalThis.document = document;
+      const { client, device } = fakeConnection({ capabilities: 128 | 55 });
+      const ready = async () => {
+        await client.connect();
+        emit(device, 10, storage());
+        emit(device, 11, selfTest());
+        await client.readWireless();
+        await null;
+      };
+      await ready();
+      let resolveSave, rejectSave;
+      client.saveConfiguration = () => new Promise((resolve, reject) => {
+        resolveSave = resolve;
+        rejectSave = reject;
+      });
+      const timers = createTimerScope();
+      const dashboard = mountDashboard({ session: client, selectTransport: () => client, timers,
+        environment: { secure: true, hid: true, ble: false, now: Date.now, clipboard: null } });
+      try {
+        const forced = outcome.startsWith("forced");
+        if (forced) patchState(client, { msc: { enabled: true, transition_pending: false } });
+        await null;
+        el("#settings-clock").value = "250";
+        await fire("#settings-clock", "change");
+        await null;
+        await fire("#settings-save", "click");
+        const saving = fire("#confirm-configuration", "click");
+        assert.equal(typeof resolveSave, "function", outcome);
+        await client.disconnect();
+        await null;
+        if (outcome === "dispose") dashboard.dispose();
+        else await ready();
+        if (forced) patchState(client, { recovered_opcode: OP.SAVE_SETTINGS });
+        if (outcome !== "forced" && outcome !== "dispose") await fire("#direct-ble-generate", "click");
+        await null;
+        const key = el("#direct-ble-secret").value;
+        if (outcome === "reject" || outcome === "dispose") rejectSave(new Error("Old save failed"));
+        else resolveSave({ tcp_cli_enabled: true });
+        await saving;
+        await null;
+        assert.equal(el("#direct-ble-secret").value, key, `${outcome}: newer key is preserved`);
+        if (outcome === "forced") {
+          assert.match(el("#settings-note").textContent, /Settings saved/);
+        } else {
+          assert.doesNotMatch(el("#settings-note").textContent, /Settings saved|Old save failed/, outcome);
+        }
+      } finally { dashboard.dispose(); client.dispose(); timers.dispose(); }
+    }
+  } finally { globalThis.document = previous.document; globalThis.window = previous.window; }
+});
 
 const memorySessionStorage = () => {
   const saved = new Map();
@@ -235,7 +297,6 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     else delete globalThis.sessionStorage;
   }
 });
-
 
 test("Bluetooth dialog takes the control key, then scans, and preserves transport safety", async () => {
   const saved = {
@@ -485,4 +546,3 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     }
   }
 });
-

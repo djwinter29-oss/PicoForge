@@ -13,6 +13,7 @@ import { BoardError, REASON } from "../../state/errors.mjs";
  * @typedef {Partial<ReturnType<typeof import("../../protocol/codec.mjs").decodeWireless>>} WirelessStatus
  * @typedef {{ssid: string, ssid_hex?: string, use_tested_wifi: true, tested_at: number,
  *   remaining_seconds: number}} TestedPair
+ * @typedef {{wireless: boolean, settings: boolean, tcp: boolean}} FormReadiness
  * @typedef {object} WirelessFormOptions
  * @property {(signal: AbortSignal) => Promise<ReturnType<typeof import("../../protocol/codec.mjs").decodeScanEntry>[]>} scan
  * @property {(settings: import("../../board/operations.mjs").WirelessPair,
@@ -100,11 +101,13 @@ export function bindWirelessForm({
     && remainingTestSeconds() === 0);
   const working = () => form.phase === "scanning" || form.phase === "testing";
   const clearing = () => form.phase === "canceling" || form.phase === "cancelFailed";
-  const refresh = () => {
+  /** @param {FormReadiness} [readiness] Same-snapshot gates during dashboard rendering only. */
+  const refresh = readiness => {
     const available = supported();
-    const wirelessReady = ready();
-    const radioReady = settingsReady();
-    const canSetTcpCli = tcpReady ? tcpReady() : wirelessReady && radioOn("direct-settings-wifi");
+    const wirelessReady = readiness?.wireless ?? ready();
+    const radioReady = readiness?.settings ?? settingsReady();
+    const canSetTcpCli = readiness?.tcp
+      ?? (tcpReady ? tcpReady() : wirelessReady && radioOn("direct-settings-wifi"));
     const tcpEnabled = available && canSetTcpCli && !working();
     const wifiBlocked = form.phase !== "idle";
     const tcp = el("direct-settings-tcp-cli");
@@ -151,7 +154,7 @@ export function bindWirelessForm({
   const erasing = () => Boolean(supported() && status && (
     !radioOn("direct-settings-wifi") && status.wifi_enabled && status.ssid
     || !radioOn("direct-settings-ble") && status.ble_enabled && status.ble_key_configured));
-  const dirty = () => Boolean(wifiStage || keyDirty || erasing() || status
+  const dirty = () => Boolean(wifiTestAttempted || keyDirty || erasing() || status
     && radioOn("direct-settings-tcp-cli") !== status.tcp_cli_enabled);
   el("direct-settings-tcp-cli").addEventListener("change", notify);
   const enableRadio = id => {
@@ -253,7 +256,7 @@ export function bindWirelessForm({
       if (el(id).value === "configure") {
         el(id).value = previous;
         open();
-      } else if (previous === "1" && el(id).value === "0" && id === "direct-settings-wifi" && wifiStage) {
+      } else if (previous === "1" && el(id).value === "0" && id === "direct-settings-wifi" && wifiTestAttempted) {
         const signal = lifecycleController.signal;
         void discardWifi().then(cleared => {
           if (signal.aborted) return;
@@ -316,6 +319,10 @@ export function bindWirelessForm({
     const signal = lifecycleController.signal;
     const started = now();
     dispatch({ type: "test" });
+    // Staging a replacement pair invalidates the board's previous test, even if the replacement fails.
+    timers.clearInterval(stagedTimer);
+    stagedTimer = null;
+    wifiStage = null;
     let succeeded = false;
     let step = "Starting";
     const progress = () => {
@@ -401,16 +408,23 @@ export function bindWirelessForm({
   el("direct-ble-cancel").addEventListener("click", () => bleDialog.close());
 
   return {
+    /** @brief Draft lifecycle; reset aborts it so old save completions cannot change a new draft. */
+    get signal() { return lifecycleController.signal; },
     dirty,
     operationBusy: () => form.phase !== "idle",
-    canSave: () => !keyNeedsRegeneration && !clearing() && !testExpired(),
+    canSave: () => !keyNeedsRegeneration && !working() && !clearing() && !testExpired()
+      && !(wifiTestAttempted && !wifiStage),
     /** @return {import("../../board/operations.mjs").WirelessConfiguration | null} */
     request() {
-      if (!dirty()) return null;
+      if (working()) throw new Error("Finish the wireless operation before saving.");
       if (clearing()) {
         throw new Error("Clear the temporary Wi-Fi test before saving.");
       }
+      if (wifiTestAttempted && !wifiStage) {
+        throw new Error("Test the connection again or clear the temporary Wi-Fi test before saving.");
+      }
       if (testExpired()) throw new Error("Test credentials expired; test the connection again before saving.");
+      if (!dirty()) return null;
       const wifi = radioOn("direct-settings-wifi");
       const ble = radioOn("direct-settings-ble");
       /** @type {import("../../board/operations.mjs").WirelessConfiguration} */
@@ -466,8 +480,8 @@ export function bindWirelessForm({
       timers.dispose();
     },
     /** @brief Adopt the first polled wireless snapshot after (re)connect and apply recovery outcomes. */
-    /** @param {import("../../state/reducer.mjs").DashboardState} [state] */
-    update(state) {
+    /** @param {import("../../state/reducer.mjs").DashboardState} [state] @param {FormReadiness} [readiness] */
+    update(state, readiness) {
       let recoveredCancellation = false;
       if (form.phase === "cancelFailed" && state?.connected && !state.outcome_uncertain) {
         dispatch({ type: "recovered" });
@@ -484,7 +498,7 @@ export function bindWirelessForm({
         loaded = true;
         if (!wifiStage && !wifiEdited) el("direct-wifi-ssid").value = status.ssid;
       }
-      refresh();
+      refresh(readiness);
       if (recoveredCancellation) changed();
     },
   };

@@ -3,7 +3,8 @@ import test from "node:test";
 import { withDocument, snapshot } from "../../support/view.mjs";
 import { deriveStorageViewModel } from "../../../web/js/ui/sections/storage.mjs";
 
-test("storage does not infer absence from an unavailable sample or mount from cached format", () => withDocument((el, renderStatus) => {
+test("storage does not infer absence from an unavailable sample or mount from cached format", () =>
+  withDocument((el, renderStatus) => {
   const state = snapshot();
   state.memory.sample_valid = false; state.memory.presence_known = false; state.memory.initialized = false;
   renderStatus(state);
@@ -18,7 +19,6 @@ test("storage does not infer absence from an unavailable sample or mount from ca
   renderStatus(state);
   assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
 }));
-
 
 test("Direct dashboard retains storage visibility through stale reports without showing cached readings", () =>
   withDocument((el, renderStatus) => {
@@ -55,7 +55,6 @@ test("Direct dashboard retains storage visibility through stale reports without 
     }
   }));
 
-
 test("busy storage retains card details without a message, but stale or replaced media clears them", () =>
   withDocument((el, renderStatus) => {
     const state = snapshot();
@@ -89,7 +88,6 @@ test("busy storage retains card details without a message, but stale or replaced
     }
   }));
 
-
 test("storage view models retain only their explicitly supplied display history", () => {
   const snapshot = { connected: true, memory: {
     configured: true, initialized: true, sample_valid: true, capacity_bytes: 1048576,
@@ -102,4 +100,3 @@ test("storage view models retain only their explicitly supplied display history"
     "a separate view cannot inherit another view's retained card details");
   assert.equal(deriveStorageViewModel({ connected: false }).retained.details, null);
 });
-

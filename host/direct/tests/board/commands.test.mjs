@@ -17,7 +17,6 @@ test("unavailable recovery storage fails closed and keeps its error visible acro
   assert.match(describe(unavailable.state.error), /session storage is unavailable/);
 });
 
-
 test("malformed saved operation records fail closed and cannot authorize a write", async () => {
   const { device, hid, sent, pendingStore } = fakeConnection();
   pendingStore.setItem("picoforge.direct.pending-operation", JSON.stringify({
@@ -31,7 +30,6 @@ test("malformed saved operation records fail closed and cannot authorize a write
   await assert.rejects(client.setLed(true), says(/unavailable/));
   assert.equal(sent.length, 0);
 });
-
 
 test("transactions serialize, match ID and opcode, poll Pending, wrap IDs, and do not mutate telemetry", async () => {
   const { client, device, sent } = fakeConnection();
@@ -55,7 +53,6 @@ test("transactions serialize, match ID and opcode, poll Pending, wrap IDs, and d
   assert.equal(client.state.runtime.led_on, false, "acceptance is not an Input snapshot");
   await client.disconnect();
 });
-
 
 test("SET failure never polls; terminal rejection permits a new transaction; timeout blocks replay", async () => {
   const { client, device, reads } = fakeConnection();
@@ -81,7 +78,6 @@ test("SET failure never polls; terminal rejection permits a new transaction; tim
   await client.disconnect();
 });
 
-
 test("hanging SET/GET requests time out as uncertain and never replay", async () => {
   for (const operation of ["sendFeatureReport", "receiveFeatureReport"]) {
     const { client, device, sent } = fakeConnection({ timeout: 10 });
@@ -94,7 +90,6 @@ test("hanging SET/GET requests time out as uncertain and never replay", async ()
     await client.disconnect();
   }
 });
-
 
 test("settings completion remains serialized and verifies saved values without a config read", async () => {
   const { client, device, sent } = fakeConnection();
@@ -115,7 +110,6 @@ test("settings completion remains serialized and verifies saved values without a
   await client.disconnect();
 });
 
-
 test("normal and forced saves keep writes blocked when returned settings differ without disconnect", async () => {
   for (const flags of [0, 1]) {
     const { client, device, sent } = fakeConnection({ capabilities: 119 });
@@ -133,7 +127,6 @@ test("normal and forced saves keep writes blocked when returned settings differ 
     await client.disconnect();
   }
 });
-
 
 test("cancelling an in-flight write preserves uncertainty and its recovery journal", async () => {
   const { client, device, sent, pendingStore } = fakeConnection();
@@ -159,7 +152,6 @@ test("cancelling an in-flight write preserves uncertainty and its recovery journ
   client.dispose();
 });
 
-
 test("save commit-mask mismatch is uncertain even after firmware clears staged state", async () => {
   const setup = await connected(); radio(setup);
   const read = setup.device.receiveFeatureReport;
@@ -176,7 +168,6 @@ test("save commit-mask mismatch is uncertain even after firmware clears staged s
   await setup.client.disconnect();
 });
 
-
 test("scan result index/generation mismatch keeps the original query persisted and blocks further writes", async () => {
   const setup = await connected();
   radio(setup, { scanEntries: [Uint8Array.of(65)] });
@@ -192,4 +183,3 @@ test("scan result index/generation mismatch keeps the original query persisted a
   assert.equal(request.scan_generation, 1); assert.equal(request.scan_index, 0);
   await setup.client.disconnect();
 });
-

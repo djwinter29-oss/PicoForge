@@ -7,7 +7,7 @@ import { BoardSession } from "../../web/js/board/session.mjs";
 import {
   fakeConnection, storage, selfTest, identity, config, telemetry, result, patchState, says,
 } from "../support/fixtures.mjs";
-import { status, connected } from "../support/wireless.mjs";
+import { status } from "../support/wireless.mjs";
 
 test("BLE maps normalized68byte control to restricted9byte wire form and HMACs those exact bytes", async () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "crypto");
@@ -108,7 +108,6 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
   }
 });
 
-
 test("BLE discovery retries only read-only setup on the chosen board and retains the final failure", async () => {
   const ble = new EventTarget();
   const values = { 1: identity(128 | 55), 2: config(), 3: telemetry(), 10: storage(), 11: selfTest(),
@@ -146,4 +145,3 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
   assert.match(describe(client.state.error), /No matching service/);
   assert.equal(client.transport.bleKey, null);
 });
-
