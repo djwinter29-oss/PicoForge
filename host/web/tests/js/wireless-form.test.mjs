@@ -11,10 +11,11 @@ function formFixture(context, overrides = {}) {
   el("settings-ble").value = "0";
   globalThis.document = fixture.document;
   const form = bindWirelessForm({
-    ready: () => true, supported: () => true, load: async () => ({ ssid: "saved", tcp_cli_enabled: true }),
+    ready: () => true, supported: () => true,
     test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 600 }), cancelTest: async () => {},
     ...overrides,
   });
+  form.initialize({ ssid: "saved", tcp_cli_enabled: true });
   context.after(() => { form.reset(); globalThis.document = previous; });
   return { form, el };
 }
@@ -40,7 +41,6 @@ test("clipboard feedback belongs to the current key draft and board lifecycle", 
           else delete globalThis.navigator;
         });
         const { form, el } = formFixture(context);
-        await form.load();
         await el("ble-generate").fire("click");
         const copy = el("ble-copy").fire("click");
         assert.equal(copied.length, 1);
@@ -81,7 +81,6 @@ test("failed replacement Wi-Fi testing invalidates the previous stage and blocks
       return { ipv4: "192.0.2.1", remaining_seconds: 600 };
     },
   });
-  await form.load();
   await el("wifi-connect").fire("click");
   assert.equal(form.canSave(), true);
   fails = true;
@@ -104,11 +103,10 @@ test("reset fences wireless continuations, including errors", async context => {
           scan: () => pending.promise, cancelTest: () => pending.promise,
           ...(operation === "test" ? { test: () => pending.promise } : {}),
         });
-        await form.load();
         if (operation === "cancel") await el("wifi-connect").fire("click");
         const work = el({ scan: "wifi-scan", cancel: "wifi-cancel", test: "wifi-connect" }[operation]).fire("click");
         form.reset();
-        await form.load();
+        form.initialize({ ssid: "saved", tcp_cli_enabled: true });
         el("wifi-status").textContent = "Current board";
         el("wifi-dialog").showModal();
         if (succeeds) pending.resolve(operation === "scan" ? [{ ssid: "old", ssid_hex: "6f6c64" }]
@@ -125,51 +123,82 @@ test("reset fences wireless continuations, including errors", async context => {
   }
 });
 
-test("reset permits loading a new board before an old load settles", async context => {
-  const old = deferred();
-  const current = deferred();
-  let calls = 0;
-  const { form, el } = formFixture(context, { load: () => ++calls === 1 ? old.promise : current.promise });
-  const first = form.load();
+test("snapshot initialization preserves drafts and reset admits the next board", async context => {
+  const { form, el } = formFixture(context);
+  el("wifi-ssid").value = "edited network";
+  await el("wifi-ssid").fire("input");
+  el("settings-tcp-cli").value = "0";
+  await el("settings-tcp-cli").fire("change");
+  form.initialize({ ssid: "poll must not overwrite edits", tcp_cli_enabled: true });
+  assert.equal(el("wifi-ssid").value, "edited network");
+  assert.equal(el("settings-tcp-cli").value, "0");
+  assert.equal(form.canSave(), false);
   form.reset();
-  const second = form.load();
-  assert.equal(calls, 2);
-  old.resolve({ ssid: "old board", tcp_cli_enabled: false });
-  await first;
-  assert.equal(el("wifi-ssid").value, "");
-  await form.load();
-  assert.equal(calls, 2, "old completion cannot unlock an in-flight load for the current board");
-  current.resolve({ ssid: "current board", tcp_cli_enabled: true });
-  await second;
+  form.initialize({ ssid: "current board", tcp_cli_enabled: true });
   assert.equal(el("wifi-ssid").value, "current board");
+  assert.equal(el("settings-tcp-cli").value, "1");
+  assert.equal(form.canSave(), true);
+  await el("wifi-connect").fire("click");
+  const staged = form.request();
+  form.initialize({ ssid: "poll must not overwrite staged credentials", tcp_cli_enabled: false });
+  assert.deepEqual(form.request(), staged);
 });
 
 test("Wi-Fi expiry notifies Save eligibility once and stops its countdown", async context => {
-  let now = 0, changes = 0;
+  let now = 0, wall = 0, changes = 0;
   const ticks = new Map();
   let timer = 0;
-  context.mock.method(Date, "now", () => now);
+  context.mock.method(Date, "now", () => wall);
+  context.mock.method(performance, "now", () => now);
   context.mock.method(globalThis, "setInterval", callback => { ticks.set(++timer, callback); return timer; });
   context.mock.method(globalThis, "clearInterval", id => ticks.delete(id));
   const { form, el } = formFixture(context, {
     changed: () => changes++, test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 1 }),
   });
-  await form.load();
   await el("wifi-connect").fire("click");
   assert.equal(form.canSave(), true);
   const before = changes;
+  wall = 3600000;
+  now = 999;
+  for (const tick of ticks.values()) tick();
+  assert.equal(form.canSave(), true, "wall-clock changes cannot expire the stage");
+  assert.equal(changes, before);
+  wall = -3600000;
   now = 1000;
   for (const tick of ticks.values()) tick();
   assert.equal(form.canSave(), false);
   assert.equal(changes, before + 1);
   assert.equal(ticks.size, 0);
+  assert.equal(form.canSave(), false, "a backward clock change cannot extend the stage");
+});
+
+test("connection-test progress uses monotonic elapsed time despite wall-clock changes", async context => {
+  let now = 0, wall = 0;
+  const ticks = new Map();
+  let timer = 0;
+  context.mock.method(performance, "now", () => now);
+  context.mock.method(Date, "now", () => wall);
+  context.mock.method(globalThis, "setInterval", callback => { ticks.set(++timer, callback); return timer; });
+  context.mock.method(globalThis, "clearInterval", id => ticks.delete(id));
+  const pending = deferred();
+  const { el } = formFixture(context, { test: () => pending.promise });
+  const work = el("wifi-connect").fire("click");
+  wall = 3600000;
+  now = 2000;
+  for (const tick of ticks.values()) tick();
+  assert.match(el("wifi-status").textContent, /2s \(up to 30s\)/);
+  wall = -3600000;
+  now = 30000;
+  for (const tick of ticks.values()) tick();
+  assert.match(el("wifi-status").textContent, /30s; waiting for the final result/);
+  pending.resolve({ ipv4: "192.0.2.1", remaining_seconds: 600 });
+  await work;
 });
 
 test("scanned network buttons expose raw-SSID selection and clear it for manual entry", async context => {
   const { form, el } = formFixture(context, {
     scan: async () => [{ ssid: "one", ssid_hex: "6f6e65" }, { ssid: "two", ssid_hex: "74776f" }],
   });
-  await form.load();
   await el("wifi-scan").fire("click");
   const [one, two] = el("wifi-networks").children;
   await one.fire("click");
@@ -227,22 +256,22 @@ test("TCP switch is saved and expired test credentials block saving", async cont
   globalThis.document = { querySelector: selector => el(selector.slice(1)) };
   let now = 100;
   const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
-  context.mock.method(Date, "now", () => now);
+  context.mock.method(performance, "now", () => now);
   let status = { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true,
     ble_key_configured: false };
   let supported = true, ready = true;
   try {
     el("settings-wifi").value = "1";
     el("settings-ble").value = "0";
-    const form = bindWirelessForm({ load: async () => status, ready: () => ready, supported: () => supported,
+    const form = bindWirelessForm({ ready: () => ready, supported: () => supported,
       test: async () => ({ ipv4: "192.168.1.2", remaining_seconds: 600 }), cancelTest: async () => {} });
-    await form.load();
+    form.initialize(status);
     assert.equal(form.dirty(), false);
     assert.equal(el("settings-tcp-cli").disabled, false);
     assert.equal(el("settings-tcp-cli").label.hidden, false);
     el("settings-tcp-cli").value = "0";
     el("settings-tcp-cli").handlers.change();
-    await form.load();
+    form.initialize(status);
     assert.equal(el("settings-tcp-cli").value, "0", "periodic refresh preserves unsaved TCP edits");
     assert.equal(form.dirty(), true);
     assert.equal(form.request().tcp_cli_enabled, false);
@@ -334,12 +363,11 @@ test("scanned opaque SSIDs retain their bytes through testing and saving; manual
     el("settings-ble").value = "0";
     form = bindWirelessForm({
       ready: () => true, supported: () => true,
-      load: async () => ({ ssid: "saved", ssid_hex: "7361766564", tcp_cli_enabled: true }),
       scan: async () => [{ ssid: "\\xFF\\x00", ssid_hex: "ff00", rssi: -30, secured: false }],
       test: async request => { requests.push(request); return { ipv4: "192.0.2.1", remaining_seconds: 600 }; },
       cancelTest: async () => {},
     });
-    await form.load();
+    form.initialize({ ssid: "saved", ssid_hex: "7361766564", tcp_cli_enabled: true });
     await el("wifi-scan").handlers.click();
     el("wifi-networks").children[0].handlers.click();
     await el("wifi-connect").handlers.click();
@@ -383,7 +411,6 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
   let testFailure = false;
   try {
     const form = bindWirelessForm({
-      load: async () => ({ ssid: "saved", wifi_enabled: true, ble_key_configured: false }),
       scan: async () => [],
       test: async () => {
         if (testFailure) throw new Error("test could not connect");
@@ -397,7 +424,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
       ready: () => true,
       supported: () => true,
     });
-    await form.load();
+    form.initialize({ ssid: "saved", wifi_enabled: true, ble_key_configured: false });
     el("wifi-ssid").value = "tested-network";
     await el("wifi-connect").handlers.click();
     el("wifi-dialog").showModal();
@@ -437,7 +464,7 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
     cancelFailure = "timeout";
     await el("wifi-cancel").handlers.click();
     assert.equal(form.operationBusy(), true, "unknown cleanup outcomes keep board operations locked");
-    assert.match(el("wireless-summary").textContent, /Reload the dashboard and reconnect the board/);
+    assert.match(el("wireless-summary").textContent, /Use Re-sync.*reconnect the board and reload the dashboard/);
     assert.equal(el("wifi-dialog").open, true);
     form.reset();
   } finally {

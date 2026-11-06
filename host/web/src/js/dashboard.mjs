@@ -109,7 +109,8 @@ export function renderStatus(snapshot) {
   mscStatusRefresh.hidden = !snapshot.msc_outcome_uncertain;
   mscStatusRefresh.disabled = Boolean(snapshot.status_read_error || snapshot.status_reading);
   renderBoardConfiguration(snapshot);
-  renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
+  renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc,
+    snapshot.board_configuration?.card_detect_gpio);
   renderSelfTest(snapshot);
 
   const message = snapshot.error ?? (snapshot.wireless_cleanup_required
@@ -125,10 +126,18 @@ export function renderStatus(snapshot) {
   document.querySelector("#status-message").textContent = message;
   const commandResync = document.querySelector("#command-resync");
   if (commandResync) {
-    const cleanup = snapshot.wireless_cleanup_required && !snapshot.command_outcome_uncertain;
-    commandResync.textContent = cleanup ? "Clear Wi-Fi test" : "Re-sync";
-    commandResync.hidden = !cleanup && (!snapshot.command_resync_supported || !snapshot.command_outcome_uncertain);
-    commandResync.disabled = !connected || snapshot.command_resyncing || snapshot.status_read_error;
+    const operations = operationState(snapshot, {
+      resyncing: snapshot.command_resyncing, statusFailed: snapshot.status_read_error,
+    });
+    const recovery = snapshot.command_recovery === undefined ? operations.recovery : snapshot.command_recovery;
+    commandResync.textContent = recovery === "cleanup" ? "Clear Wi-Fi test" : "Re-sync";
+    commandResync.hidden = recovery === null;
+    commandResync.disabled = !(snapshot.can_recover_command ?? operations.canRecover);
+    const wifiResync = document.querySelector("#wifi-resync");
+    if (wifiResync) {
+      wifiResync.hidden = recovery !== "resync";
+      wifiResync.disabled = commandResync.disabled;
+    }
   }
 }
 
@@ -266,7 +275,7 @@ function renderBoardConfiguration(snapshot) {
   setText(resetCause, resetCauseLabel);
 }
 
-function renderMemory(memory, filesystemFormat, stale, msc) {
+function renderMemory(memory, filesystemFormat, stale, msc, cardDetectGpio) {
   const set = (id, value) => { document.querySelector(id).textContent = value; };
   const busy = !stale && memory?.configured && memory.sample_valid === false
     && !msc?.enabled && !msc?.transition_pending;
@@ -290,7 +299,8 @@ function renderMemory(memory, filesystemFormat, stale, msc) {
       : msc?.transition_pending ? "Storage status is unavailable during the ownership transition."
         : memory && !memory.sample_valid ? ""
     : memory.presence_known && !memory.present
-      ? "No card detected. Check card insertion and the active-high DET connection on GP8."
+      ? `No card detected. Check card insertion and the active-high DET connection${
+        Number.isInteger(cardDetectGpio) && cardDetectGpio >= 0 && cardDetectGpio < 255 ? ` on GP${cardDetectGpio}` : ""}.`
       : memory.present && !memory.initialized
         ? "Card detected but not initialized; check UART logs and SD wiring."
         : memory.initialized ? "" : "Card presence has not been established.");
@@ -338,7 +348,8 @@ export function renderSelfTest(snapshot) {
   const set = (selector, value) => { document.querySelector(selector).textContent = value; };
   const speed = value => value == null ? "--" : `${(value / 1048576).toFixed(2)} MiB/s`;
   const count = value => `${(value / 1048576).toFixed(1)} MiB`;
-  const labels = { idle: "Idle", queued: "Queued", mounting: "Mounting", writing: "Writing", reading: "Verifying", cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
+  const labels = { idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying",
+    cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled" };
   const errors = ["", "Storage busy", "USB host owns the card", "Invalid test size", "Card unavailable", "Insufficient free space", "PFTEST.BIN already exists", "Filesystem I/O failed", "Readback verification failed", "Cleanup failed", "Filesystem not mounted"];
   set("#self-test-state", status ? `${labels[status.state] ?? "Unknown"} · ${Math.floor(status.progress_percent ?? 0)}%`
     : "Unavailable");

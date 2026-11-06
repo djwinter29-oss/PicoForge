@@ -42,6 +42,7 @@ const mock = `<script>
   let cancelAttempts = 0;
   const connected = {
     connected: true,
+    command_resync_supported: true,
     runtime: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2 W", mcu: "RP2350",
       capabilities: 128 | 16 | 2, ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
@@ -57,7 +58,8 @@ const mock = `<script>
       ble_key_configured: false, tcp_cli_enabled: true }
   };
   window.sharedBrowserState = {connected, unknown: false, scans: 0, leds: 0, tests: 0,
-    ledUncertain: false, mismatch: false, cleanupFailure: false, cleanups: 0};
+    ledUncertain: false, mismatch: false, cleanupFailure: false, cleanups: 0,
+    scanInvalid: false, wirelessScans: 0, resyncs: 0, failedCommand: null, mscRequests: 0};
   window.fetch = async (input, options = {}) => {
     const url = new URL(input, document.baseURI);
     const state = window.sharedBrowserState;
@@ -71,6 +73,22 @@ const mock = `<script>
     if (url.pathname === "/api/status" && state.unknown)
       return response({error: "unknown board; rescan and select a listed board"}, 404);
     if (url.pathname === "/api/status") return response(connected);
+    if (url.pathname === "/api/control/resync") {
+      state.resyncs++;
+      if (state.failedCommand !== null) {
+        const opcode = state.failedCommand;
+        state.failedCommand = null;
+        connected.command_outcome_uncertain = false;
+        return response({uncertain: false, control_result: {opcode, status: "failed", error: "storage_busy"}});
+      }
+      return response({uncertain: false});
+    }
+    if (url.pathname === "/api/msc" || url.pathname === "/api/self-test" && state.failedCommand === 4) {
+      if (url.pathname === "/api/msc") state.mscRequests++;
+      else state.tests++;
+      connected.command_outcome_uncertain = true;
+      throw new TypeError("lost command response");
+    }
     if (url.pathname === "/api/led") {
       state.leds++;
       if (state.ledUncertain) throw new DOMException("lost reply", "TimeoutError");
@@ -96,9 +114,11 @@ const mock = `<script>
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }
     });
-    if (url.pathname === "/api/wireless/scan") return response({
-      networks: [{ ssid: "browser-network", ssid_hex: "62726f777365722d6e6574776f726b", secured: true, rssi: -40 }]
-    });
+    if (url.pathname === "/api/wireless/scan") {
+      state.wirelessScans++;
+      return response({networks: state.scanInvalid ? [null]
+        : [{ ssid: "browser-network", ssid_hex: "62726f777365722d6e6574776f726b", secured: true, rssi: -40 }]});
+    }
     if (url.pathname === "/api/wireless/cancel" && connected.wireless_cleanup_required) {
       state.cleanups++;
       if (state.cleanupFailure) return response({error: "Cleanup failed", uncertain: false}, 409);
@@ -255,6 +275,55 @@ await run("Wi-Fi cancellation failure remains open and retry succeeds", async ()
   page.querySelector("#wifi-cancel").click();
   await waitFor(() => !dialog.open, "cancellation retry did not close the dialog");
   check(page.activeElement === radio, "focus was not restored after cancellation retry");
+});
+
+await run("browser-only uncertainty is recoverable inside the Wi-Fi dialog without replay", async () => {
+  const state = dashboardWindow.sharedBrowserState;
+  const el = id => page.querySelector(`#${id}`);
+  const radio = el("settings-wifi");
+  radio.focus();
+  radio.value = "configure";
+  radio.dispatchEvent(new Event("input", { bubbles: true }));
+  state.scanInvalid = true;
+  const scans = state.wirelessScans;
+  el("wifi-scan").click();
+  await waitFor(() => !el("wifi-resync").hidden && !el("wifi-resync").disabled, "modal Re-sync was not offered");
+  check(el("wifi-dialog").open, "uncertain scan unexpectedly closed the dialog");
+  check(el("led-control").disabled, "local uncertainty permits unrelated writes");
+  check(!state.connected.command_outcome_uncertain, "scenario must have browser-only uncertainty");
+  page.dispatchEvent(new Event("visibilitychange"));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check(el("status-message").textContent.includes("Re-sync"), "polling erased the recovery explanation");
+  el("wifi-resync").click();
+  await waitFor(() => !el("led-control").disabled, "explicit host confirmation did not clear local uncertainty");
+  check(state.resyncs === 1 && state.wirelessScans === scans + 1, "recovery replayed the scan");
+  check(el("wifi-dialog").open && el("wifi-resync").hidden, "recovery lost modal ownership");
+  state.scanInvalid = false;
+  el("wifi-cancel").click();
+  await waitFor(() => !el("wifi-dialog").open, "recovered dialog could not close");
+});
+
+await run("failed terminal results release benchmark and storage gates without automatic retry", async () => {
+  const state = dashboardWindow.sharedBrowserState;
+  const el = id => page.querySelector(`#${id}`);
+  for (const opcode of [4, 3]) {
+    state.failedCommand = opcode;
+    const requests = opcode === 4 ? state.tests : state.mscRequests;
+    if (opcode === 4) el("self-test-start").click();
+    else {
+      el("msc-control").click();
+      el("confirm-share").click();
+    }
+    await waitFor(() => !el("command-resync").hidden && !el("command-resync").disabled,
+      "lost command did not offer Re-sync");
+    el("command-resync").click();
+    await waitFor(() => el("command-resync").hidden && !el("msc-control").disabled && !el("self-test-start").disabled,
+      "confirmed failure did not release its pending marker");
+    page.dispatchEvent(new Event("visibilitychange"));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    check(el("status-message").textContent.includes("storage_busy"), "polling erased the final failure reason");
+    check((opcode === 4 ? state.tests : state.mscRequests) === requests + 1, "failed command was replayed");
+  }
 });
 
 await run("replacement Control key cannot receive stale clipboard feedback", async () => {

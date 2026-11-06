@@ -29,6 +29,26 @@ function snapshot() {
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
 
+test("every native benchmark state has a known display label", () => withDocument(el => {
+  for (const [state, label] of Object.entries({
+    idle: "Idle", queued: "Queued", preparing: "Preparing", writing: "Writing", reading: "Verifying",
+    cleanup: "Cleanup", passed: "Passed", failed: "Failed", cancelled: "Cancelled",
+  })) {
+    renderServerSelfTest({ ...snapshot(), self_test: { state, progress_percent: 0 } });
+    assert.equal(el("#self-test-state").textContent, `${label} · 0%`);
+  }
+}));
+
+test("missing-card guidance uses reported board wiring, not a fixed GPIO", () => withDocument(el => {
+  for (const gpio of [3, 8, 255, undefined]) {
+    renderServerStatus({ ...snapshot(), board_configuration: { ...snapshot().settings, card_detect_gpio: gpio },
+      memory: { configured: true, sample_valid: true, presence_known: true, present: false } });
+    const note = el("#memory-note").textContent;
+    if (gpio !== undefined && gpio !== 255) assert.match(note, new RegExp(`GP${gpio}\\b`));
+    else assert.doesNotMatch(note, /GP\d/);
+  }
+}));
+
 test("server dashboard shows live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () => withDocument(el => {
   for (const render of [renderServerStatus]) {
     const state = { ...snapshot(), hardware: { ...snapshot().hardware, capabilities: 128,

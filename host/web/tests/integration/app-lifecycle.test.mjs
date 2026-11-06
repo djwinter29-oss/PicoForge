@@ -16,6 +16,259 @@ const benchmarkReady = async ({ connected, state }) => {
   await state.tick();
 };
 
+test("final failed Re-sync releases only the matching command gate and retains explicit-retry feedback", async context => {
+  for (const [operation, opcode] of [["self-test", 4], ["msc", 3]]) {
+    for (const status of ["failed", "busy", "invalid", "unsupported"]) {
+      await context.test(`${operation}: ${status}`, async context => {
+        const fixture = await appFixture(context);
+        const { state, connected, handlers, elements, requestedUrls, switchBoard } = fixture;
+        await benchmarkReady(fixture);
+        connected.command_resync_supported = true;
+        state.responses.set(`/api/${operation}`, () => { throw new TypeError("response lost"); });
+        if (operation === "self-test") await handlers.get("#self-test-start:click")();
+        else {
+          await handlers.get("#msc-control:click")();
+          await handlers.get("#confirm-share:click")();
+        }
+        await settle();
+        connected.command_outcome_uncertain = true;
+        await state.tick();
+        state.resyncResult = { uncertain: false, control_result: { opcode, status, error: "storage_busy", detail: 2 } };
+        await handlers.get("#command-resync:click")();
+        for (let poll = 0; poll < 2; poll++) await state.tick();
+        assert.equal(elements.get("#command-resync").hidden, true);
+        assert.equal(elements.get("#self-test-start").disabled, false);
+        assert.equal(elements.get("#msc-control").disabled, false);
+        assert.match(elements.get("#status-message").textContent, new RegExp(status));
+        assert.match(elements.get("#status-message").textContent, /storage_busy.*detail 2/);
+        assert.match(elements.get("#status-message").textContent, /retry/i);
+        assert.equal(requestedUrls.filter(url => url.startsWith(`/api/${operation}?`)).length, 1);
+        await switchBoard("board-b");
+        assert.doesNotMatch(elements.get("#status-message").textContent, /Retry explicitly/);
+        await switchBoard("board-a");
+        assert.match(elements.get("#status-message").textContent, new RegExp(status));
+        state.responses.set(`/api/${operation}`, () => reply(operation === "self-test"
+          ? {} : { msc: { enabled: false, transition_pending: true } }));
+        if (operation === "self-test") await handlers.get("#self-test-start:click")();
+        else {
+          await handlers.get("#msc-control:click")();
+          await handlers.get("#confirm-share:click")();
+        }
+        assert.equal(requestedUrls.filter(url => url.startsWith(`/api/${operation}?`)).length, 2);
+        assert.doesNotMatch(elements.get("#status-message").textContent, /Retry explicitly/);
+      });
+    }
+  }
+});
+
+test("malformed terminal Re-sync cannot release a benchmark pending gate", async context => {
+  const fixture = await appFixture(context);
+  const { state, connected, handlers, elements } = fixture;
+  await benchmarkReady(fixture);
+  connected.command_resync_supported = true;
+  state.responses.set("/api/self-test", () => { throw new TypeError("response lost"); });
+  await handlers.get("#self-test-start:click")();
+  await settle();
+  connected.command_outcome_uncertain = true;
+  await state.tick();
+  for (const control_result of [{ opcode: 4, status: "pending" }, { opcode: "4", status: "failed" }]) {
+    state.responses.set("/api/control/resync", () => reply({ uncertain: false, control_result }));
+    await handlers.get("#command-resync:click")();
+    assert.equal(elements.get("#command-resync").hidden, false);
+    assert.equal(elements.get("#self-test-start").disabled, true);
+    assert.match(elements.get("#status-message").textContent, /did not establish/);
+  }
+});
+
+test("failed cancel and force-return reconciliation respect the board's unchanged active state", async context => {
+  for (const operation of ["self-test", "msc/force-return"]) {
+    await context.test(operation, async context => {
+      const fixture = await appFixture(context);
+      const { state, connected, handlers, elements } = fixture;
+      await benchmarkReady(fixture);
+      connected.command_resync_supported = true;
+      if (operation === "self-test") {
+        connected.self_test.active = true;
+        connected.self_test.state = "writing";
+      } else connected.msc.enabled = true;
+      await state.tick();
+      state.responses.set(`/api/${operation}`, () => { throw new TypeError("response lost"); });
+      if (operation === "self-test") await handlers.get("#self-test-cancel:click")();
+      else {
+        await handlers.get("#msc-control:click")();
+        await handlers.get("#confirm-return:click")();
+      }
+      await settle();
+      connected.command_outcome_uncertain = true;
+      await state.tick();
+      state.resyncResult = { uncertain: false, control_result: {
+        opcode: operation === "self-test" ? 4 : 3, status: "failed",
+      } };
+      await handlers.get("#command-resync:click")();
+      await state.tick();
+      assert.equal(elements.get("#self-test-start").disabled, true, "active test/host ownership is still authoritative");
+      if (operation === "self-test") assert.equal(elements.get("#self-test-cancel").disabled, false);
+      else assert.equal(elements.get("#msc-control").disabled, false, "host ownership permits an explicit return retry");
+    });
+  }
+});
+
+test("an old cancellation acknowledgement cannot erase a new draft after reconnecting the same board", async context => {
+  const { state, connected, handlers, elements, configureRadio, reconnect } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  await state.tick();
+  configureRadio("wifi");
+  await handlers.get("#wifi-connect:click")();
+  configureRadio("wifi");
+  const pending = deferred();
+  state.responses.set("/api/wireless/cancel", () => pending.promise);
+  const cancelling = handlers.get("#wifi-cancel:click")();
+  await reconnect();
+  configureRadio("wifi");
+  elements.get("#wifi-ssid").value = "new-network";
+  await handlers.get("#wifi-ssid:input")();
+  await handlers.get("#wifi-connect:click")();
+  const summary = elements.get("#wireless-summary").textContent;
+  assert.match(summary, /new-network.*tested/);
+  pending.resolve(reply({ cancelled: true }));
+  await cancelling;
+  assert.equal(elements.get("#wireless-summary").textContent, summary);
+});
+
+test("completed Re-sync keeps benchmark and storage gates until fresh status proves their effects", async context => {
+  for (const [operation, opcode] of [["self-test", 4], ["msc", 3]]) {
+    await context.test(operation, async context => {
+      const fixture = await appFixture(context);
+      const { state, connected, handlers, elements } = fixture;
+      await benchmarkReady(fixture);
+      connected.command_resync_supported = true;
+      state.responses.set(`/api/${operation}`, () => { throw new TypeError("response lost"); });
+      if (operation === "self-test") await handlers.get("#self-test-start:click")();
+      else {
+        await handlers.get("#msc-control:click")();
+        await handlers.get("#confirm-share:click")();
+      }
+      await settle();
+      connected.command_outcome_uncertain = true;
+      await state.tick();
+      state.resyncResult = { uncertain: false, control_result: { opcode, status: "completed" } };
+      await handlers.get("#command-resync:click")();
+      assert.equal(elements.get("#command-resync").hidden, true);
+      assert.equal(elements.get("#msc-control").disabled, true, "completion is not observed ownership/test progress");
+      if (operation === "self-test") connected.self_test.sequence++;
+      else connected.msc.enabled = true;
+      await state.tick();
+      assert.equal(elements.get("#msc-control").disabled, false);
+    });
+  }
+});
+
+test("late wireless failures stay owned by the originating board", async context => {
+  for (const [operation, control] of [["scan", "scan"], ["test", "connect"], ["cancel", "cancel"]]) {
+    await context.test(operation, async context => {
+      const { state, connected, handlers, elements, configureRadio, switchBoard } = await appFixture(context);
+      connected.hardware.capabilities |= 128;
+      connected.storage_stale = false;
+      connected.command_resync_supported = true;
+      await state.tick();
+      await settle();
+      configureRadio("wifi");
+      if (operation === "cancel") {
+        await handlers.get("#wifi-connect:click")();
+        configureRadio("wifi");
+      }
+      const pending = deferred();
+      state.responses.set(`/api/wireless/${operation}`, () => pending.promise);
+      const work = handlers.get(`#wifi-${control}:click`)();
+      connected.connected = false;
+      await state.tick();
+      connected.connected = true;
+      await switchBoard("board-b");
+      assert.equal(elements.get("#led-control").disabled, false);
+      pending.reject(new TypeError("board A response lost"));
+      await work;
+      await state.tick();
+      assert.equal(elements.get("#led-control").disabled, false);
+      assert.equal(elements.get("#command-resync").hidden, true);
+      await switchBoard("board-a");
+      assert.equal(elements.get("#led-control").disabled, true, "A retains its unresolved response");
+      assert.equal(elements.get("#command-resync").hidden, false);
+    });
+  }
+});
+
+test("local scan uncertainty survives polling and failed recovery, then clears only on explicit confirmation", async context => {
+  const { state, connected, handlers, elements, configureRadio, requestedUrls } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  connected.command_resync_supported = true;
+  connected.command_outcome_uncertain = false;
+  await state.tick();
+  await settle();
+  configureRadio("wifi");
+  state.responses.set("/api/wireless/scan", () => reply({ invalid: true }));
+  await handlers.get("#wifi-scan:click")();
+  await state.tick();
+  assert.equal(elements.get("#led-control").disabled, true);
+  assert.equal(elements.get("#command-resync").hidden, false);
+  assert.match(elements.get("#status-message").textContent, /uncertain.*Re-sync/i);
+  await handlers.get("#wifi-scan:click")();
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/scan?")).length, 1);
+  state.resyncResult = {};
+  assert.equal(elements.get("#wifi-resync").hidden, false, "modal recovery remains reachable");
+  await handlers.get("#wifi-resync:click")();
+  assert.equal(elements.get("#led-control").disabled, true);
+  assert.match(elements.get("#status-message").textContent, /did not establish/);
+  await state.tick();
+  assert.match(elements.get("#status-message").textContent, /Re-sync/i);
+  state.resyncResult = { uncertain: false };
+  await handlers.get("#command-resync:click")();
+  assert.equal(elements.get("#command-resync").hidden, true);
+  assert.equal(elements.get("#led-control").disabled, false);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/scan?")).length, 1);
+});
+
+test("local uncertainty without firmware reconciliation support explains manual recovery", async context => {
+  const { state, connected, handlers, elements, configureRadio } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  await state.tick();
+  configureRadio("wifi");
+  state.responses.set("/api/wireless/scan", () => reply({ networks: [null] }));
+  await handlers.get("#wifi-scan:click")();
+  await state.tick();
+  assert.equal(elements.get("#led-control").disabled, true);
+  assert.equal(elements.get("#command-resync").hidden, true);
+  assert.match(elements.get("#status-message").textContent, /Reconnect.*reload/i);
+});
+
+test("clean-host Re-sync releases a lost cancellation for explicit retry, without assuming cleanup succeeded", async context => {
+  const { state, connected, handlers, elements, configureRadio, requestedUrls } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  connected.command_resync_supported = true;
+  connected.command_outcome_uncertain = false;
+  await state.tick();
+  configureRadio("wifi");
+  await handlers.get("#wifi-connect:click")();
+  configureRadio("wifi");
+  state.responses.set("/api/wireless/cancel", () => { throw new TypeError("lost cancellation reply"); });
+  await handlers.get("#wifi-cancel:click")();
+  assert.equal(elements.get("#wifi-cancel").disabled, true);
+  assert.equal(elements.get("#wifi-resync").hidden, false);
+  await handlers.get("#wifi-resync:click")();
+  assert.equal(elements.get("#wifi-cancel").disabled, false);
+  assert.equal(elements.get("#settings-save").disabled, true, "unknown cleanup is not successful cleanup");
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 1);
+  state.responses.set("/api/wireless/cancel", () => reply({ cancelled: true }));
+  await handlers.get("#wifi-cancel:click")();
+  assert.equal(elements.get("#wifi-dialog").open, false);
+  assert.equal(elements.get("#wireless-summary").hidden, true);
+  assert.equal(elements.get("#led-control").disabled, false);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 2);
+});
+
 test("mounted Re-sync locks selection, preserves failure, and resets disconnected UI once", async context => {
   for (const success of [true, false]) {
     await context.test(success ? "confirmed result" : "known refusal", async context => {

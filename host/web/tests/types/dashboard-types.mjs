@@ -1,6 +1,6 @@
 // @ts-check
-import { acknowledge, responseJson, savedSettings } from "../../src/js/dashboard-api.mjs";
-import { operationState } from "../../src/js/operation-state.mjs";
+import { acknowledge, reconciledResult, responseJson, savedSettings, scannedNetworks } from "../../src/js/dashboard-api.mjs";
+import { commandEffects, commandSettled, operationState } from "../../src/js/operation-state.mjs";
 
 const state = operationState({ connected: true }, { uncertain: false }, 32);
 state.canStartSelfTest.valueOf();
@@ -16,3 +16,21 @@ saved.radios.toFixed();
 // @ts-expect-error Boot settings fields must be numeric.
 savedSettings(result, { system_clock_mhz: 200, sdcard_profile: "0", radios: 0 });
 acknowledge(result, 1);
+scannedNetworks(result)[0].ssid_hex.toLowerCase();
+// @ts-expect-error Validated signal strength is numeric.
+scannedNetworks(result)[0].rssi.toUpperCase();
+commandSettled({ kind: "led", on: true, message: "uncertain" }, {});
+// @ts-expect-error LED recovery must carry the requested boolean state.
+commandSettled({ kind: "led", on: "true", message: "uncertain" }, {});
+// @ts-expect-error Recovery reasons cannot be arbitrary strings.
+commandSettled({ kind: "retry", message: "uncertain" }, {});
+const effects = commandEffects(acknowledge(result, 4));
+effects.releaseSelfTest.valueOf();
+const reconciled = reconciledResult(result);
+if (reconciled) commandEffects(reconciled);
+// @ts-expect-error Raw response fields must be validated before result publication.
+commandEffects(result.control_result);
+// @ts-expect-error Pending results cannot release lifecycle obligations.
+commandEffects({ opcode: 4, status: "pending" });
+// @ts-expect-error Result opcodes must be numeric.
+commandEffects({ opcode: "4", status: "failed" });

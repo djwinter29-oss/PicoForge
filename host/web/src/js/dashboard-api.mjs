@@ -1,5 +1,8 @@
 // @ts-check
 /** @typedef {{system_clock_mhz: number, sdcard_profile: number, radios: number}} BootSettings */
+/** @typedef {{ssid: string, ssid_hex: string, rssi: number, secured: boolean, security?: string}} WirelessNetwork */
+/** @typedef {{opcode: number, status: "completed" | "invalid" | "unsupported" | "busy" | "failed",
+ * error?: string, detail?: number}} ControlResult */
 
 /** Transport errors keep HTTP refusals distinct from mutations whose completion cannot be established. */
 export class DashboardError extends Error {
@@ -62,11 +65,47 @@ export function savedSettings(result, expected) {
 
 /**
  * Python reports the completed control result; .NET returns an empty acknowledgement.
- * @param {Record<string, unknown>} result @param {number} opcode
+ * @param {Record<string, unknown>} result @param {number} opcode @returns {ControlResult}
  */
 export function acknowledge(result, opcode) {
-  if (Object.keys(result).length === 0) return;
+  if (Object.keys(result).length === 0) return { opcode, status: "completed" };
   const control = result.control_result;
-  if (isObject(control) && control.status === "completed" && control.opcode === opcode) return;
+  if (isControlResult(control) && control.status === "completed" && control.opcode === opcode) return control;
   throw new DashboardError("Invalid command acknowledgement; outcome is uncertain", undefined, true);
+}
+
+/** @param {unknown} value @returns {value is ControlResult} */
+function isControlResult(value) {
+  return isObject(value) && typeof value.opcode === "number" && Number.isInteger(value.opcode)
+    && value.opcode >= 1 && value.opcode <= 13
+    && ["completed", "invalid", "unsupported", "busy", "failed"].some(status => status === value.status)
+    && (value.error === undefined || typeof value.error === "string")
+    && (value.detail === undefined || typeof value.detail === "number" && Number.isInteger(value.detail)
+      && value.detail >= 0 && value.detail <= 255);
+}
+
+/** Reconciliation must confirm a terminal outcome before any local obligation is released.
+ * @param {Record<string, unknown>} result @returns {ControlResult | null}
+ */
+export function reconciledResult(result) {
+  if (result.uncertain !== false || result.control_result != null && !isControlResult(result.control_result))
+    throw new DashboardError("Re-sync did not establish the command outcome", undefined, true);
+  return result.control_result == null ? null : result.control_result;
+}
+
+/** @param {unknown} value @returns {value is WirelessNetwork} */
+function isNetwork(value) {
+  return isObject(value) && typeof value.ssid === "string" && typeof value.ssid_hex === "string"
+    && /^(?:[0-9a-f]{2}){0,32}$/i.test(value.ssid_hex)
+    && typeof value.rssi === "number" && Number.isInteger(value.rssi) && value.rssi >= -128 && value.rssi <= 127
+    && typeof value.secured === "boolean" && (value.security === undefined || typeof value.security === "string");
+}
+
+/** Validate every scan entry before it can populate selectable credentials.
+ * @param {Record<string, unknown>} result @returns {WirelessNetwork[]}
+ */
+export function scannedNetworks(result) {
+  if (!Array.isArray(result.networks) || !result.networks.every(isNetwork))
+    throw new DashboardError("Invalid wireless scan response; outcome is uncertain", undefined, true);
+  return result.networks;
 }

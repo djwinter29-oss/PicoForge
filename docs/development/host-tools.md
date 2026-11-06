@@ -58,10 +58,23 @@ Disconnected polling clears drafts once per lifecycle transition, not on every s
 When either host reports `wireless_cleanup_required`, unrelated writes remain blocked and the status action offers
 **Clear Wi-Fi test**. Known cleanup failures permit only an explicit cleanup retry. Unknown cancellation delivery
 requires **Re-sync** first; a confirmed completed cancel clears local recovery state without resending it.
+Scan, test, and cancellation response failures remain owned by the originating board, even after disconnect and
+selection changes. Local response uncertainty uses the same recovery admission as server uncertainty. Re-sync remains
+available inside the Wi-Fi dialog as well as in the status footer; malformed recovery replies cannot release the gate.
+Without firmware reconciliation support, persistent feedback directs the user to reconnect and reload.
 
 The pure operation policy combines reported facts and local activity for command admission and rendering. Benchmark
 size edits use the complete view projection, never a raw status render that could discard local gates. Local delivery,
 uncertainty, and reboot lifecycle state remain separate from server-reported pending flags and credential drafts.
+Local uncertainty records a typed recovery reason and matching evidence rather than an opaque callback. Wireless
+controls initialize synchronously from the first ready status snapshot per board lifecycle; later polls preserve
+unsaved edits and staged credentials.
+Normal acknowledgements and Re-sync share typed terminal-result publication. Confirmed failed, busy, invalid, or
+unsupported benchmark/storage results release only their matching local pending marker; their failure reason remains
+visible across polling and board selection until an explicit retry. Successful acknowledgements still wait for fresh
+ownership or benchmark-sequence evidence, and successful save/reboot results retain their reboot obligation.
+Malformed or non-terminal reconciliation results cannot release local gates. No recovery path automatically replays
+the original command.
 Acknowledged saves and reboots immediately block subsequent writes; old connected snapshots cannot clear this
 per-board gate. It releases after an observed reboot-pending cycle or disconnect/reconnect, including when Re-sync
 confirms completion. Successful save readback mismatches retain both the uncertainty and the confirmed reboot effect.
@@ -73,6 +86,11 @@ checks and negative type contracts; the remaining application and view modules a
 Mutation success bodies are validated against the operation's Python/.NET contract. Invalid JSON, malformed
 acknowledgements, and contradictory readback are unresolved outcomes, not permission to replay. Explicit known HTTP
 refusals remain distinguishable from unknown delivery.
+Scan entries are validated before rendering, including raw SSID bytes, signal strength, and security field types.
+Benchmark labels follow the native hosts' state vocabulary, and missing-card diagnostics use reported card-detect
+wiring rather than a fixed board GPIO.
+Wi-Fi test progress and staged-credential countdowns use monotonic elapsed time; wall-clock changes neither expire a
+valid stage early nor extend it. Firmware credential expiry remains authoritative.
 
 ```sh
 node host/web/tests/run-tests.mjs
@@ -85,7 +103,8 @@ python3 host/web/tests/browser/run.py
 The browser runner requires the Python host dependencies and .NET 10 SDK. It builds the .NET host and serves the actual
 Python/.NET templates and assets with their production response headers; API replies are mocked, so no hardware
 requests are made. Both hosts run the same reboot and uncertainty gates, save-readback mismatch, 404 recovery, focus,
-narrow-layout, network-selection, cancellation, and clipboard checks.
+narrow-layout, network-selection, cancellation, browser-only uncertainty recovery, failed terminal-result recovery,
+and clipboard checks.
 For a static-only manual check, serve `host/web` locally and open `/tests/browser/index.html`.
 
 Console success bodies are validated by operation; malformed acknowledgements close the session without replaying
