@@ -159,7 +159,7 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   ssid.value = "tested";
   ssid.dispatchEvent(new Event("input", { bubbles: true }));
   document.querySelector("#direct-wifi-connect").click();
-  await waitFor(() => form.request()?.use_tested_wifi && !form.operationBusy(), "second test did not finish");
+  await waitFor(() => !form.operationBusy() && form.request()?.use_tested_wifi, "second test did not finish");
   wifi.blur();
   wifi.focus();
   wifi.value = "0";
@@ -296,7 +296,7 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
     streamingTimes.sort((a, b) => a - b);
     results.dataset.streamingMedianMs = streamingTimes[Math.floor(streamingTimes.length / 2)].toFixed(2);
     results.dataset.streamingP95Ms = streamingTimes[Math.floor(streamingTimes.length * 0.95)].toFixed(2);
-    screen.write("\r> cmd\x1b[DZ");
+    screen.write("\r\n> cmd\x1b[DZ");
     render(screen);
     check(nodes[1].textContent === " ", "interactive cursor did not advance after streaming");
     check(nodes[0].data.endsWith("> cmZ"), "interactive input echo was lost after streaming");

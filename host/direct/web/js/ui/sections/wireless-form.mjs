@@ -1,9 +1,10 @@
 import { OP } from "../../protocol/constants.mjs";
-import { bytesToHex } from "../../protocol/codec.mjs";
 import { createTimerScope } from "../../timers.mjs";
 import { queryElement } from "../dom.mjs";
 import { describe } from "../messages.mjs";
 import { BoardError, REASON } from "../../state/errors.mjs";
+import { bindBleKeyForm } from "./ble-key-form.mjs";
+import { renderWirelessForm } from "./wireless-form-view.mjs";
 
 /**
  * @typedef {{phase: "idle" | "scanning" | "testing" | "canceling" | "cancelFailed",
@@ -60,7 +61,8 @@ export function formTransition(form, event) {
 
 /**
  * @brief Bind the Wi-Fi/Bluetooth provisioning dialogs. Status comes from the session-polled `state.wireless`
- * passed to `update`; this controller owns radio/TCP control availability and provisioning drafts.
+ * passed to `update`; this controller owns Wi-Fi operations, the shared lifecycle and configuration composition.
+ * Key drafts and DOM availability/summary rendering are delegated to their respective modules.
  * Device I/O runs only through the injected scan/test/cancelTest intents.
  * @param {WirelessFormOptions} options
  */
@@ -71,7 +73,6 @@ export function bindWirelessForm({
   const timers = timerScope?.createChild() ?? createTimerScope();
   const el = id => queryElement(`#${id}`);
   const wifiDialog = el("direct-wifi-dialog");
-  const bleDialog = el("direct-ble-dialog");
   let loaded = false;
   let lifecycleController = new AbortController();
   /** @type {WirelessStatus | null} */
@@ -82,8 +83,6 @@ export function bindWirelessForm({
   let wifiStage = null;
   let wifiTestAttempted = false;
   let wifiEdited = false;
-  let keyDirty = false;
-  let keyNeedsRegeneration = false;
   let form = { ...IDLE_FORM };
   /** @param {FormEvent} event */
   const dispatch = event => { form = formTransition(form, event); };
@@ -93,7 +92,6 @@ export function bindWirelessForm({
   let stagedTimer = null;
 
   const setStatus = (id, message) => { el(id).textContent = message; };
-  const option = (id, value) => Array.from(el(id).options ?? []).find(item => item.value === value);
   const radioOn = id => el(id).value === "1";
   const remainingTestSeconds = () => wifiStage
     ? Math.max(0, wifiStage.remaining_seconds - Math.floor((now() - wifiStage.tested_at) / 1000)) : 0;
@@ -105,56 +103,16 @@ export function bindWirelessForm({
   const refresh = readiness => {
     const available = supported();
     const wirelessReady = readiness?.wireless ?? ready();
-    const radioReady = readiness?.settings ?? settingsReady();
-    const canSetTcpCli = readiness?.tcp
-      ?? (tcpReady ? tcpReady() : wirelessReady && radioOn("direct-settings-wifi"));
-    const tcpEnabled = available && canSetTcpCli && !working();
-    const wifiBlocked = form.phase !== "idle";
-    const tcp = el("direct-settings-tcp-cli");
-    tcp.disabled = !tcpEnabled || !status;
-    tcp.closest?.("label")?.toggleAttribute("hidden", !available);
-    for (const id of ["direct-settings-wifi", "direct-settings-ble"]) {
-      el(id).disabled = !available || !radioReady || wifiBlocked;
-      el(id).closest?.("label")?.toggleAttribute("hidden", !available);
-      const configure = option(id, "configure");
-      if (configure) configure.disabled = !wirelessReady || wifiBlocked;
-    }
-    // Wi-Fi needs a network and Bluetooth needs a control key before either can be enabled.
-    const wifiOn = option("direct-settings-wifi", "1");
-    if (wifiOn) wifiOn.disabled = Boolean(status && !wifiStage && !status.ssid);
-    const bleOn = option("direct-settings-ble", "1");
-    if (bleOn) bleOn.disabled = Boolean(status && !keyDirty && !status.ble_key_configured);
-    for (const id of ["direct-wifi-scan", "direct-wifi-other", "direct-wifi-connect", "direct-ble-generate",
-      "direct-ble-copy"]) {
-      el(id).disabled = !wirelessReady || wifiBlocked;
-    }
-    el("direct-wifi-connect").disabled ||= !el("direct-wifi-ssid").value;
-    el("direct-wifi-connect").textContent = form.phase === "testing" ? "Testing…" : "Test connection";
-    el("direct-wifi-cancel").disabled = working() || form.phase === "canceling" || form.cancelNeedsReconnect;
-    el("direct-wifi-cancel").textContent = form.phase === "canceling" ? "Clearing…"
-      : form.phase === "cancelFailed" ? "Retry clearing test" : "Cancel";
-    for (const id of ["direct-wifi-ssid", "direct-wifi-password"]) el(id).disabled = wifiBlocked;
-    for (const button of el("direct-wifi-networks").children) {
-      button.disabled = wifiBlocked;
-      button.setAttribute("aria-pressed", String(selectedSsidHex !== undefined
-        && button.dataset.ssidHex === selectedSsidHex));
-    }
-    el("direct-ble-copy").disabled ||= !el("direct-ble-secret").value;
-    el("direct-wireless-summary").textContent = form.phase === "cancelFailed"
-      ? `Could not clear the temporary Wi-Fi test: ${form.cancelError}. ${form.cancelNeedsReconnect
-        ? "Reconnect the board before retrying."
-        : "Use Retry clearing test before continuing."}`
-      : available && radioOn("direct-settings-wifi") && wifiStage?.use_tested_wifi
-        ? testExpired() ? "Test credentials expired; test the connection again before saving."
-          : `Wi-Fi “${wifiStage.ssid}” tested; expires in ${remainingTestSeconds()}s.` : "";
-    el("direct-wireless-summary").hidden = !el("direct-wireless-summary").textContent;
+    renderWirelessForm({ available, wirelessReady, radioReady: readiness?.settings ?? settingsReady(),
+      tcpReady: readiness?.tcp ?? (tcpReady ? tcpReady() : wirelessReady && radioOn("direct-settings-wifi")),
+      status, form, wifiStage, remainingSeconds: remainingTestSeconds(), selectedSsidHex, keyDirty: bleKey.dirty() });
   };
   const notify = () => { refresh(); changed(); };
   /** Disabling a saved-enabled radio erases its credentials at the next save. */
   const erasing = () => Boolean(supported() && status && (
     !radioOn("direct-settings-wifi") && status.wifi_enabled && status.ssid
     || !radioOn("direct-settings-ble") && status.ble_enabled && status.ble_key_configured));
-  const dirty = () => Boolean(wifiTestAttempted || keyDirty || erasing() || status
+  const dirty = () => Boolean(wifiTestAttempted || bleKey.dirty() || erasing() || status
     && radioOn("direct-settings-tcp-cli") !== status.tcp_cli_enabled);
   el("direct-settings-tcp-cli").addEventListener("change", notify);
   const enableRadio = id => {
@@ -162,11 +120,10 @@ export function bindWirelessForm({
     el(id).value = "1";
     el(id).dispatchEvent?.(new Event("change"));
   };
-  const clearBleKey = () => {
-    el("direct-ble-secret").value = "";
-    el("direct-ble-secret").type = "password";
-    keyDirty = false;
-  };
+  const bleKey = bindBleKeyForm({
+    signal: () => lifecycleController.signal, configured: () => Boolean(status?.ble_key_configured),
+    enable: () => enableRadio("direct-settings-ble"), changed: notify, clipboard,
+  });
   const clearWifiInputs = () => {
     el("direct-wifi-password").value = "";
   };
@@ -241,15 +198,9 @@ export function bindWirelessForm({
     }
     wifiDialog.showModal();
   };
-  const openBle = () => {
-    el("direct-ble-status").textContent = status?.ble_key_configured
-      ? "A Control key is saved. It cannot be read back; generate a replacement only if needed."
-      : "No Control key is saved. Bluetooth stays off until a key is saved.";
-    bleDialog.showModal();
-  };
   // "input" fires before "change", so the dashboards' change handlers only ever see Enabled or Disabled.
   for (const [id, open] of /** @type {[string, () => void][]} */ ([["direct-settings-wifi", openWifi],
-    ["direct-settings-ble", openBle]])) {
+    ["direct-settings-ble", bleKey.open]])) {
     let previous = el(id).value;
     el(id).addEventListener("focus", () => { previous = el(id).value; });
     el(id).addEventListener("input", () => {
@@ -272,7 +223,7 @@ export function bindWirelessForm({
         });
       } else {
         previous = el(id).value;
-        if (previous === "0" && id === "direct-settings-ble") clearBleKey();
+        if (previous === "0" && id === "direct-settings-ble") bleKey.clear();
       }
       refresh();
     });
@@ -383,36 +334,12 @@ export function bindWirelessForm({
     const signal = lifecycleController.signal;
     void discardWifi().then(cleared => { if (cleared && !signal.aborted) wifiDialog.close(); });
   });
-  el("direct-ble-generate").addEventListener("click", () => {
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    el("direct-ble-secret").value = bytesToHex(bytes);
-    bytes.fill(0);
-    el("direct-ble-secret").type = "text";
-    keyDirty = true;
-    keyNeedsRegeneration = false;
-    enableRadio("direct-settings-ble");
-    setStatus("direct-ble-status", "Copy this key now. The board cannot show it again after saving.");
-    notify();
-  });
-  el("direct-ble-copy").addEventListener("click", async () => {
-    const signal = lifecycleController.signal;
-    try {
-      if (!clipboard) throw new Error("Clipboard is unavailable");
-      await clipboard.writeText(el("direct-ble-secret").value);
-      if (signal.aborted) return;
-      setStatus("direct-ble-status", "Key copied. Save&Reboot to apply it.");
-    } catch (error) {
-      if (!signal.aborted) setStatus("direct-ble-status", `Could not copy key: ${describe(error)}`);
-    }
-  });
-  el("direct-ble-cancel").addEventListener("click", () => bleDialog.close());
-
   return {
     /** @brief Draft lifecycle; reset aborts it so old save completions cannot change a new draft. */
     get signal() { return lifecycleController.signal; },
     dirty,
     operationBusy: () => form.phase !== "idle",
-    canSave: () => !keyNeedsRegeneration && !working() && !clearing() && !testExpired()
+    canSave: () => bleKey.canSave() && !working() && !clearing() && !testExpired()
       && !(wifiTestAttempted && !wifiStage),
     /** @return {import("../../board/operations.mjs").WirelessConfiguration | null} */
     request() {
@@ -435,27 +362,22 @@ export function bindWirelessForm({
       if (status) config.tcp_cli_enabled = radioOn("direct-settings-tcp-cli");
       if (wifi && wifiStage?.use_tested_wifi) config.use_tested_wifi = true;
       if (!wifi && status?.ssid) config.password = "";
-      if (ble && keyDirty) config.ble_key = el("direct-ble-secret").value;
-      else if (!ble && status?.ble_key_configured) config.ble_key = "";
+      const key = bleKey.request(ble);
+      if (key !== undefined) config.ble_key = key;
       return config;
     },
     /** @param {WirelessStatus | null} saved @param {string} [error] */
     finish(saved, error) {
-      const hadKey = keyDirty;
       clearWifiInputs();
-      clearBleKey();
+      bleKey.finish(Boolean(saved), error);
       if (saved) {
         status = { ...status, ...saved };
         el("direct-settings-tcp-cli").value = (status.tcp_cli_enabled ?? true) ? "1" : "0";
         clearWifiStage();
         loaded = true;
-        keyNeedsRegeneration = false;
         setStatus("direct-wifi-status", "Wireless settings saved.");
-        setStatus("direct-ble-status", "");
       } else {
-        keyNeedsRegeneration = hadKey;
         setStatus("direct-wifi-status", error);
-        setStatus("direct-ble-status", error);
       }
       notify();
     },
@@ -469,11 +391,9 @@ export function bindWirelessForm({
       el("direct-settings-tcp-cli").value = "1";
       loaded = false;
       clearWifiStage();
-      keyNeedsRegeneration = false;
-      clearBleKey();
+      bleKey.reset();
       el("direct-wifi-networks").replaceChildren();
       if (wifiDialog.open) wifiDialog.close();
-      if (bleDialog.open) bleDialog.close();
     },
     dispose() {
       this.reset();

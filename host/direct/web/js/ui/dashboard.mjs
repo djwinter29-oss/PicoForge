@@ -210,7 +210,9 @@ export function mountDashboard({ session, selectTransport, timers, environment }
     if (Boolean(client.state.msc?.enabled) !== force) return;
     const owner = client;
     const signal = wirelessForm.signal;
-    const current = () => !disposed && client === owner && !signal.aborted;
+    const generation = owner.connection.generation;
+    const current = () => !disposed && client === owner && !signal.aborted
+      && owner.connection.generation === generation;
     const bluetooth = bluetoothLink();
     const tcpCliEnabled = bluetooth && wirelessForm.dirty()
       ? element("direct-settings-tcp-cli").value === "1" : undefined;

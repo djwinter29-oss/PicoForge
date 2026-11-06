@@ -45,6 +45,11 @@ test("Direct modules keep the agreed ownership and dependency boundaries", () =>
   }
   assert.doesNotMatch(sources.get("app.mjs"), /querySelector|queryElement|\.command\(/);
   assert.doesNotMatch(sources.get("board/session.mjs"), /HidTransport|BleTransport|receiveFeatureReport|sendFeatureReport/);
+  assert.doesNotMatch(sources.get("ui/sections/wireless-form.mjs"), /getRandomValues|writeText\(|bytesToHex/,
+    "wireless coordination delegates key generation and clipboard work");
+  assert.doesNotMatch(sources.get("ui/sections/wireless-form-view.mjs"),
+    /addEventListener|setInterval|setTimeout|\.scanWireless\(|\.testWireless\(|\.cancelWireless\(/,
+    "wireless presentation applies snapshots without initiating operations");
 });
 
 test("the Direct runtime module graph is acyclic", () => {

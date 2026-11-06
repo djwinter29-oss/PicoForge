@@ -3,6 +3,28 @@ import test from "node:test";
 import { bindWirelessForm, formTransition } from "../../../web/js/ui/sections/wireless-form.mjs";
 import { createDocument } from "../../support/dom.mjs";
 
+test("dashboard form updates reuse gates but local input refreshes current readiness", async () => {
+  const previous = globalThis.document;
+  const { document, element: el, fire } = createDocument();
+  globalThis.document = document;
+  let checks = 0, allowed = true;
+  const ready = () => { checks++; return allowed; };
+  const form = bindWirelessForm({
+    supported: () => true, ready, settingsReady: ready, tcpReady: ready,
+    scan: async () => [], test: async () => ({ remaining_seconds: 599 }), cancelTest: async () => {},
+  });
+  try {
+    form.update({ wireless: { ssid: "saved", tcp_cli_enabled: true } },
+      { wireless: true, settings: true, tcp: true });
+    assert.equal(checks, 0, "dashboard-provided gates are reused");
+    allowed = false;
+    await fire("#direct-wifi-ssid", "input");
+    assert.equal(checks, 3, "local refresh evaluates each live callback once");
+    assert.equal(el("#direct-wifi-scan").disabled, true);
+    assert.equal(el("#direct-settings-tcp-cli").disabled, true);
+  } finally { form.dispose(); globalThis.document = previous; }
+});
+
 test("replacement tests invalidate the previous pair and require retry or cancellation after failure", async () => {
   const previous = globalThis.document;
   const { document, element: el, fire } = createDocument();
@@ -251,6 +273,7 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
 
     const scanning = el("direct-wifi-scan").handlers.click();
     assert.equal(form.operationBusy(), true, "scanning owns the device");
+    assert.equal(form.canSave(), false, "a running operation cannot produce a save request");
     assert.equal(el("direct-wifi-connect").disabled, true);
     form.reset();
     assert.equal(form.operationBusy(), false, "reset returns to idle");
@@ -304,21 +327,12 @@ test("formTransition serializes one phase and requires reconnect recovery before
 
 test("obsolete cancellation and clipboard completions cannot mutate a reset wireless form", async () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  const el = id => {
-    if (!elements.has(id)) elements.set(id, {
-      value: "", children: [], handlers: {}, open: false, textContent: "",
-      options: ["0", "1", "configure"].map(value => ({ value })),
-      addEventListener(event, callback) { this.handlers[event] = callback; },
-      replaceChildren(...children) { this.children = children; },
-      close() { this.open = false; }, showModal() { this.open = true; },
-    });
-    return elements.get(id);
-  };
-  globalThis.document = { querySelector: selector => el(selector.slice(1)) };
   try {
     for (const trigger of ["disable", "button", "escape"]) {
       for (const outcome of ["resolve", "reject"]) {
+        const { document, element, fire } = createDocument();
+        globalThis.document = document;
+        const el = id => element(`#${id}`);
         let resolve, reject, resolveCopy, rejectCopy, notifications = 0;
         const form = bindWirelessForm({
           ready: () => true, supported: () => true, changed: () => notifications++,
@@ -330,14 +344,14 @@ test("obsolete cancellation and clipboard completions cannot mutate a reset wire
         el("direct-settings-ble").value = "0";
         form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
         el("direct-wifi-ssid").value = "tested";
-        await el("direct-wifi-connect").handlers.click();
-        const copying = el("direct-ble-copy").handlers.click();
+        await fire("#direct-wifi-connect", "click");
+        const copying = fire("#direct-ble-copy", "click");
         if (trigger === "disable") {
-          el("direct-settings-wifi").handlers.focus();
+          el("direct-settings-wifi").focus();
           el("direct-settings-wifi").value = "0";
-          el("direct-settings-wifi").handlers.input();
-        } else if (trigger === "button") el("direct-wifi-cancel").handlers.click();
-        else el("direct-wifi-dialog").handlers.cancel({ preventDefault() {} });
+          void fire("#direct-settings-wifi", "input");
+        } else if (trigger === "button") void fire("#direct-wifi-cancel", "click");
+        else void fire("#direct-wifi-dialog", "cancel");
         form.reset();
         const afterReset = notifications;
         // A newer lifecycle may already have opened its own dialog.

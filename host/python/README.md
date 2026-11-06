@@ -31,6 +31,10 @@ picoforge web
 Open **http://127.0.0.1:5000/**. The wheel includes the local dashboard assets; Node.js and .NET are not required.
 Runtime dependencies are Flask and HIDAPI, with versions defined in [pyproject.toml](pyproject.toml).
 Native HID access still requires the operating system's usual libraries, drivers, and permissions.
+The displayed application version comes from the installed `picoforge` distribution metadata when the imported
+package is inside that metadata's distribution root, including source trees with local package metadata.
+Without matching metadata, imports use `0.0.0-debug`; an unrelated installation does not override the fallback.
+Release packaging stamps both distribution metadata and the source fallback.
 
 Packages are published to [PyPI](https://pypi.org/project/picoforge/) and
 [GitHub Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest) after successful

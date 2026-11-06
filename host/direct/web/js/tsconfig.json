@@ -15,7 +15,8 @@
     "protocol/opcodes.mjs", "protocol/console-messages.mjs", "state/errors.mjs", "board/connection.mjs",
     "board/commands.mjs", "board/recovery.mjs", "board/polling.mjs", "board/operations.mjs", "board/session.mjs",
     "ui/messages.mjs", "ui/dashboard.mjs", "ui/sections/controls.mjs", "ui/sections/wireless-form.mjs",
-    "ui/dom.mjs", "ui/sections/status-model.mjs", "ui/console.mjs", "ui/cli-screen.mjs",
+    "ui/dom.mjs", "ui/sections/status-model.mjs", "ui/sections/ble-key-form.mjs",
+    "ui/sections/wireless-form-view.mjs", "ui/console.mjs", "ui/cli-screen.mjs",
     "../../tests/types/state-types.mjs"
   ]
 }

@@ -5,6 +5,9 @@ import os
 import re
 import subprocess
 import sys
+import runpy
+from unittest.mock import patch
+from importlib.metadata import PackageNotFoundError
 
 import pytest
 
@@ -177,7 +180,9 @@ def test_host_packages_and_publishers_share_validated_artifacts():
 
 def test_unreleased_host_versions_are_debug():
     assert '<Version>0.0.0-debug</Version>' in (ROOT / "host/dotnet/PicoForge/PicoForge.csproj").read_text()
-    assert '__version__ = "0.0.0-debug"' in (ROOT / "host/python/src/picoforge/__init__.py").read_text()
+    with patch("importlib.metadata.distribution", side_effect=PackageNotFoundError):
+        package = runpy.run_path(str(ROOT / "host/python/src/picoforge/__init__.py"))
+    assert package["__version__"] == "0.0.0-debug"
     for page in ("index.html", "console.html"):
         assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct/web" / page).read_text()
 
@@ -200,7 +205,20 @@ def test_python_release_stamps_metadata_and_app_version(tmp_path):
     subprocess.run([sys.executable, "-c", source], cwd=tmp_path,
                    env={**os.environ, "VERSION": "1.2.3"}, check=True)
     assert 'version = "1.2.3"' in (tmp_path / paths[0]).read_text()
-    assert '__version__ = "1.2.3"' in (tmp_path / paths[1]).read_text()
+    with patch("importlib.metadata.distribution", side_effect=PackageNotFoundError):
+        package = runpy.run_path(str(tmp_path / paths[1]))
+    assert package["__version__"] == "1.2.3"
+    installed = tmp_path / "site-packages"
+    package_path = installed / "picoforge" / "__init__.py"
+    package_path.parent.mkdir(parents=True)
+    package_path.write_bytes((tmp_path / paths[1]).read_bytes())
+    metadata = installed / "picoforge-1.2.3.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: picoforge\nVersion: 1.2.3\n")
+    subprocess.run([sys.executable, "-c",
+                    "import sys; sys.path.insert(0, sys.argv[1]); "
+                    "from picoforge import __version__; assert __version__ == '1.2.3'",
+                    str(installed)], cwd=tmp_path, check=True)
 
 
 def test_direct_release_stamps_both_app_headers(tmp_path):

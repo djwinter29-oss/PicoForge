@@ -67,7 +67,7 @@ jobs:
           import re
           for filename, field in (
               ("host/python/pyproject.toml", "version"),
-              ("host/python/src/picoforge/__init__.py", "__version__"),
+              ("host/python/src/picoforge/__init__.py", "DEFAULT_VERSION"),
           ):
               path = Path(filename)
               text, count = re.subn(rf'^{field} = "[^"]+"$', f'{field} = "{os.environ["VERSION"]}"',

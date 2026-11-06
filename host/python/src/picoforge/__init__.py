@@ -5,8 +5,9 @@ from pathlib import Path
 
 DEFAULT_VERSION = "0.0.0-debug"
 
+
 def _resolve_package_version(distribution_name: str, package_file: str) -> str:
-    """Return installed distribution version, or 0.0.0 for source-tree imports."""
+    """Return the owning installed distribution version, or the source-tree fallback."""
     try:
         distribution = importlib.metadata.distribution(distribution_name)
     except importlib.metadata.PackageNotFoundError:
@@ -19,6 +20,7 @@ def _resolve_package_version(distribution_name: str, package_file: str) -> str:
         return DEFAULT_VERSION
     return distribution.version
 
-__version__ = _resolve_package_version("medishield", __file__)
+
+__version__ = _resolve_package_version("picoforge", __file__)
 
 __all__ = ["__version__"]

@@ -93,6 +93,8 @@ and phase state stays local to its form controller and never enters domain state
 The wireless form owns radio and TCP CLI control availability; dashboard controls own clock, storage, and action buttons.
 Disconnect resets drafts once, without erasing newly reported action errors on subsequent disconnected renders.
 Async form completions are fenced by the captured lifecycle signal, including cancellation and clipboard results.
+Clipboard feedback also matches the key draft revision: generating, clearing, saving or resetting a key invalidates
+older copy success/failure messages without retaining another copy of the secret.
 The device section reuses the dashboard's render-local presentation snapshot; action-time safety checks remain live.
 Display-only storage retention belongs to each mounted view, not module-global state. The architecture contract test
 checks these boundaries, the opcode table and the connection transitions.
@@ -203,6 +205,19 @@ the dashboard also discards its console-window registrations; reopen consoles fr
 
 The Wi-Fi test countdown updates locally once per second. Expiry immediately notifies dashboard Save readiness,
 even without another board report, and stops the countdown timer. Expired credentials must be tested again.
+Starting a replacement test invalidates the previous tested pair and countdown, matching firmware staging behavior.
+A failed replacement blocks Save until another test succeeds or cancellation clears the temporary credentials.
+
+Save completions belong to their originating session, connection generation, and form lifecycle. A late completion
+cannot clear a newer post-reconnect key or overwrite its messages. Forced saves retain their intentional exception:
+a verified same-session recovery result may report success after reconnect, provided no newer settings or wireless
+draft exists. Render-time control gates reuse one eligibility snapshot; device actions still check current readiness.
+
+Wireless provisioning has three focused UI modules: `wireless-form.mjs` coordinates Wi-Fi scan/test/cancellation,
+the shared draft lifecycle, radio/TCP inputs and the combined save request; `ble-key-form.mjs` owns Bluetooth key
+generation, clipboard feedback and secret disposal; `wireless-form-view.mjs` renders availability, selection and
+temporary-test summaries from a snapshot. Neither extracted module performs board I/O. The coordinator's public
+API and combined Save&Reboot behavior are unchanged; matching module tests isolate failures by responsibility.
 
 ## Checks
 
@@ -258,8 +273,17 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory host/direct
 ```
 
 The page reports dialog focus and Escape behavior, narrow viewport overflow, invalid-key errors, Wi-Fi selection,
-cancellation failure/retry/reset, and bounded terminal rendering using mocked device operations. It reports the
-median and p95 rendering times for cursor edits with 999 full scrollback rows; timing is diagnostic, not a portable
-performance assertion. BLE unit checks cover delayed status reads overlapping commands, explicit GATT write rejection,
+cancellation failure/retry/reset, failed replacement tests, save/reconnect/new-draft ownership, and bounded terminal
+rendering using mocked device operations. Browser fixtures use fresh frames rather than rebinding controllers to
+elements with old listeners. The automated runner additionally exercises actual back/forward-cache restoration on
+both dashboard and console pages, checking draft/output disposal, journal retention, and no terminal requests.
+WebHID is disabled for those navigation checks because registering its listeners makes Chromium pages ineligible
+for its history cache; they do not qualify a connected device.
+
+Measurements report median and p95 elapsed time for cursor edits with 999 full scrollback rows, continuous output at
+the row limit, and telemetry bursts through the real dashboard. Each burst of three telemetry events must cause one
+uptime DOM update and no unchanged connection-label writes. Interactive cursor output is checked after streaming.
+Timing includes scheduling/layout where applicable and is diagnostic, not a portable performance assertion.
+BLE unit checks cover delayed status reads overlapping commands, explicit GATT write rejection,
 single-flight wireless polling, and late reads after disconnect; they do not qualify real GATT platform behavior.
 This test server does not provide the terminal bridge; the normal Direct runner serves only browser assets.

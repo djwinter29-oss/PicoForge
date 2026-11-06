@@ -114,12 +114,14 @@ class FalseyBoards(FakeBoards):
 
 
 class WebTests(unittest.TestCase):
-    def test_unreleased_pages_display_the_debug_app_version(self):
+    def test_pages_display_the_resolved_package_version(self):
+        from picoforge import __version__
+
         client = create_app(FakeBoards()).test_client()
         for route in ("/", "/console"):
             with self.subTest(route=route):
                 page = client.get(route).get_data(as_text=True)
-                self.assertIn("Python · App v0.0.0-debug<", page)
+                self.assertIn(f"Python · App v{__version__}<", page)
 
     def test_release_pages_display_the_stamped_app_version(self):
         with patch("picoforge.dashboard.server.__version__", "1.2.3"):
