@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief SPI implementation of the shared SD backend contract; CMake selects this or native SD.
  */

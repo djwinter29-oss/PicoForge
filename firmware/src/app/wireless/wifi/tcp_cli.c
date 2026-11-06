@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file tcp_cli.c
  * @brief Single-client raw TCP transport for the shared CLI, built on the lwIP raw API in poll mode.

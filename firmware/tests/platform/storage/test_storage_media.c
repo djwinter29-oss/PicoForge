@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 #define MEDIA_SOURCE "platform/storage/storage.c"
 #include MEDIA_SOURCE

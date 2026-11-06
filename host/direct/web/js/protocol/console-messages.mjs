@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Cross-window message protocol between the dashboard and its Wi-Fi console window: the console asks the
  * dashboard (which owns the board session) to prove TCP CLI authentication for a challenge.

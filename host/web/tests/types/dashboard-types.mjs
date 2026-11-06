@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 import { acknowledge, reconciledResult, responseJson, savedSettings, scannedNetworks } from "../../src/js/dashboard-api.mjs";
 import { commandEffects, commandSettled, operationState } from "../../src/js/operation-state.mjs";

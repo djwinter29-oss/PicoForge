@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file wireless_auth.h
  * @brief Shared key ownership and protocol-separated HMAC proofs for wireless control services.

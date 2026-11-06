@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Contract and lifecycle checks for USB Features 12 and 20."""
 
 import json

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 TEST_SOURCE_FILE("embedded_cli_adapter.c")
 #include "cli.h"

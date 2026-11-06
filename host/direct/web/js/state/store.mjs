@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 /**
  * @file Minimal observable store; the domain store is owned by BoardSession and the UI store by the dashboard.

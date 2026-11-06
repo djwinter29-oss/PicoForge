@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Single source of operation readiness. BoardSession guards and every view gate derive from these functions
  * so buttons and device writes cannot disagree.

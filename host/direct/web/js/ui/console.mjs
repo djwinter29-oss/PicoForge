@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * Direct Wi-Fi CLI console: an interactive firmware CLI terminal relayed through the Direct local bridge.
  * The dashboard passes only the board address in the URL; firmware always requires TCP auth.

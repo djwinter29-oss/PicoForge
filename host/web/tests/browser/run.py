@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Check the shared dashboard through real Python and .NET hosting without hardware requests."""
 
 from contextlib import contextmanager

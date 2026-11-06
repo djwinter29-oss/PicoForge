@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file wireless_auth.c
  * @brief Own the single wireless control key and verify board-bound, protocol-separated HMAC proofs.

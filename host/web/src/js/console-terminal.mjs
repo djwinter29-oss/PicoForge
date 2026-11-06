@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 /**
  * CLI terminal: the Embedded CLI cursor/insert/delete escapes, with bounded plain-text scrollback.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file bluetooth.c
  * @brief Key-gated BLE GATT diagnostics and control, per-command benchmark proofs and nonpersistent advertising.

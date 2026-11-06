@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { createDashboardView } from "../../web/js/ui/dashboard-view.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../../web/js/protocol/codec.mjs";
 import { identity, config, selfTest } from "./fixtures.mjs";

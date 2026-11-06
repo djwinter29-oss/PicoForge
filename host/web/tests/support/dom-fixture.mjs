@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** Minimal additive-listener DOM for the shared dashboard; unknown members are not silently stubbed. */
 export function domFixture() {
   const elements = new Map();

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs";
 import { consoleRequest } from "./console-api.mjs";
 

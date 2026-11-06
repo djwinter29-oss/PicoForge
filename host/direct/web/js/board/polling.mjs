@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Report polling and freshness: input reports, the status-report poll, the one Feature 12 poll owner and
  * scan/test lifecycle observation. Writes only `report/*` domain events.

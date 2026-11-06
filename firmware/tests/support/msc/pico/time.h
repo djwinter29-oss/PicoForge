@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef PF_MSC_TEST_PICO_TIME_H
 #define PF_MSC_TEST_PICO_TIME_H
 #include <stdint.h>

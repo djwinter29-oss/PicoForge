@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { REASON } from "./state/errors.mjs";
 // @ts-check
 /**

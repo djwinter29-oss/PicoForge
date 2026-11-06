@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { CAP, OP, STAGED_EXPIRED } from "../protocol/constants.mjs";
 import { createDashboardView, renderControls } from "./dashboard-view.mjs";
 import { bindWirelessForm } from "./sections/wireless-form.mjs";

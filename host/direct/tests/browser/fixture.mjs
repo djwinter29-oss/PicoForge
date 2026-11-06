@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { mountDashboard } from "../../web/js/ui/dashboard.mjs";
 import { createTimerScope } from "../../web/js/timers.mjs";
 import { fakeConnection, storage, selfTest, telemetry, emit, patchState } from "../support/fixtures.mjs";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #pragma once
 #ifdef PF_SPI_PRODUCTION_TEST
 /* Include the whole driver so tests can inspect private recovery state without

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { BoardSession } from "./board/session.mjs";
 import { HidTransport } from "./transport/hid.mjs";
 import { BleTransport } from "./transport/ble.mjs";

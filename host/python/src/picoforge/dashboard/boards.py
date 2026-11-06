@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Board discovery and per-board monitor ownership."""
 
 from __future__ import annotations

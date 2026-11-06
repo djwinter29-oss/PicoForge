@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """PicoUart-compatible firmware version policy, independent of the SDK and toolchain."""
 import os
 from pathlib import Path

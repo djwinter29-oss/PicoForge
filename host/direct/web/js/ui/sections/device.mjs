@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { CAP } from "../../protocol/constants.mjs";
 import { queryElement, setText } from "../dom.mjs";
 import { unknown } from "../messages.mjs";

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Verify an installed wheel with its interpreter, outside the source import path and without hardware."""
 
 import argparse

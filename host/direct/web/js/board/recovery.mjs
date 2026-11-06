@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Same-board reconnect recovery: read the result of the journalled request or observe the accepted wireless
  * lifecycle, never replaying either. Settles a waiting forced save with whatever it learns.

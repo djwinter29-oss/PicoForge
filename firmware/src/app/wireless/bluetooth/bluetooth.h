@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file bluetooth.h
  * @brief Internal BLE peripheral lifecycle, called only by the USB wireless owner task.

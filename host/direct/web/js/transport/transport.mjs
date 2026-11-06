@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * Browser-link contract consumed by the board session. A transport is a byte pipe: framing checks only, no protocol
  * policy (link restrictions live in protocol/opcodes.mjs). `device` is an opaque connection identity the session

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /* Pinned TinyUSB boundary/queue model; the real stack is NOT linked.
  * Separate TU ensures GNU --wrap redirects external driver references. */
 #include "tusb.h"

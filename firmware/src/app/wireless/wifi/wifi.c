@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file wifi.c
  * @brief Asynchronous WPA2/WPA3-SAE station connection, scans, temporary credential tests and paced reconnects.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 static char captured[8192];
 static size_t captured_size, largest_response;
 static pf_sysclk_profile_t clock_profile, saved_clock;

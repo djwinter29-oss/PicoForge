@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { CliScreen } from "../../web/js/ui/cli-screen.mjs";
 import { createConsoleRenderer } from "../../web/js/ui/console.mjs";

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """HIDAPI transport for PicoForge's vendor-defined status interface."""
 
 from __future__ import annotations

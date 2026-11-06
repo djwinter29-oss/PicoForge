@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { OPCODES } from "../protocol/opcodes.mjs";
 import { decodeIdentityReport, hexToBytes } from "../protocol/codec.mjs";
 import { wait } from "../timers.mjs";

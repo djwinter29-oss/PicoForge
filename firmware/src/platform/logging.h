@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file logging.h
  * @brief Board-configured, output-only severity logging over the monitor UART.

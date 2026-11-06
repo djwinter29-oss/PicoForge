@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Run the Direct-only browser checks against an ephemeral loopback static server."""
 
 from functools import partial

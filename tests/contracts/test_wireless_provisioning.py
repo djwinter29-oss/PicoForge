@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise Report 12 and typed staging lifecycle against the production C modules."""
 from pathlib import Path
 import subprocess

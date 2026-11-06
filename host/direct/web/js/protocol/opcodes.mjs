@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Opcode descriptor table: the single source of every control opcode's capability, link policy, request and
  * result rules, journalled request facts, result confirmation and lifecycle limits. Adding an opcode is one row.

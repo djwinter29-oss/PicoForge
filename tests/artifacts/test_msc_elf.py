@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Test final ARM ELF driver pointers using symbols and DWARF-derived layout.
 
 Requires unstripped ELF with DWARF and arm-none-eabi nm/readelf. No builds run.

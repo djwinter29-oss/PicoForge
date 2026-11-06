@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Test bare-metal cross-build artifacts; C behavior is covered by Ceedling."""
 import json
 import os

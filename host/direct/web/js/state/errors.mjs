@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 /**
  * @file The shared failure and notice vocabulary. Protocol, transport, board and timer code throw BoardError codes

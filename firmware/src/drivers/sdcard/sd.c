@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Serialized facade over the build-selected SD backend; no filesystem or USB ownership policy.
  */

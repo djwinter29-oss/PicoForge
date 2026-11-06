@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Compatibility exports for report shapes now owned by picoforge.reports.models."""
 
 from ..reports.models import (

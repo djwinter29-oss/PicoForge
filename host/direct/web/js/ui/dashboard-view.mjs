@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { renderDevice } from "./sections/device.mjs";
 import { renderWirelessStatus } from "./sections/wireless.mjs";
 import { createStorageSection } from "./sections/storage.mjs";

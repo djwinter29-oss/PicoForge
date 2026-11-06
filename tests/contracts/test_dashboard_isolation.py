@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Keep Direct and the Python/.NET frontend independently deployable."""
 from pathlib import Path
 import hashlib

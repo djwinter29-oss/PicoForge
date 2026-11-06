@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 /** @typedef {{system_clock_mhz: number, sdcard_profile: number, radios: number}} BootSettings */
 /** @typedef {{ssid: string, ssid_hex: string, rssi: number, secured: boolean, security?: string}} WirelessNetwork */

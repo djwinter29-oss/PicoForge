@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """USB Feature 20 command and result codecs."""
 
 from __future__ import annotations

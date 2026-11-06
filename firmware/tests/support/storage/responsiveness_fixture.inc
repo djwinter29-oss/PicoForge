@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 #include <string.h>
 #define WORKER_SOURCE "app/storage/storage_worker.c"

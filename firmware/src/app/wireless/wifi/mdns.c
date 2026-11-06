@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file mdns.c
  * @brief Bounded mDNS hostname registration on the USB wireless owner task; no resolver or extra SDK checkout.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Version resolution contracts independent of installed packages and hardware."""
 
 import importlib.metadata

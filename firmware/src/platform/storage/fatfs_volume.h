@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Singleton FatFs volume over a caller-selected logical block device.
  */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** Firmware-defined values; see docs/reference/usb-hid.md and docs/reference/bluetooth.md. */
 export const DEVICE_FILTER = Object.freeze({ vendorId: 0xcafe, usagePage: 0xff00, usage: 1 });
 export const PRODUCT_IDS = Object.freeze([0x4011, 0x4012]);

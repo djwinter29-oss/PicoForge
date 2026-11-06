@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef STORAGE_SERIALIZATION_SEMPHR_H
 #define STORAGE_SERIALIZATION_SEMPHR_H
 #include <assert.h>

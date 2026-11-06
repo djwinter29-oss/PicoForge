@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 const results = document.querySelector("#results");
 const dashboard = document.querySelector("#dashboard");
 const hostedResults = [];

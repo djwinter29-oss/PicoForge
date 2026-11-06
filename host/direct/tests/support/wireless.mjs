@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import assert from "node:assert/strict";
 import { fakeConnection, emit, storage, selfTest, result } from "./fixtures.mjs";
 

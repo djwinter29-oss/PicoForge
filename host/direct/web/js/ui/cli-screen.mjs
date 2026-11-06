@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Direct-owned screen model for the firmware Embedded CLI relayed over the TCP console.
  * The firmware line editor emits only CR, LF, BS, TAB and the CSI finals C/D (cursor), s/u (save/restore),

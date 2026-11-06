@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * Pure version-1 HID report codecs and shared value rules for the Direct dashboard. No browser or device state.
  */

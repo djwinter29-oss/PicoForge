@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Single-flight control command queue with a same-tab recovery journal. Every device write is journalled
  * before it is sent; an outcome that is not known stays persisted and is never replayed. Records hold only the

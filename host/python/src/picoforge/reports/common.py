@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Shared HID report constants and input validation helpers."""
 
 from __future__ import annotations

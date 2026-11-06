@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Connection lifecycle state machine: connect, same-board reconnect, initialization, recovery hand-off and
  * disconnect. The only writer of `phase` and its projections `connected` and `reconnecting`.

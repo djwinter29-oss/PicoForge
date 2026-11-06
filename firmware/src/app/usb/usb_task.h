@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief USB service task: TinyUSB device stack, CDC CLI, HID reports and MSC ownership.
  */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 void pf_sd_lock(void) {}
 void pf_sd_unlock(void) {}

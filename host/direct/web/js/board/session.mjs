@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file Board session facade: wires the connection state machine, command queue, recovery, polling and use cases
  * around one transport and one domain store, and is the dashboard's only board API. It holds no logic of its own.

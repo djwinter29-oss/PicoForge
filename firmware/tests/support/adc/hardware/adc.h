@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef HARDWARE_ADC_H
 #define HARDWARE_ADC_H
 

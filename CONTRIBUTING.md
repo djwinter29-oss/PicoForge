@@ -12,6 +12,10 @@ downstream projects and follow the [project scope](README.md#project-scope) and 
 - Keep board-specific configuration in `firmware/src/config/board.c`, reusable drivers under `firmware/src/drivers/`, platform services (logging, system, LED, temperature, boot config) under `firmware/src/platform/`, FatFs/Pico SDK integration under `firmware/src/integration/`.
 - Keep simple drivers flat in `firmware/src/drivers/`; use a named subdirectory for a multi-file or substantial driver such as SDIO.
 - Preserve third-party provenance and licenses. Do not edit vendored code except for a documented, necessary patch.
+- Start project-owned source and comment-capable build/configuration files with `SPDX-License-Identifier: BSD-3-Clause`
+  and the applicable copyright notice, using the file format's comment syntax. Preserve required shebangs, encoding
+  declarations, and format preambles. Do not apply PicoForge ownership notices to vendored or generated files;
+  JSON, lockfiles, binary assets, and other formats without comments do not receive inline headers.
 - Use include-directory-rooted paths in project-owned C headers, sources, and test fixtures, not `./` or `../`
   traversal. Cross-module production includes use paths rooted at `firmware/src`; test fixtures use the configured
   test-support include directories. Same-directory includes may keep the filename alone.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Bounded bridge from the local dashboard to the board's raw TCP CLI."""
 
 from __future__ import annotations

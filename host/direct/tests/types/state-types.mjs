@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { createDashboardStore, createUiStore } from "../../web/js/state/store.mjs";
 import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { mountDashboard } from "../../web/js/ui/dashboard.mjs";

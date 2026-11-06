@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file User use cases: readiness-gated LED, reboot, MSC, self-test and settings commands, the exclusive wireless
  * workflows, the combined configuration save and Wi-Fi console authorization. Composite use cases call their parts

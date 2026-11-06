@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Measure Python dashboard hot paths; optional board mode is read-only.
 
 Run with the dashboard environment, for example:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { DEVICE_FILTER, PRODUCT_IDS } from "../protocol/constants.mjs";
 import { matchesPicoForge, requireValid } from "../protocol/codec.mjs";
 import { BoardError, REASON } from "../state/errors.mjs";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** Cache required DOM elements per document; no board or protocol access. */
 /** @type {WeakMap<Document, Map<string, HTMLElement>>} */
 const elementsByRoot = new WeakMap();

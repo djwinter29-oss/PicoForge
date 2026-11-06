@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #ifndef STORAGE_SERIALIZATION_TASK_H
 #define STORAGE_SERIALIZATION_TASK_H
 #include <pthread.h>

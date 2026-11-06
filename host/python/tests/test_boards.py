@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Board discovery, monitor reuse and monitor retirement for the Python dashboard."""
 
 import threading

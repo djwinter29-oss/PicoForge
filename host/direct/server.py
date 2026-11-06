@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Serve the Direct dashboard and relay its local terminal to the board TCP CLI."""
 
 from __future__ import annotations

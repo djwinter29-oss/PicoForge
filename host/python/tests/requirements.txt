@@ -1,2 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 pyright==1.1.408
 uv==0.9.7

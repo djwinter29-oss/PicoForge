@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (c) 2026 Ji Dong
+ */
+
 /* Wi-Fi console page: reuses the dashboard tokens, top bar, and buttons. */
 .console-page main { display: grid; gap: 14px; }
 .console-lede { margin: 6px 0 0; color: var(--muted); }

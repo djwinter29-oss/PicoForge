@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file Native command/data wire transport; device framing and stream state belong to callers. */
 #include "sdio_pio.h"
 #include <string.h>

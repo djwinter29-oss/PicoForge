@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { canRun, mscPending, selfTestPending } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
 import { describe } from "../messages.mjs";

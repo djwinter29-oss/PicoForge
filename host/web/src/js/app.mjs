@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { normalizeStatus, renderStatus as renderDashboardStatus, storageSpeed } from "./dashboard.mjs";
 import { bindWirelessForm } from "./wireless-form.mjs?v=19";
 import {

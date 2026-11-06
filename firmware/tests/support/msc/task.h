@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #pragma once
 #include <pthread.h>
 extern pthread_mutex_t creation_lock;

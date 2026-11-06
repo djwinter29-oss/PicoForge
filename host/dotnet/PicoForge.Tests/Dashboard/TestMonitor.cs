@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 namespace PicoForge.Tests;
 
 /// <summary>An <see cref="IDeviceMonitor"/> whose members throw until a test overrides the ones it needs.</summary>

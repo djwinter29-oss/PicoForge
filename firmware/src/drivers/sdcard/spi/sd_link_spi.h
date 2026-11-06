@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file
  * @brief Raw SPI operations implemented by the selected SPI engine; card framing belongs to sd_backend_spi.c.
  */

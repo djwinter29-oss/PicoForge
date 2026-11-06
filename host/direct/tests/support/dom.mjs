@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** Direct-only DOM fixture with additive listeners and explicit asynchronous event dispatch. */
 export function createDocument() {
   const elements = new Map();

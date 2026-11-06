@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /* Host radio model used by the wireless contract tests; run through pytest's contract selectors. */
 #include <assert.h>
 #include <stdio.h>

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 // @ts-check
 /**
  * @file Allowlisted patch reducers for the domain (board) snapshot and the separate UI snapshot.

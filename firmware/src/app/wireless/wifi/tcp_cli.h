@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /**
  * @file tcp_cli.h
  * @brief Raw TCP byte stream for the shared CLI session over Wi-Fi (for example PuTTY "Raw" mode).

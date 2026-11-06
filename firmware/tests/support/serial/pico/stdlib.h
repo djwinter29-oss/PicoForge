@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #pragma once
 #include "hardware/gpio.h"
 static inline uint64_t time_us_64(void) { serial_fake.now += 50000u; return serial_fake.now; }

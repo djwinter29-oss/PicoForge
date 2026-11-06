@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 #include "unity.h"
 TEST_INCLUDE_PATH("firmware/tests/support/serial")
 #include "serial_fake.h"

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise the production BLE GATT callbacks against a minimal fake BTstack, without radio hardware."""
 from pathlib import Path
 import subprocess

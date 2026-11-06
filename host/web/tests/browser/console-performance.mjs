@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** Measure the actual console module and styles at bounded scrollback, not a proxy renderer. */
 async function measureConsole() {
   const { ConsoleTerminal } = await import("/js/console-terminal.mjs");

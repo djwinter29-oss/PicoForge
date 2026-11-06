@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Firmware output names and flash selection without hardware."""
 import os
 from pathlib import Path

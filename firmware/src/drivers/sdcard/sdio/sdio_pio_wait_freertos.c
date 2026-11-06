@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 /** @file sdio_pio_wait_freertos.c
  * @brief Bounded FreeRTOS notification waits for the native PIO transport.
  *

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2026 Ji Dong
+
 import { renderWirelessStatus } from "./wireless-form.mjs?v=19";
 import { operationState } from "./operation-state.mjs";
 

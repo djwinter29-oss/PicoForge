@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Ji Dong
+
 """Exercise production radio retries, raw SSIDs and scan generations without hardware."""
 from pathlib import Path
 import subprocess
