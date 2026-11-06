@@ -179,6 +179,15 @@ _TERMINAL = DirectTerminal()
 class DirectHandler(SimpleHTTPRequestHandler):
     """Serve static Direct files and same-origin local terminal requests."""
 
+    def end_headers(self) -> None:
+        self.send_header("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; "
+                         "style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+                         "frame-ancestors 'none'")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        super().end_headers()
+
     def _same_origin_loopback(self) -> bool:
         host = self.headers.get("Host", "")
         try:

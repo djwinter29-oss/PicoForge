@@ -1,4 +1,5 @@
-import { PicoForgeWebHid } from "../../js/device.mjs?v=48";
+import { BoardSession } from "../../js/board/session.mjs";
+import { HidTransport } from "../../js/transport/hid.mjs";
 
 export function identity(capabilities = 1 | 2 | 4 | 16 | 32) {
   const bytes = new Uint8Array(26);
@@ -70,6 +71,12 @@ export function fakeConnection({ capabilities, ...options } = {}) {
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
   hid.requestDevice = async () => [device];
-  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore, ...options });
+  const client = new BoardSession(new HidTransport(hid), () => {},
+    { sleep: async () => {}, pendingStore, wirelessPolling: false, ...options });
   return { client, device, hid, reads, sent, pendingStore };
+}
+
+export async function attachDevice(client, device) {
+  await client.transport.openDevice(device, client.connectionSignal);
+  await client.initializeConnection();
 }

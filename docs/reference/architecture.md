@@ -171,8 +171,8 @@ wire behavior and forced-return safeguards.
 
 Keep dependencies flowing toward hardware-facing services:
 
-1. **Host applications** implement their own UI and host OS integration. Direct remains independent from the Python
-   and .NET dashboard components; Python and .NET may share their web frontend.
+1. **Host applications** implement their own UI and host OS integration. Direct is independent and shares no code
+   with the Python and .NET dashboard; Python and .NET may share their web frontend.
 2. **Application** owns product policy, command admission, and composition. It can depend on platform services and
    integrations, but reusable lower layers do not depend on application code.
 3. **Platform services** own reusable device behavior and stable service interfaces, including storage lifecycle.

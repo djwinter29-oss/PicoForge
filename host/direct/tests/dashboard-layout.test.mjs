@@ -5,8 +5,10 @@ import test from "node:test";
 test("standalone dashboard labels profiles, active measurements, controls and accessible statuses", () => {
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /<title>PicoForge Dashboard \| Direct<\/title>/);
-  assert.match(html, /rel="icon"[^>]*href="favicon\.svg\?v=\d+"/);
-  assert.match(html, /src="js\/app\.mjs\?v=\d+"/);
+  assert.match(html, /http-equiv="Content-Security-Policy"/);
+  assert.match(html, /name="referrer" content="no-referrer"/);
+  assert.match(html, /rel="icon"[^>]*href="favicon\.svg"/);
+  assert.match(html, /src="js\/app\.mjs"/);
   assert.doesNotMatch(html, /id="connection-control"|id="connection-transport"/);
   for (const name of ["usb", "bluetooth"]) {
     assert.match(html, new RegExp(`id="${name}-open"[\\s\\S]*?aria-haspopup="dialog"`));
@@ -14,7 +16,7 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     assert.match(html, new RegExp(`id="${name}-connection-status" role="status" aria-live="polite"`));
   }
   assert.doesNotMatch(html, /settings-tcp-auth|ble-view-only|ble-authorize|bluetooth-access-step/);
-  assert.match(html, /id="ble-control-key"[^>]*type="password"/);
+  assert.match(html, /id="direct-ble-control-key"[^>]*type="password"/);
   assert.match(html, /<label for="settings-storage">SD Card/);
   assert.match(html, /value="0">Standard/);
   assert.match(html, /value="1">High-Speed/);
@@ -26,13 +28,13 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
     const footer = dashboard.split('<footer class="status-line"')[1].split("</footer>")[0];
     assert.doesNotMatch(settings, /id="settings-note"/);
     assert.doesNotMatch(settings, /wireless-actions|wifi-open|ble-open/);
-    assert.match(settings, /id="settings-wifi"[\s\S]*?<option value="configure">Configure…<\/option>/);
-    assert.match(settings, /id="settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
+    assert.match(settings, /id="direct-settings-wifi"[\s\S]*?<option value="configure">Configure…<\/option>/);
+    assert.match(settings, /id="direct-settings-ble"[\s\S]*?<option value="configure">Configure…<\/option>/);
     const board = settings.split('<div class="settings-controls">')[1].split("</div>")[0];
     assert.deepEqual([...board.matchAll(/<label for="([^"]+)"/g)].map(match => match[1]),
-      ["settings-clock", "settings-storage", "settings-wifi", "settings-ble", "settings-tcp-cli"]);
-    assert.match(board, /<label for="settings-wifi" hidden>[\s\S]*<label for="settings-ble" hidden>/);
-    for (const id of ["settings-tcp-cli"]) {
+      ["settings-clock", "settings-storage", "direct-settings-wifi", "direct-settings-ble", "direct-settings-tcp-cli"]);
+    assert.match(board, /<label for="direct-settings-wifi" hidden>[\s\S]*<label for="direct-settings-ble" hidden>/);
+    for (const id of ["direct-settings-tcp-cli"]) {
       assert.match(board, new RegExp(`<label for="${id}" hidden>[\\s\\S]*?<select id="${id}"`));
       const attributes = board.match(new RegExp(`<select id="${id}"([^>]*)>`))[1];
       assert.match(attributes, /title="[^"]+"/);
@@ -40,11 +42,11 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
       assert.match(board, new RegExp(`<small id="${id}-help" hidden>`));
     }
     assert.doesNotMatch(board, /type="checkbox"/);
-    assert.doesNotMatch(settings, /id="wifi-ssid"|id="wifi-password"|id="ble-secret"/);
-    assert.match(dashboard, /<dialog[^>]*id="wifi-dialog"/);
-    assert.match(dashboard, /<dialog[^>]*id="ble-dialog"/);
+    assert.doesNotMatch(settings, /id="direct-wifi-ssid"|id="direct-wifi-password"|id="direct-ble-secret"/);
+    assert.match(dashboard, /<dialog[^>]*id="direct-wifi-dialog"/);
+    assert.match(dashboard, /<dialog[^>]*id="direct-ble-dialog"/);
     assert.doesNotMatch(dashboard, /id="wireless-save"/);
-    assert.match(dashboard, /id="configuration-wireless-warning" hidden/);
+    assert.match(dashboard, /id="direct-configuration-wireless-warning" hidden/);
     assert.match(footer, /role="status" aria-live="polite"/);
     assert.match(footer, /id="status-message"[\s\S]*id="settings-note"/);
     assert.equal([...dashboard.matchAll(/id="settings-note"/g)].length, 1);
@@ -88,17 +90,16 @@ test("standalone dashboard labels profiles, active measurements, controls and ac
   }
 });
 
-test("one cache-bust version covers every page asset and relative module import", () => {
+test("page assets and local modules use stable same-origin URLs without hand-maintained cache versions", () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
   const sources = ["index.html", "console.html",
-    ...readdirSync(new URL("../js/", import.meta.url)).filter(name => name.endsWith(".mjs")).map(name => `js/${name}`)];
-  const versions = new Set();
+    ...readdirSync(new URL("../js/", import.meta.url), { recursive: true })
+      .filter(name => name.endsWith(".mjs")).map(name => `js/${name}`)];
   for (const path of sources) {
     const text = read(path);
-    for (const [, version] of text.matchAll(/\?v=(\d+)/g)) versions.add(version);
+    assert.doesNotMatch(text, /\?v=\d+/, `${path} must not require a synchronized query version`);
     for (const [specifier] of text.matchAll(/(?:from |import\()"\.\/[^"]+"/g)) {
-      assert.match(specifier, /\?v=\d+"$/, `${path}: ${specifier} needs the shared ?v= version`);
+      assert.doesNotMatch(specifier, /\?v=/, `${path}: ${specifier} must use a stable local URL`);
     }
   }
-  assert.equal(versions.size, 1, `bump every ?v= together; found ${[...versions].join(", ")}`);
 });

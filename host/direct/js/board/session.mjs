@@ -1,22 +1,22 @@
 /**
- * WebHID client for one PicoForge board: connection, report freshness, one outstanding control transaction and
- * same-tab recovery. Pure codecs live in protocol.mjs; persisted recovery records live in recovery.mjs.
+ * Transport-independent board session: one command queue, report freshness and same-board recovery.
  */
 import {
-  CAP, DEVICE_FILTER, OP, PRODUCT_IDS, SAVE_SETTINGS_FORCE_MSC, buildControlRequest, decodeConfigReport,
+  buildControlRequest, decodeConfigReport,
   decodeControlResult, decodeIdentityReport, decodeSelfTestReport, decodeSettings, decodeStorageReport,
-  decodeTelemetryReport, encodeSettings, hexToBytes, matchesPicoForge, requireValid, validSettings, wait, withTimeout,
-} from "./protocol.mjs?v=48";
-import { defaultPendingStore, loadPendingOperation, savePendingOperation } from "./recovery.mjs?v=48";
-import { deriveOperationEligibility } from "./eligibility.mjs?v=48";
-import { waitLifecycle, wirelessPollInterval } from "./wireless.mjs?v=48";
-
-export * from "./protocol.mjs?v=48";
+  decodeTelemetryReport, encodeSettings, hexToBytes, requireValid, validSettings,
+} from "../protocol/codec.mjs";
+import { CAP, OP, SAVE_SETTINGS_FORCE_MSC } from "../protocol/constants.mjs";
+import { defaultPendingStore, loadPendingOperation, savePendingOperation } from "./journal.mjs";
+import { deriveOperationEligibility } from "../state/selectors.mjs";
+import { readWireless, waitLifecycle, wirelessPollInterval } from "./workflows/wireless.mjs";
+import { createDashboardStore } from "../state/store.mjs";
+import { createTimerScope, wait, withTimeout } from "../timers.mjs";
 
 const EMPTY = {
   hardware: null, settings: null, settings_supported: false, settings_message: null,
   runtime: null, memory: null, filesystem_format: null, msc: null, self_test: null,
-  wireless: null, wireless_error: null, recovery_message: null, recovered_opcode: null,
+  wireless: null, wireless_error: null, wireless_poll_error: null, recovery_message: null, recovered_opcode: null,
   freshness: { 3: "unavailable", 10: "unavailable", 11: "unavailable" },
   self_test_command_pending: false, msc_command_pending: false, reboot_pending: false,
 };
@@ -25,15 +25,20 @@ const sameSettings = (a, b) => a.system_clock_mhz === b.system_clock_mhz && a.sd
 /** Capability bit each opcode requires; every wireless opcode (6 and above) requires CAP.WIRELESS. */
 const REQUIRED_CAP = { [OP.LED]: CAP.LED, [OP.REBOOT]: CAP.REBOOT, [OP.SELF_TEST]: CAP.SELF_TEST,
   [OP.SAVE_SETTINGS]: CAP.SETTINGS };
-export class PicoForgeWebHid {
-  constructor(hid, onChange = () => {}, { now = () => performance.now(), sleep = wait, timeout = 3000,
-    pendingStore } = {}) {
+export class BoardSession {
+  /** @param {import("../transport/transport.mjs").Transport} transport */
+  constructor(transport, onChange = () => {}, { now = () => performance.now(), sleep = wait, timeout = 3000,
+    pendingStore, timerScope, wirelessPolling = true, store } = {}) {
     if (pendingStore === undefined) pendingStore = defaultPendingStore();
-    Object.assign(this, { hid, onChange, now, sleep, timeout, device: null, reconnectUid: null,
+    const timers = timerScope?.createChild() ?? createTimerScope();
+    Object.assign(this, { transport, onChange, now, sleep, timeout, reconnectUid: null,
       transaction: 0, outstanding: null, pendingWirelessCommand: null,
       wirelessOperation: null, forcedSave: null,
       receipts: new Map(), expiryTimer: null, generation: 0, mscPendingEnabled: null,
-      selfTestPendingSequence: null, pendingStore, recoveryError: null });
+      selfTestPendingSequence: null, pendingStore, recoveryError: null,
+      timers, connectionController: new AbortController(), queue: null, disposed: false,
+      pollTimer: null, wirelessPollTimer: null, wirelessLastRead: 0, wirelessReading: false, wirelessPolling });
+    if (sleep === wait) this.sleep = (milliseconds, signal) => wait(milliseconds, signal, timers);
     try {
       const record = loadPendingOperation(pendingStore);
       if (record) {
@@ -45,12 +50,17 @@ export class PicoForgeWebHid {
     } catch (error) {
       this.recoveryError = `Pending operation recovery data is unavailable or invalid: ${error.message}`;
     }
-    this.state = { ...EMPTY, link: "usb", connected: false, reconnecting: false, busy: false,
+    const initial = { ...EMPTY, link: transport.kind, connected: false, reconnecting: false, busy: false,
+      command_pending: Boolean(this.outstanding || this.pendingWirelessCommand), wireless_busy: false,
+      wireless_form_busy: false, settings_dirty: false, configuration_force_save: false,
       outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
       error: this.recoveryError
-        ?? (hid ? null : "WebHID is unavailable; use a supported browser on localhost or HTTPS") };
+        ?? (transport.available ? null : transport.unavailableMessage) };
+    this.store = store ?? createDashboardStore(initial);
+    if (store) store.dispatch({ type: "replace", state: initial });
+    this.unsubscribe = this.store.subscribe(state => this.onChange(state));
     this.onInputReport = event => {
-      if (event.device !== this.device || !this.state.connected) return;
+      if (!this.state.connected || this.connectionSignal.aborted) return;
       const id = event.reportId;
       if (![3, 10, 11].includes(id) || (id === 11 && !(this.state.hardware.capabilities & CAP.SELF_TEST))) return;
       try {
@@ -72,36 +82,45 @@ export class PicoForgeWebHid {
         this.update({ ...changes, freshness: { ...this.state.freshness, [id]: "fresh" } });
       } catch (error) { this.update({ error: error.message }); }
     };
-    this.onDisconnect = event => {
-      if (event.device !== this.device) return;
+    this.onDisconnect = () => {
       this.clearConnection();
-      this.update({ reconnecting: Boolean(this.reconnectUid), error: this.recoveryError ?? (this.outstanding
+      this.update({ reconnecting: Boolean(transport.autoReconnect && this.reconnectUid),
+        error: this.recoveryError ?? (this.outstanding
         ? "Command outcome uncertain after disconnect; no request will be replayed."
         : this.pendingWirelessCommand
           ? "Wireless command outcome uncertain; reconnect to inspect its result." : null) });
     };
-    this.onConnect = event => {
-      if (this.reconnectUid && matchesPicoForge(event.device) && !this.device) void this.attachDevice(event.device);
+    this.onConnect = () => {
+      if (this.reconnectUid && !this.device && !this.state.busy) void this.reconnect();
     };
-    this.onSuspend = event => { if (event.device === this.device) this.expireReports(true); };
-    hid?.addEventListener("disconnect", this.onDisconnect);
-    hid?.addEventListener("connect", this.onConnect);
-    hid?.addEventListener("suspend", this.onSuspend);
+    this.onSuspend = () => this.expireReports(true);
+    transport.addEventListener("report", this.onInputReport);
+    transport.addEventListener("disconnect", this.onDisconnect);
+    transport.addEventListener("available", this.onConnect);
+    transport.addEventListener("suspend", this.onSuspend);
   }
 
   /** @brief Detach every listener and timer so a replaced client cannot write state or touch the device. */
   dispose() {
-    this.hid?.removeEventListener("disconnect", this.onDisconnect);
-    this.hid?.removeEventListener("connect", this.onConnect);
-    this.hid?.removeEventListener("suspend", this.onSuspend);
-    this.device?.removeEventListener("inputreport", this.onInputReport);
-    clearTimeout(this.expiryTimer);
+    this.disposed = true;
+    this.transport.removeEventListener("report", this.onInputReport);
+    this.transport.removeEventListener("disconnect", this.onDisconnect);
+    this.transport.removeEventListener("available", this.onConnect);
+    this.transport.removeEventListener("suspend", this.onSuspend);
+    this.timers.clearTimeout(this.expiryTimer);
+    this.connectionController.abort();
+    this.timers.dispose();
+    this.unsubscribe();
     this.onChange = () => {};
+    void this.transport.dispose().catch(error => console.error("Could not close the board transport", error));
   }
 
+  get state() { return this.store.getState(); }
+  get device() { return this.transport.device; }
+  get connectionSignal() { return this.connectionController.signal; }
+
   update(changes) {
-    this.state = { ...this.state, ...changes };
-    this.onChange(this.state);
+    if (!this.disposed) this.store.dispatch({ type: "patch", changes });
   }
 
   persistPendingOperation() {
@@ -127,6 +146,7 @@ export class PicoForgeWebHid {
       this.clearPersistedOperation();
       this.outstanding = null;
     }
+    this.update({ command_pending: Boolean(this.outstanding || this.pendingWirelessCommand) });
     if (!succeeded && request.opcode === OP.MSC) {
       this.mscPendingEnabled = null;
       this.update({ msc_command_pending: false });
@@ -137,7 +157,8 @@ export class PicoForgeWebHid {
   recordWireless(wireless) {
     if (!wireless.staged_mask && ![4, 5, 6].includes(wireless.state)) this.savedSsidHex = wireless.ssid_hex;
     this.receipts.set(12, this.now());
-    this.update({ wireless, wireless_error: null, freshness: { ...this.state.freshness, 12: "fresh" } });
+    this.update({ wireless, wireless_error: null, wireless_poll_error: null,
+      freshness: { ...this.state.freshness, 12: "fresh" } });
     this.scheduleExpiry();
   }
 
@@ -148,21 +169,25 @@ export class PicoForgeWebHid {
     }
     const token = Symbol("wireless operation");
     this.wirelessOperation = token;
+    this.update({ wireless_busy: true });
     try { return await action(token); }
-    finally { this.wirelessOperation = null; }
+    finally {
+      this.wirelessOperation = null;
+      this.update({ wireless_busy: false, command_pending: Boolean(this.outstanding || this.pendingWirelessCommand) });
+    }
   }
 
   /** @brief Clear the recovery record after a wireless lifecycle outcome is known. */
   settleWireless() {
     this.clearPersistedOperation();
     this.pendingWirelessCommand = null;
+    this.update({ command_pending: Boolean(this.outstanding) });
   }
 
   /** @brief Single source of operation readiness; see eligibility.mjs. */
   eligibility() {
     this.expireReports();
-    return deriveOperationEligibility(this.state, { outstanding: this.outstanding ?? this.pendingWirelessCommand,
-      wirelessBusy: Boolean(this.wirelessOperation) });
+    return deriveOperationEligibility(this.state);
   }
 
   expireReports(suspended = false) {
@@ -181,12 +206,12 @@ export class PicoForgeWebHid {
   }
 
   scheduleExpiry() {
-    clearTimeout(this.expiryTimer);
+    this.timers.clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     if (!this.device || !this.receipts.size) return;
     const deadline = Math.min(...[...this.receipts].map(([id, received]) =>
       received + this.reportLifetime(id)));
-    this.expiryTimer = setTimeout(() => {
+    this.expiryTimer = this.timers.setTimeout(() => {
       this.expiryTimer = null;
       this.expireReports();
     }, Math.max(0, deadline - this.now()));
@@ -195,54 +220,127 @@ export class PicoForgeWebHid {
 
   reportLifetime(id) { return id === 12 ? 3 * wirelessPollInterval(this.state.wireless) : id === 3 ? 750 : 1500; }
 
+  async readReport(id, signal = this.connectionSignal, timeout = this.timeout) {
+    const device = this.device;
+    const report = await withTimeout(this.transport.readReport(id, signal), timeout, signal, this.timers);
+    signal.throwIfAborted();
+    if (device !== this.device) throw new Error("Board connection changed");
+    return report;
+  }
+
+  async pollReports() {
+    this.timers.clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    if (!this.transport.pollInterval || !this.state.connected || this.disposed) return;
+    const signal = this.connectionSignal;
+    if (!this.state.busy && !this.outstanding) {
+      try {
+        for (const id of [3, 10, ...(this.state.hardware.capabilities & CAP.SELF_TEST ? [11] : [])]) {
+          if (this.state.busy || this.outstanding) break;
+          const data = await this.readReport(id, signal);
+          this.onInputReport({ reportId: id, data });
+        }
+      } catch (error) {
+        if (!signal.aborted) this.update({ error: `Board status read failed: ${error.message}` });
+      }
+    }
+    if (!signal.aborted && this.state.connected && !this.disposed) {
+      this.pollTimer = this.timers.setTimeout(() => { void this.pollReports(); }, this.transport.pollInterval);
+      this.pollTimer.unref?.();
+    }
+  }
+
+  /** One Feature 12 poll owner, shared by both transports and independent of UI refresh. */
+  pollWireless() {
+    this.timers.clearTimeout(this.wirelessPollTimer);
+    this.wirelessPollTimer = null;
+    if (!this.wirelessPolling || this.disposed || !this.state.connected
+      || !(this.state.hardware?.capabilities & CAP.WIRELESS)) return;
+    if (this.wirelessReading) return;
+    const delay = this.wirelessLastRead + wirelessPollInterval(this.state.wireless) - Date.now();
+    if (delay <= 0 && !this.state.busy && !this.state.reboot_pending && !this.outstanding
+      && !this.wirelessOperation && !this.state.wireless_form_busy) {
+      void this.readWirelessNow();
+      return;
+    }
+    this.wirelessPollTimer = this.timers.setTimeout(() => this.pollWireless(), Math.max(delay, 250));
+    this.wirelessPollTimer.unref?.();
+  }
+
+  async readWirelessNow() {
+    const signal = this.connectionSignal;
+    this.wirelessReading = true;
+    this.wirelessLastRead = Date.now();
+    try { await readWireless(this); }
+    catch (error) {
+      if (!signal.aborted) {
+        this.expireReports();
+        this.update({ wireless_poll_error: error.message });
+      }
+    } finally {
+      this.wirelessReading = false;
+      if (!this.disposed) this.pollWireless();
+    }
+  }
+
   clearConnection() {
     this.generation++;
-    this.device?.removeEventListener("inputreport", this.onInputReport);
-    clearTimeout(this.expiryTimer);
+    this.connectionController.abort(new DOMException("Device disconnected", "AbortError"));
+    this.connectionController = new AbortController();
+    this.timers.clearTimeout(this.expiryTimer);
+    this.timers.clearTimeout(this.pollTimer);
+    this.timers.clearTimeout(this.wirelessPollTimer);
     this.expiryTimer = null;
-    this.device = null;
+    this.pollTimer = null;
+    this.wirelessPollTimer = null;
+    this.wirelessLastRead = 0;
     this.savedSsidHex = null;
     this.receipts.clear();
     this.update({ ...EMPTY, connected: false, busy: false,
+      command_pending: Boolean(this.outstanding || this.pendingWirelessCommand),
       outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
       msc_command_pending: this.mscPendingEnabled !== null });
   }
 
-  async connect() {
-    if (!this.hid || this.state.busy || this.device || this.state.reconnecting) return;
+  async connect(options) {
+    if (this.state.busy || this.device || this.state.reconnecting) return;
+    const signal = this.connectionSignal;
     this.update({ busy: true, error: this.recoveryError });
     try {
-      const devices = await this.hid.requestDevice({
-        filters: PRODUCT_IDS.map(productId => ({ ...DEVICE_FILTER, productId })),
-      });
-      if (!devices.length) return;
-      requireValid(devices.length === 1 && matchesPicoForge(devices[0]), "device selection");
-      await this.attachDevice(devices[0]);
-    } catch (error) { this.update({ error: error.message }); }
-    finally { this.update({ busy: false }); }
+      if (await this.transport.connect(options, signal)) await this.initializeConnection();
+    } catch (error) { if (!signal.aborted) this.update({ error: error.message }); }
+    finally { if (!signal.aborted) this.update({ busy: false }); }
   }
 
-  async attachDevice(device) {
-    const generation = this.generation;
+  async reconnect() {
+    const signal = this.connectionSignal;
     this.update({ busy: true });
     try {
-      if (!device.opened) await device.open();
-      if (generation !== this.generation) throw new Error("Connection cancelled");
-      this.device = device;
-      const hardware = decodeIdentityReport(await withTimeout(device.receiveFeatureReport(1), this.timeout));
+      if (await this.transport.reconnect(signal)) await this.initializeConnection();
+    } catch (error) { if (!signal.aborted) this.update({ error: error.message }); }
+    finally { if (!signal.aborted) this.update({ busy: false }); }
+  }
+
+  async initializeConnection() {
+    const device = this.device;
+    const generation = this.generation;
+    const signal = this.connectionController.signal;
+    this.update({ busy: true });
+    try {
+      signal.throwIfAborted();
+      const hardware = decodeIdentityReport(await withTimeout(this.transport.readReport(1, signal), this.timeout, signal,
+        this.timers));
       const expectedUid = this.reconnectUid;
       if (expectedUid && hardware.serial_number !== expectedUid) {
-        await device.close();
-        if (generation === this.generation && device === this.device) {
-          this.device = null;
-          this.update({ busy: false, reconnecting: true });
-        }
+        await this.transport.disconnect();
+        if (generation === this.generation) this.update({ reconnecting: this.transport.autoReconnect, busy: false,
+          error: "Select the original board to resolve its pending operation." });
         return;
       }
-      const settings = decodeConfigReport(await withTimeout(device.receiveFeatureReport(2), this.timeout), hardware);
+      const settings = decodeConfigReport(await withTimeout(this.transport.readReport(2, signal), this.timeout, signal,
+        this.timers), hardware);
       if (generation !== this.generation || device !== this.device) throw new Error("Connection cancelled");
       this.reconnectUid = hardware.serial_number;
-      device.addEventListener("inputreport", this.onInputReport);
       this.update({ ...EMPTY, connected: true, reconnecting: false, busy: true,
         outcome_uncertain: Boolean(this.recoveryError || this.outstanding || this.pendingWirelessCommand),
         error: this.recoveryError,
@@ -252,7 +350,7 @@ export class PicoForgeWebHid {
       if (this.outstanding) {
         const request = this.outstanding;
         try {
-          const result = await this.pollResult(device, request);
+          const result = await this.pollResult(device, request, signal);
           const succeeded = result.status === 2;
           if (succeeded && request.settings && (!sameSettings(result.settings, request.settings)
             || result.commit_mask !== request.commit_mask)) {
@@ -285,9 +383,15 @@ export class PicoForgeWebHid {
           this.update({ outcome_uncertain: true, error: error.message });
         }
       }
-      if (generation === this.generation && device === this.device) this.update({ busy: false });
+      if (generation === this.generation && device === this.device) {
+        this.update({ busy: false });
+        await this.pollReports();
+        this.pollWireless();
+      }
     } catch (error) {
-      if (device.opened) { try { await device.close(); } catch {} }
+      if (generation !== this.generation) return;
+      try { await this.transport.disconnect(); }
+      catch (closeError) { error = new Error(`${error.message}; closing the transport failed: ${closeError.message}`); }
       if (generation === this.generation) {
         this.clearConnection();
         this.update({ reconnecting: false, error: error.message });
@@ -297,23 +401,20 @@ export class PicoForgeWebHid {
 
   async disconnect() {
     if (this.state.busy) return;
-    const device = this.device;
     if (!this.outstanding && !this.pendingWirelessCommand) this.reconnectUid = null;
     this.mscPendingEnabled = null;
     this.clearConnection();
     this.update({ reconnecting: false, error: this.recoveryError });
-    if (device?.opened) {
-      try { await device.close(); } catch (error) { this.update({ error: error.message }); }
-    }
+    try { await this.transport.disconnect(); } catch (error) { this.update({ error: error.message }); }
   }
 
-  async pollResult(device, request) {
+  async pollResult(device, request, signal = this.connectionController.signal) {
     const deadline = this.now() + this.timeout;
     const generation = this.generation;
     for (let attempt = 0; attempt < Math.ceil(this.timeout / 50) && this.now() < deadline; attempt++) {
-      if (device !== this.device) throw new Error("Command outcome uncertain after disconnect");
-      const report = await withTimeout(device.receiveFeatureReport(20), deadline - this.now());
-      if (device !== this.device || generation !== this.generation) {
+      if (signal.aborted || device !== this.device) throw new Error("Command outcome uncertain after disconnect");
+      const report = await withTimeout(this.transport.readReport(20, signal), deadline - this.now(), signal, this.timers);
+      if (signal.aborted || device !== this.device || generation !== this.generation) {
         throw new Error("Command outcome uncertain after disconnect");
       }
       const result = decodeControlResult(report, { ble: this.state.link === "ble" });
@@ -325,7 +426,7 @@ export class PicoForgeWebHid {
         }
         return result;
       }
-      await this.sleep(50);
+      await this.sleep(50, signal);
     }
     throw new Error("Command outcome uncertain: result timeout; disconnect/reconnect to read it, never replay");
   }
@@ -336,6 +437,9 @@ export class PicoForgeWebHid {
       || !(uid instanceof Uint8Array) || uid.length !== 8) {
       throw new Error("Invalid TCP CLI authentication challenge");
     }
+    if (!this.state.connected || !this.state.hardware) {
+      throw new Error("Connect the matching PicoForge board before authorizing its Wi-Fi console");
+    }
     const serial = this.state.connected ? this.state.hardware?.serial_number : null;
     if (serial) {
       const expectedUid = hexToBytes(serial);
@@ -343,7 +447,8 @@ export class PicoForgeWebHid {
         throw new Error("The Wi-Fi console challenge belongs to a different board");
       }
     }
-    return this.tcpCliAuthProof(nonce, uid);
+    return this.transport.authorizeConsole
+      ? this.transport.authorizeConsole(nonce, uid, this.connectionSignal) : this.tcpCliAuthProof(nonce);
   }
 
   async tcpCliAuthProof(nonce) {
@@ -359,9 +464,27 @@ export class PicoForgeWebHid {
    * Opcode-specific follow-up state belongs to the caller (setMsc, setSelfTest, reboot, saveSettings).
    */
   async command(opcode, options) {
+    if (!this.transport.supportsOpcode(opcode)) throw new Error("This operation requires USB.");
+    if (this.queue) throw new Error("Command unavailable while another command owns the queue");
+    const args = options?.args ? [...options.args] : undefined;
+    const signal = options?.signal
+      ? AbortSignal.any([this.connectionSignal, options.signal]) : this.connectionSignal;
+    this.queue = { opcode, signal };
+    try { return await this.executeCommand(opcode, { ...options, args, signal }); }
+    finally {
+      args?.fill(0);
+      this.queue = null;
+    }
+  }
+
+  async executeCommand(opcode, options) {
     this.expireReports();
-    const { blocked } = deriveOperationEligibility(this.state, {
-      wirelessBusy: Boolean(this.wirelessOperation) && options?.workflow !== this.wirelessOperation });
+    const signal = options?.signal
+      ? AbortSignal.any([this.connectionSignal, options.signal]) : this.connectionSignal;
+    if (signal.aborted) throw signal.reason ?? new DOMException("Operation cancelled", "AbortError");
+    const commandState = options?.workflow === this.wirelessOperation
+      ? { ...this.state, wireless_busy: false } : this.state;
+    const { blocked } = deriveOperationEligibility(commandState);
     if (!this.device || blocked || this.outstanding || this.pendingWirelessCommand
       || this.state.self_test_command_pending || this.state.msc_command_pending) {
       throw new Error("Command unavailable or previous outcome uncertain");
@@ -370,7 +493,7 @@ export class PicoForgeWebHid {
     if (bit && !(this.state.hardware.capabilities & bit)) throw new Error("Unavailable capability");
     const transaction = this.transaction % 255 + 1;
     const report = buildControlRequest(transaction, opcode, options);
-    // A forced save detaches MSC and may reset USB; attachDevice settles this with the result read after reconnect.
+    // A forced save may reset USB; connection initialization settles the result after same-board reconnect.
     const forced = opcode === OP.SAVE_SETTINGS && report[3] & SAVE_SETTINGS_FORCE_MSC ? {} : null;
     if (forced) forced.done = new Promise(resolve => { forced.settle = outcome => resolve(forced.outcome = outcome); });
     this.forcedSave = forced;
@@ -387,6 +510,7 @@ export class PicoForgeWebHid {
     }
     const device = this.device;
     const generation = this.generation;
+    const commandSignal = signal;
     this.outstanding = request;
     if (opcode === OP.MSC) this.mscPendingEnabled = report[4] === 1;
     try { this.persistPendingOperation(); }
@@ -395,14 +519,14 @@ export class PicoForgeWebHid {
       this.mscPendingEnabled = null;
       throw error;
     }
-    this.update({ busy: true, error: null, recovery_message: null, recovered_opcode: null,
+    this.update({ busy: true, command_pending: true, error: null, recovery_message: null, recovered_opcode: null,
       ...(opcode === OP.MSC ? { msc_command_pending: true } : {}) });
     let sent = false;
     try {
-      await withTimeout(device.sendFeatureReport(20, report), this.timeout);
+      await withTimeout(this.transport.writeReport(20, report, commandSignal), this.timeout, commandSignal, this.timers);
       sent = true;
       if (generation !== this.generation) throw new Error("Command outcome uncertain after disconnect");
-      const result = await this.pollResult(device, request);
+      const result = await this.pollResult(device, request, commandSignal);
       if (result.status !== 2) {
         this.retire(request, false);
         throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}, `
@@ -420,7 +544,8 @@ export class PicoForgeWebHid {
     } catch (error) {
       if (forced && sent && this.reconnectUid && !(generation === this.generation && this.state.outcome_uncertain)
         && (this.outstanding || forced.outcome)) {
-        const { result } = forced.outcome ?? await withTimeout(forced.done, 5000).catch(() => ({}));
+        const { result } = forced.outcome ?? await withTimeout(forced.done, 5000, undefined, this.timers)
+          .catch(() => ({}));
         if (result?.transaction_id === transaction && result.opcode === opcode) {
           if (result.status !== 2) {
             throw new Error(`Command ${opcode}: status ${result.status}, error ${result.error_reason}`);
@@ -433,7 +558,7 @@ export class PicoForgeWebHid {
         if (this.state.error) throw new Error(this.state.error);
       }
       // SET rejection is authoritative: do not poll or accept a prior result.
-      if (!sent && error.name !== "TimeoutError" && generation === this.generation) {
+      if (!sent && !["TimeoutError", "AbortError"].includes(error.name) && generation === this.generation) {
         try { this.retire(request, false); }
         catch (storageError) {
           this.update({

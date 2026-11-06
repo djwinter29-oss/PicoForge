@@ -1,4 +1,4 @@
-import { bindWirelessForm } from "../js/wireless-form.mjs?v=48";
+import { bindWirelessForm } from "../js/ui/sections/wireless-form.mjs";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {
@@ -71,18 +71,18 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
   });
   await form.load();
 
-  const wifi = document.querySelector("#settings-wifi");
-  const dialog = document.querySelector("#wifi-dialog");
+  const wifi = document.querySelector("#direct-settings-wifi");
+  const dialog = document.querySelector("#direct-wifi-dialog");
   wifi.focus();
   wifi.value = "configure";
   wifi.dispatchEvent(new Event("input", { bubbles: true }));
   check(dialog.open, "Wi-Fi dialog did not open");
   check(dialog.contains(document.activeElement), "focus did not move into the Wi-Fi dialog");
-  document.querySelector("#wifi-other").click();
-  const ssid = document.querySelector("#wifi-ssid");
+  document.querySelector("#direct-wifi-other").click();
+  const ssid = document.querySelector("#direct-wifi-ssid");
   ssid.value = "browser-check";
   ssid.dispatchEvent(new Event("input", { bubbles: true }));
-  document.querySelector("#wifi-connect").click();
+  document.querySelector("#direct-wifi-connect").click();
   await waitFor(() => !dialog.open, "Wi-Fi test did not finish and close the dialog");
   check(document.activeElement === wifi, "focus was not restored after Wi-Fi test");
   check(form.canSave(), "successful Wi-Fi test should allow saving");
@@ -92,13 +92,13 @@ await run("Wi-Fi cancellation failure keeps the dialog open and retry clears the
   wifi.dispatchEvent(new Event("input", { bubbles: true }));
   const cancel = new Event("cancel", { cancelable: true });
   dialog.dispatchEvent(cancel);
-  await waitFor(() => document.querySelector("#wireless-summary").textContent.includes("temporary failure"),
+  await waitFor(() => document.querySelector("#direct-wireless-summary").textContent.includes("temporary failure"),
     "failed cancellation was not reported");
   check(cancel.defaultPrevented && dialog.open, "failed keyboard cancellation closed the dialog");
   check(!form.canSave(), "saving remained enabled after cancellation failed");
-  check(document.querySelector("#wifi-cancel").textContent === "Retry clearing test", "retry is not offered");
+  check(document.querySelector("#direct-wifi-cancel").textContent === "Retry clearing test", "retry is not offered");
 
-  document.querySelector("#wifi-cancel").click();
+  document.querySelector("#direct-wifi-cancel").click();
   await waitFor(() => !dialog.open, "retry did not close the dialog");
   check(cancelAttempts === 2, "cancellation retry was not attempted");
   check(form.canSave(), "saving remained blocked after cancellation succeeded");

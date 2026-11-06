@@ -245,18 +245,21 @@ Non-GET `/api` requests with a foreign `Origin` return 403. The web console long
 `GET /api/console`; each asynchronous request waits up to 2 s for board output, honors request cancellation, and does
 not block input.
 
-### Dashboard component isolation
+### Direct dashboard independence
 
-Direct and the Python/.NET dashboard **must not share any dashboard components**. This includes HTML, CSS, JavaScript
-modules, renderers, controls, transport adapters, assets, and test helpers. Do not introduce cross-dashboard imports,
-symlinks, shared component directories, or build-time copying from one dashboard into the other. Similar behavior must
-be implemented and maintained independently within each dashboard.
+Direct is an independent product. It **must not share any code** with the Python/.NET dashboard: not HTML, CSS,
+JavaScript, Python, renderers, controls, protocol codecs, transport adapters, the terminal bridge, assets, tests, or
+test helpers. Do not introduce cross-dashboard imports, symlinks, shared component directories, build-time copying,
+or copy-paste forks kept in sync with `host/web`, `host/python`, or `host/dotnet`. Similar behavior must be designed,
+implemented, and maintained independently in Direct; a change to one dashboard never requires a change to the other.
 
-Python and .NET may continue sharing their own frontend in `host/web`; this does not include Direct. The firmware
-[HID Report Reference](../reference/usb-hid.md) remains their common specification, not a shared
-dashboard implementation. Repository CI may run both independent test suites.
-The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check local module/asset
-boundaries and ensure the native hosts do not package or serve Direct components.
+Direct code, including its Python-standard-library bridge, lives in `host/direct`. Python and .NET may continue sharing
+their own frontend in `host/web`; this does not include
+Direct. The only common ground is the firmware [HID Report Reference](../reference/usb-hid.md) and BLE profile, which
+are specifications, not shared implementations. Repository CI may run both independent test suites.
+The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check module/asset boundaries,
+that the Direct bridge imports nothing from the native hosts, that no Direct file is a byte-identical copy of a
+Python/.NET/web host file, and that the native hosts do not package or serve Direct. Near-copies are a review concern.
 
 In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
 adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without

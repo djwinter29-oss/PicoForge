@@ -199,12 +199,12 @@ The console receives only
 the one-use proof, never the Control key. Entering the same key again would not add a separate factor or strengthen
 the challenge-response check.
 
-The matching dashboard tab must stay connected until the console authenticates. The tabs exchange the challenge
-and proof over a same-origin `BroadcastChannel`, correlated with a per-page random value in the console URL. That
-value is not the Control key, but URLs may be retained in browser history and local server access logs. The Direct
-bridge accepts loopback, same-origin requests and forwards the proof; it does not authenticate local OS users or
-processes. Treat a shared computer as trusted. If no matching dashboard responds, the console fails closed and asks
-you to connect the board there; it does not fall back to a key-entry field.
+The matching dashboard tab must stay connected until the console authenticates. The console sends its challenge to
+the exact same-origin popup opened by the dashboard through `postMessage`; the dashboard checks the challenge UID,
+then returns the one-use proof to that popup. The URL contains only the board's private IPv4 address, not a pairing
+secret. The Direct bridge accepts loopback, same-origin requests and forwards the proof; it does not authenticate
+local OS users or processes. Treat a shared computer as trusted. If no matching dashboard responds, the console
+fails closed and asks you to connect the board there; it does not fall back to a key-entry field.
 
 The web console supports the Embedded CLI's cursor movement, character insertion/deletion and saved cursor escapes.
 It keeps at most 1000 lines of 512 columns; it is not a general-purpose VT100/color terminal. Input is limited to

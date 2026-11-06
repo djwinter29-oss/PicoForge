@@ -1,21 +1,21 @@
 /**
- * Direct Wi-Fi CLI console: the Python dashboard's interactive terminal, relayed through the Direct local bridge.
- * The dashboard passes the board address and its auth pairing token in the URL; firmware always requires TCP auth.
+ * Direct Wi-Fi CLI console: an interactive firmware CLI terminal relayed through the Direct local bridge.
+ * The dashboard passes only the board address in the URL; firmware always requires TCP auth.
  */
-import { ConsoleTerminal, consoleKey } from "./console-terminal.mjs?v=48";
+import { CliScreen, cliInputForKey } from "./cli-screen.mjs";
 import {
-  bytesToHex, CONSOLE_AUTH_CHANNEL, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE,
-  parseHexBytes, randomHex,
-} from "./console-auth.mjs?v=48";
+  bytesToHex, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE, parseHexBytes, randomHex,
+} from "./console-auth.mjs";
+import { createTimerScope } from "../timers.mjs";
 
 const terminal = document.querySelector("#terminal");
 const status = document.querySelector("#console-status");
 const connect = document.querySelector("#connect");
 const query = new URLSearchParams(location.search);
 const ipv4 = query.get("ipv4") ?? "";
-const authToken = query.get("auth_token") ?? "";
 const encoder = new TextEncoder();
-let screen = new ConsoleTerminal();
+const timers = createTimerScope();
+let screen = new CliScreen();
 let decoder = new TextDecoder();
 let session = null;
 let pendingSession = null;
@@ -27,7 +27,7 @@ let sending = false;
 /** POST one bridge operation with a deadline; aborting the session signal cancels it. */
 async function bridge(operation, payload, signal, timeoutMs = 10000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => {
+  const timeout = timers.setTimeout(() => {
     controller.abort(new DOMException("Console request timed out", "TimeoutError"));
   }, timeoutMs);
   const abort = () => controller.abort(signal.reason);
@@ -51,7 +51,7 @@ async function bridge(operation, payload, signal, timeoutMs = 10000) {
     if (!response.ok) throw new Error(result?.error ?? `HTTP ${response.status}`);
     return result;
   } finally {
-    clearTimeout(timeout);
+    timers.clearTimeout(timeout);
     signal?.removeEventListener("abort", abort);
   }
 }
@@ -104,7 +104,7 @@ async function poll(token, signal) {
         await close("Connection closed by board; check terminal output before retrying commands");
         return;
       }
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => timers.setTimeout(resolve, 50));
     } catch (error) {
       if (session === token) await close(error.message);
       return;
@@ -138,29 +138,28 @@ async function send(text) {
 }
 
 function requestTcpCliProof(challenge, signal) {
-  if (!/^[a-f0-9]{32}$/i.test(authToken)) {
+  const opener = window.opener;
+  if (!opener || typeof opener.postMessage !== "function") {
     throw new Error("Open this console from the Direct dashboard while the matching board is connected.");
-  }
-  if (typeof window.BroadcastChannel !== "function") {
-    throw new Error("This browser cannot request authorization from the Direct dashboard.");
   }
   const nonce = parseHexBytes(challenge?.nonce, 16, "TCP CLI nonce");
   const uid = parseHexBytes(challenge?.uid, 8, "TCP CLI board identity");
   const requestId = randomHex();
-  const channel = new window.BroadcastChannel(CONSOLE_AUTH_CHANNEL);
   return new Promise((resolve, reject) => {
     let timer;
     const finish = (error, proof) => {
-      clearTimeout(timer);
+      timers.clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      channel.close();
+      window.removeEventListener("message", receive);
+      if (window.opener === opener) window.opener = null;
       if (error) reject(error);
       else resolve(proof);
     };
     const abort = () => finish(signal.reason ?? new DOMException("Console request cancelled", "AbortError"));
-    channel.onmessage = event => {
+    const receive = event => {
+      if (event.origin !== location.origin || event.source !== opener) return;
       const response = event.data;
-      if (response?.auth_token !== authToken || response.request_id !== requestId) return;
+      if (response?.request_id !== requestId) return;
       if (response.type === CONSOLE_AUTH_ERROR) {
         const message = typeof response.error === "string" ? response.error
           : "The dashboard could not authorize this console";
@@ -177,11 +176,12 @@ function requestTcpCliProof(challenge, signal) {
       return;
     }
     signal.addEventListener("abort", abort, { once: true });
-    timer = setTimeout(() => finish(new Error(
+    window.addEventListener("message", receive);
+    timer = timers.setTimeout(() => finish(new Error(
       "No matching authenticated dashboard responded. Connect this board over USB or Bluetooth and try again.")), 5000);
     try {
-      channel.postMessage({ type: CONSOLE_AUTH_REQUEST, auth_token: authToken, request_id: requestId,
-        nonce: bytesToHex(nonce), uid: bytesToHex(uid) });
+      opener.postMessage({ type: CONSOLE_AUTH_REQUEST, request_id: requestId,
+        nonce: bytesToHex(nonce), uid: bytesToHex(uid) }, location.origin);
     } catch (error) {
       finish(error instanceof Error ? error : new Error("Could not request dashboard authentication"));
     }
@@ -210,7 +210,7 @@ async function open() {
     pendingSession = null;
     openingController = null;
     sessionController = new AbortController();
-    screen = new ConsoleTerminal();
+    screen = new CliScreen();
     decoder = new TextDecoder();
     input = "";
     render();
@@ -249,7 +249,7 @@ terminal.addEventListener("keydown", event => {
   // Preserve copy/paste and an accessible way out of the terminal with Shift+Tab.
   if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "v"
     || event.key.toLowerCase() === "c" && window.getSelection()?.toString())) return;
-  const text = consoleKey(event);
+  const text = cliInputForKey(event);
   if (text !== null) { event.preventDefault(); void send(text); }
 });
 terminal.addEventListener("paste", event => {
@@ -261,6 +261,7 @@ terminal.addEventListener("paste", event => {
 });
 connect.addEventListener("click", () => { void (session ? close() : open()); });
 window.addEventListener("pagehide", () => {
+  timers.dispose();
   openingController?.abort();
   openingController = null;
   const token = session ?? pendingSession;

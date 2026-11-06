@@ -7,7 +7,6 @@ test("Direct console uses the connected dashboard for authentication without ask
   const handlers = new Map();
   const windowHandlers = new Map();
   const elements = new Map();
-  const channels = [];
   const element = selector => {
     if (!elements.has(selector)) elements.set(selector, {
       disabled: false, hidden: false, value: "", textContent: "",
@@ -23,20 +22,21 @@ test("Direct console uses the connected dashboard for authentication without ask
   const savedCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
   const calls = [];
   let readSignal;
-  class FakeBroadcastChannel {
-    constructor(name) { this.name = name; channels.push(this); }
+  globalThis.document = { querySelector: element, createElement: () => ({}), createTextNode: text => ({ text }) };
+  globalThis.location = { search: "?ipv4=192.168.66.87", origin: "http://localhost",
+    href: "http://localhost/console.html?ipv4=192.168.66.87" };
+  const dashboardWindow = {
     postMessage(message) {
       this.request = message;
-      queueMicrotask(() => this.onmessage?.({ data: { type: "tcp-cli-auth-response",
-        auth_token: message.auth_token, request_id: message.request_id, uid: message.uid,
-        proof: "ab".repeat(16) } }));
-    }
-    close() { this.closed = true; }
-  }
-  globalThis.document = { querySelector: element, createElement: () => ({}), createTextNode: text => ({ text }) };
-  globalThis.location = { search: "?ipv4=192.168.66.87&auth_token=0123456789abcdef0123456789abcdef" };
-  globalThis.window = { addEventListener: (type, handler) => windowHandlers.set(type, handler),
-    BroadcastChannel: FakeBroadcastChannel, getSelection: () => ({ toString: () => "" }), confirm: () => true };
+      queueMicrotask(() => windowHandlers.get("message")?.({ origin: "http://localhost", source: dashboardWindow,
+        data: { type: "direct-console-auth-response", request_id: message.request_id, uid: message.uid,
+          proof: "ab".repeat(16) } }));
+    },
+  };
+  globalThis.window = { opener: dashboardWindow,
+    addEventListener: (type, handler) => windowHandlers.set(type, handler),
+    removeEventListener: type => windowHandlers.delete(type),
+    getSelection: () => ({ toString: () => "" }), confirm: () => true };
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   globalThis.fetch = async (url, options) => {
     const operation = url.split("/").at(-1);
@@ -53,18 +53,18 @@ test("Direct console uses the connected dashboard for authentication without ask
   };
   const tick = () => new Promise(resolve => setImmediate(resolve));
   try {
-    await import(`../js/console.mjs?test=${Date.now()}`);
+    await import(`../js/ui/console.mjs?test=${Date.now()}`);
     assert.equal(element("#console-target").textContent, "192.168.66.87:2323");
     assert.equal(elements.has("#console-auth-key"), false);
     assert.doesNotMatch(readFileSync(new URL("../console.html", import.meta.url), "utf8"), /console-auth-key/);
     handlers.get("#connect:click")();
     await tick();
     assert.deepEqual(calls[0], ["open", { ipv4: "192.168.66.87" }]);
-    assert.deepEqual(channels[0].request, { type: "tcp-cli-auth-request",
-      auth_token: "0123456789abcdef0123456789abcdef", request_id: channels[0].request.request_id,
+    assert.deepEqual(dashboardWindow.request, { type: "direct-console-auth-request",
+      request_id: dashboardWindow.request.request_id,
       nonce: "000102030405060708090a0b0c0d0e0f", uid: "0102030405060708" });
-    assert.match(channels[0].request.request_id, /^[a-f0-9]{32}$/);
-    assert.equal(channels[0].closed, true);
+    assert.match(dashboardWindow.request.request_id, /^[a-f0-9]{32}$/);
+    assert.equal(globalThis.window.opener, null, "the opener relationship closes after proof delivery");
     assert.deepEqual(calls[1], ["auth", { session: "session-a", proof: "ab".repeat(16) }]);
     assert.equal(element("#console-status").textContent, "Connected");
     assert.equal(element("#connect").textContent, "Disconnect", "one button toggles while connected");

@@ -2,14 +2,17 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { PicoForgeBluetooth, BLE_SERVICE } from "../js/bluetooth.mjs?v=48";
-import { PicoForgeWebHid, buildControlRequest, decodeControlResult } from "../js/device.mjs?v=48";
+import { BleTransport, BLE_SERVICE } from "../js/transport/ble.mjs";
+import { HidTransport } from "../js/transport/hid.mjs";
+import { BoardSession } from "../js/board/session.mjs";
+import { buildControlRequest, decodeControlResult } from "../js/protocol/codec.mjs";
 import {
   cancelWireless, readWireless,
   saveWireless, scanWireless, testWireless, wirelessPollInterval,
-} from "../js/wireless.mjs?v=48";
-import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol.mjs?v=48";
-import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result } from "./support/fixtures.mjs";
+} from "../js/board/workflows/wireless.mjs";
+import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol/codec.mjs";
+import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result, attachDevice }
+  from "./support/fixtures.mjs";
 
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
 const vectors = JSON.parse(readFileSync(new URL("../../../tests/fixtures/wireless-status.json", import.meta.url)));
@@ -237,8 +240,9 @@ test("uncertain command recovery stores no secrets, reads same UID+tx+opcode and
   const record = JSON.parse(raw);
   assert.deepEqual(record.request, { transaction_id: 1, opcode: 6 });
   fail = false;
-  const restored = new PicoForgeWebHid(setup.hid, () => {}, { pendingStore: setup.pendingStore });
-  await restored.attachDevice(setup.device);
+  const restored = new BoardSession(new HidTransport(setup.hid), () => {},
+    { pendingStore: setup.pendingStore, wirelessPolling: false });
+  await attachDevice(restored, setup.device);
   assert.equal(restored.state.outcome_uncertain, false);
   assert.equal(setup.sent.length, 1);
   await restored.disconnect(); await setup.client.disconnect();
@@ -260,8 +264,9 @@ test("accepted test lifecycle survives reload, enforces generation and never sto
     assert.equal(raw.includes("password"), false);
     assert.equal(JSON.parse(raw).kind, "wireless-lifecycle");
     interrupt = false;
-    const restored = new PicoForgeWebHid(setup.hid, () => {}, { pendingStore: setup.pendingStore });
-      await restored.attachDevice(setup.device);
+    const restored = new BoardSession(new HidTransport(setup.hid), () => {},
+      { pendingStore: setup.pendingStore, wirelessPolling: false });
+      await attachDevice(restored, setup.device);
     assert.equal(restored.state.outcome_uncertain, wrongGeneration);
     assert.equal(setup.sent.length, 3);
     await restored.disconnect(); await setup.client.disconnect();
@@ -366,11 +371,11 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
     },
     disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
   };
-  const client = new PicoForgeBluetooth({ requestDevice: async options => {
+  const client = new BoardSession(new BleTransport({ requestDevice: async options => {
     requestedServices.push(...options.optionalServices);
     return ble;
-  } }, () => {},
-    { pendingStore: setup.pendingStore });
+  } }), () => {},
+    { pendingStore: setup.pendingStore, wirelessPolling: false });
   try {
     await client.connect("ab".repeat(32));
     assert.equal(client.state.connected, true);
@@ -382,6 +387,11 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
       .update(Buffer.concat([nonce, Buffer.from("0102030405060708", "hex"), Buffer.from("PFBLECTL1"),
         Buffer.from(request)])).digest().subarray(0, 16)];
     assert.deepEqual(writes[0], [257, sign(Buffer.from("SESSION01"))]);
+    const uid = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(Buffer.from(await client.authorizeConsole(nonce, uid)),
+      createHmac("sha256", Buffer.from("ab".repeat(32), "hex"))
+        .update(Buffer.concat([nonce, uid, Buffer.from("PFTCPCLI1TCPCLI001")])).digest().subarray(0, 16));
+    assert.equal(writes.length, 1, "BLE console authorization signs locally without a second board command");
     writes.length = 0;
     await client.command(1, { args: [1] });
     assert.deepEqual(writes, [[20, [1, 1, 1, 0, 1, 0, 0, 0, 0]]]);
@@ -437,8 +447,9 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
     },
     disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
   };
-  const client = new PicoForgeBluetooth({ requestDevice: async () => { prompts++; return ble; } }, () => {},
-    { pendingStore: fakeConnection().pendingStore, sleep: async () => {} });
+  const client = new BoardSession(new BleTransport({ requestDevice: async () => { prompts++; return ble; } },
+    { sleep: async () => {} }), () => {},
+    { pendingStore: fakeConnection().pendingStore, sleep: async () => {}, wirelessPolling: false });
   await client.connect("ab".repeat(32));
   assert.equal(client.state.connected, true);
   assert.deepEqual([prompts, connects], [1, 2]);
@@ -448,7 +459,7 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
   assert.equal(client.state.connected, false);
   assert.equal(connects, 3);
   assert.match(client.state.error, /No matching service/);
-  assert.equal(client.bleKey, null);
+  assert.equal(client.transport.bleKey, null);
 });
 
 test("malformed save settings and credentials reject before the first SET", async () => {
@@ -475,7 +486,7 @@ test("all-zero32byte keys remain configured; only empty keys clear", async () =>
       assert.ok(setup.sent[0].slice(6).every(byte => byte === 0));
     } finally { await setup.client.disconnect(); }
   }
-  const client = new PicoForgeBluetooth(undefined, () => {}, { pendingStore: fakeConnection().pendingStore });
+  const client = new BleTransport(undefined);
   await client.setControlKey("0".repeat(64));
   assert.ok(client.bleKey, "an all-zero key can authorize a Bluetooth session");
   const message = Uint8Array.of(1, 2, 3);

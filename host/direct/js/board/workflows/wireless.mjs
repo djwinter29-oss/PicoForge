@@ -1,25 +1,26 @@
 /**
- * USB wireless workflows (Feature 12 codecs live in protocol.mjs). Imports only protocol.mjs so device.mjs can reuse
- * waitLifecycle for reconnect recovery without an import cycle.
+ * Wireless workflows depend on the board session contract, never on a browser transport or DOM.
  */
 import {
-  OP, buildControlRequest, bytesToHex as hex, decodeScanEntry, decodeWireless, displaySsid, encodeSettings,
-  parseHexBytes, ssidBytes, validSettings, withTimeout,
-} from "./protocol.mjs?v=48";
+  buildControlRequest, bytesToHex as hex, decodeScanEntry, decodeWireless, displaySsid, encodeSettings,
+  parseHexBytes, ssidBytes, validSettings,
+} from "../../protocol/codec.mjs";
+import { OP } from "../../protocol/constants.mjs";
 
 /** @brief Feature 12 poll interval: fast while a Wi-Fi test or scan runs, otherwise 2 s. */
 export const wirelessPollInterval = wireless => wireless?.state === 4 || wireless?.scan_state === 1 ? 500 : 2000;
 
-export async function readWireless(client, device = client.device) {
-  const generation = client.generation;
-  const wireless = decodeWireless(await withTimeout(device.receiveFeatureReport(12), 1500), client.state.settings);
-  if (device !== client.device || generation !== client.generation) throw new Error("Wireless connection changed");
+export async function readWireless(client, device = client.device, operationSignal) {
+  const signal = operationSignal ? AbortSignal.any([client.connectionSignal, operationSignal]) : client.connectionSignal;
+  const wireless = decodeWireless(await client.readReport(12, signal, 1500),
+    client.state.settings);
+  if (signal.aborted || device !== client.device) throw new Error("Wireless connection changed");
   client.recordWireless(wireless);
   return wireless;
 }
 
-async function stage(client, token, opcode, bytes) {
-  try { return await client.command(opcode, { workflow: token, args: [bytes.length, ...bytes] }); }
+async function stage(client, token, opcode, bytes, signal) {
+  try { return await client.command(opcode, { workflow: token, args: [bytes.length, ...bytes], signal }); }
   finally { bytes.fill(0); }
 }
 
@@ -30,7 +31,7 @@ function passwordBytes(password) {
   return new TextEncoder().encode(password);
 }
 
-async function stagePair(client, token, settings) {
+async function stagePair(client, token, settings, signal) {
   const ssid = ssidBytes(settings);
   const same = hex(ssid) === client.savedSsidHex;
   if (ssid.length && settings.password === undefined && !same) {
@@ -39,8 +40,8 @@ async function stagePair(client, token, settings) {
   // Validate both fields before any write.
   const password = settings.password === undefined ? null : passwordBytes(settings.password);
   try {
-    await stage(client, token, OP.STAGE_SSID, ssid);
-    if (password && ssid.length !== 0) await stage(client, token, OP.STAGE_PASSWORD, password);
+    await stage(client, token, OP.STAGE_SSID, ssid, signal);
+    if (password && ssid.length !== 0) await stage(client, token, OP.STAGE_PASSWORD, password, signal);
   } finally { ssid.fill(0); password?.fill(0); }
 }
 
@@ -63,22 +64,24 @@ function lifecycleOutcome(status, pending) {
 }
 
 /** @brief Poll Feature 12 until the pending scan/test lifecycle completes or fails; never replays it. */
-export async function waitLifecycle(client, pending, onProgress) {
+export async function waitLifecycle(client, pending, onProgress, operationSignal) {
   const device = client.device;
+  const signal = operationSignal ? AbortSignal.any([client.connectionSignal, operationSignal]) : client.connectionSignal;
   const deadline = client.now() + (pending.operation === OP.TEST_WIFI ? 35000 : 15000);
   while (client.now() < deadline) {
-    const status = await readWireless(client, device);
+    if (signal.aborted) throw new Error("Wireless command outcome uncertain after disconnect");
+    const status = await readWireless(client, device, signal);
     const outcome = lifecycleOutcome(status, pending);
     if (outcome) return outcome;
     onProgress?.(status.phase || "Connecting");
-    await client.sleep(500);
+    await client.sleep(500, signal);
   }
   throw new Error("Wireless operation timed out; reconnect to inspect it, never replay");
 }
 
-async function finishLifecycle(client, pending, onProgress) {
+async function finishLifecycle(client, pending, onProgress, signal) {
   try {
-    const outcome = await waitLifecycle(client, pending, onProgress);
+    const outcome = await waitLifecycle(client, pending, onProgress, signal);
     client.settleWireless();
     if (outcome.kind === "failed") throw new Error(outcome.message);
     return outcome.result;
@@ -88,43 +91,43 @@ async function finishLifecycle(client, pending, onProgress) {
   }
 }
 
-export async function scanWireless(client) {
+export async function scanWireless(client, signal) {
   return client.exclusiveWireless(async token => {
-    const previous = await readWireless(client);
+    const previous = await readWireless(client, client.device, signal);
     const pending = { operation: OP.SCAN, generation: previous.scan_generation % 65535 + 1 };
-    await client.command(OP.SCAN, { workflow: token, lifecycle: pending });
-    const status = await finishLifecycle(client, pending);
+    await client.command(OP.SCAN, { workflow: token, lifecycle: pending, signal });
+    const status = await finishLifecycle(client, pending, undefined, signal);
     const networks = [];
     for (let index = 0; index < status.scan_count; index++) {
-      networks.push(decodeScanEntry(await client.command(OP.SCAN_ENTRY, { workflow: token,
+      networks.push(decodeScanEntry(await client.command(OP.SCAN_ENTRY, { workflow: token, signal,
         args: [index, status.scan_generation & 255, status.scan_generation >> 8] })));
     }
     return networks;
   });
 }
 
-export async function testWireless(client, settings, onProgress) {
+export async function testWireless(client, settings, onProgress, signal) {
   return client.exclusiveWireless(async token => {
-    const previous = await readWireless(client);
+    const previous = await readWireless(client, client.device, signal);
     if (!ssidBytes(settings).length) throw new Error("SSID is required for a connection test");
-    await stagePair(client, token, settings);
+    await stagePair(client, token, settings, signal);
     const pending = { operation: OP.TEST_WIFI, generation: previous.test_generation % 255 + 1 };
-    await client.command(OP.TEST_WIFI, { workflow: token, lifecycle: pending });
-    return finishLifecycle(client, pending, onProgress);
+    await client.command(OP.TEST_WIFI, { workflow: token, lifecycle: pending, signal });
+    return finishLifecycle(client, pending, onProgress, signal);
   });
 }
 
-export async function cancelWireless(client) {
+export async function cancelWireless(client, signal) {
   return client.exclusiveWireless(async token => {
-    await client.command(OP.CANCEL_TEST, { workflow: token });
-    try { await readWireless(client); }
+    await client.command(OP.CANCEL_TEST, { workflow: token, signal });
+    try { await readWireless(client, client.device, signal); }
     catch (error) { client.update({ wireless: null, wireless_error: error.message }); }
   });
 }
 
-export async function saveWireless(client, settings) {
+export async function saveWireless(client, settings, signal) {
   return client.exclusiveWireless(async token => {
-    const previous = await readWireless(client);
+    const previous = await readWireless(client, client.device, signal);
     const board = settings.board;
     if (typeof settings.wifi_enabled !== "boolean" || typeof settings.ble_enabled !== "boolean"
       || settings.tcp_cli_enabled !== undefined && typeof settings.tcp_cli_enabled !== "boolean"
@@ -146,14 +149,14 @@ export async function saveWireless(client, settings) {
       if (!previous.pair_tested || previous.staged_state & 8 || previous.ssid_hex !== targetHex
         || settings.password !== undefined) throw new Error("Tested Wi-Fi pair no longer matches; test again");
     } else if (targetHex !== previous.ssid_hex || settings.password !== undefined) {
-      await stagePair(client, token, settings);
+      await stagePair(client, token, settings, signal);
     }
     try {
-      if (key) await stage(client, token, OP.STAGE_KEY, key);
+      if (key) await stage(client, token, OP.STAGE_KEY, key, signal);
     } finally { key?.fill(0); target.fill(0); }
-    const staged = await readWireless(client);
+    const staged = await readWireless(client, client.device, signal);
     const result = await client.command(OP.SAVE_SETTINGS, { workflow: token, flags: staged.staged_mask ? 2 : 0,
-      args, commitMask: staged.staged_mask });
+      args, commitMask: staged.staged_mask, signal });
     client.update({ reboot_pending: true });
     return { ...result.settings, wifi_enabled: settings.wifi_enabled, ble_enabled: settings.ble_enabled,
       ssid: targetLabel, ssid_hex: targetHex, tcp_cli_enabled: tcp,

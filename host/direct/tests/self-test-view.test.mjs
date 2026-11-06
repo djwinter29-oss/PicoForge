@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderStatus, renderSelfTest } from "../js/view.mjs?v=48";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/device.mjs?v=48";
+import { createDashboardView } from "../js/ui/dashboard-view.mjs";
+import { renderSelfTest } from "../js/ui/sections/self-test.mjs";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/protocol/codec.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
+let renderStatus;
 function withDocument(run) {
   const saved = globalThis.document;
   const elements = new Map();
@@ -15,6 +17,7 @@ function withDocument(run) {
   };
   globalThis.document = { querySelector: element, createElement: () => ({ children: [],
     append(...children) { this.children.push(...children); } }) };
+  renderStatus = createDashboardView();
   try { run(element); } finally { globalThis.document = saved; }
 }
 
@@ -60,8 +63,8 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       [null, "--"],
     ]) {
       render({ ...state, wireless });
-      assert.equal(el("#wifi-state").textContent, expected);
-      assert.equal(el("#wifi-diagnostics").hidden, false);
+      assert.equal(el("#direct-wifi-state").textContent, expected);
+      assert.equal(el("#direct-wifi-diagnostics").hidden, false);
     }
     for (const [wireless, expected] of [
       [{ wifi_enabled: true, ssid: "", wifi_state: "connected", ipv4: "0.0.0.0" }, "Disabled"],
@@ -72,7 +75,7 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       [{ wifi_enabled: true, ssid: "HomeDev", wifi_state: "connecting" }, "HomeDev (connecting)"],
     ]) {
       render({ ...state, link: "ble", wireless });
-      assert.equal(el("#wifi-state").textContent, expected);
+      assert.equal(el("#direct-wifi-state").textContent, expected);
     }
     for (const [wireless, expected] of [
       [{ ble_enabled: false, ble_key_configured: true, ble_state: "advertising" }, "Disabled"],
@@ -87,21 +90,21 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
       [null, "--"],
     ]) {
       render({ ...state, wireless });
-      assert.equal(el("#ble-state").textContent, expected);
-      assert.equal(el("#ble-diagnostics").hidden, false);
+      assert.equal(el("#direct-ble-state").textContent, expected);
+      assert.equal(el("#direct-ble-diagnostics").hidden, false);
     }
     render({ ...state, hardware: { capabilities: 128 },
       wireless: { ble_enabled: true, ble_state: "connected" } });
-    assert.equal(el("#ble-state").textContent, "PicoForge (connected)");
+    assert.equal(el("#direct-ble-state").textContent, "PicoForge (connected)");
     render({ ...state, wireless_error: "Wi-Fi status read failed: disconnected" });
-    assert.equal(el("#ble-state").textContent, "Unavailable");
-    assert.equal(el("#wifi-state").textContent, "Unavailable");
-    assert.match(el("#wifi-state").title, /read failed/);
+    assert.equal(el("#direct-ble-state").textContent, "Unavailable");
+    assert.equal(el("#direct-wifi-state").textContent, "Unavailable");
+    assert.match(el("#direct-wifi-state").title, /read failed/);
     render({ ...state, connected: false });
-    assert.equal(el("#wifi-state").textContent, "--");
+    assert.equal(el("#direct-wifi-state").textContent, "--");
     render({ ...state, hardware: { capabilities: 16 } });
-    assert.equal(el("#wifi-diagnostics").hidden, true);
-    assert.equal(el("#ble-diagnostics").hidden, true);
+    assert.equal(el("#direct-wifi-diagnostics").hidden, true);
+    assert.equal(el("#direct-ble-diagnostics").hidden, true);
   }
 }));
 

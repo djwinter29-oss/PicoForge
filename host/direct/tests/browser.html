@@ -16,29 +16,29 @@
   <ol id="results" aria-live="polite"></ol>
   <iframe id="dashboard" title="Direct dashboard"></iframe>
   <section id="wireless-fixture">
-    <select id="settings-wifi"><option value="0">Disabled</option><option value="1">Enabled</option>
+    <select id="direct-settings-wifi"><option value="0">Disabled</option><option value="1">Enabled</option>
       <option value="configure">Configure</option></select>
-    <select id="settings-ble"><option value="0">Disabled</option><option value="1">Enabled</option>
+    <select id="direct-settings-ble"><option value="0">Disabled</option><option value="1">Enabled</option>
       <option value="configure">Configure</option></select>
-    <select id="settings-tcp-cli"><option value="0">Off</option><option value="1">On</option></select>
-    <dialog id="wifi-dialog">
-      <button id="wifi-scan" type="button">Scan</button>
-      <p id="wifi-status"></p>
-      <div id="wifi-networks"></div>
-      <button id="wifi-other" type="button">Other</button>
-      <label id="wifi-manual-label">SSID<input id="wifi-ssid"></label>
-      <label id="wifi-password-label">Password<input id="wifi-password"></label>
-      <button id="wifi-connect" type="button">Test connection</button>
-      <button id="wifi-cancel" type="button">Cancel</button>
+    <select id="direct-settings-tcp-cli"><option value="0">Off</option><option value="1">On</option></select>
+    <dialog id="direct-wifi-dialog">
+      <button id="direct-wifi-scan" type="button">Scan</button>
+      <p id="direct-wifi-status"></p>
+      <div id="direct-wifi-networks"></div>
+      <button id="direct-wifi-other" type="button">Other</button>
+      <label id="direct-wifi-manual-label">SSID<input id="direct-wifi-ssid"></label>
+      <label id="direct-direct-wifi-password-label">Password<input id="direct-wifi-password"></label>
+      <button id="direct-wifi-connect" type="button">Test connection</button>
+      <button id="direct-wifi-cancel" type="button">Cancel</button>
     </dialog>
-    <dialog id="ble-dialog">
-      <p id="ble-status"></p>
-      <input id="ble-secret">
-      <button id="ble-generate" type="button">Generate</button>
-      <button id="ble-copy" type="button">Copy</button>
-      <button id="ble-cancel" type="button">Close</button>
+    <dialog id="direct-ble-dialog">
+      <p id="direct-ble-status"></p>
+      <input id="direct-ble-secret">
+      <button id="direct-ble-generate" type="button">Generate</button>
+      <button id="direct-ble-copy" type="button">Copy</button>
+      <button id="direct-ble-cancel" type="button">Close</button>
     </dialog>
-    <p id="wireless-summary"></p>
+    <p id="direct-wireless-summary"></p>
   </section>
   <script type="module" src="browser-checks.mjs"></script>
 </body>

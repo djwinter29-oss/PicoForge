@@ -4,10 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
   <title>PicoForge Dashboard | Direct</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=48">
-  <link rel="stylesheet" href="css/direct.css?v=48">
-  <script type="module" src="js/app.mjs?v=48"></script>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/direct.css">
+  <script type="module" src="js/app.mjs"></script>
 </head>
 <body>
   <header class="topbar">
@@ -75,30 +78,30 @@
             <option value="1">High-Speed</option>
           </select>
         </label>
-        <label for="settings-wifi" hidden>Wi-Fi
-          <select id="settings-wifi" disabled>
+        <label for="direct-settings-wifi" hidden>Wi-Fi
+          <select id="direct-settings-wifi" disabled>
             <option value="1">Enabled</option>
             <option value="0">Disabled</option>
             <option value="configure">Configure…</option>
           </select>
         </label>
-        <label for="settings-ble" hidden>Bluetooth
-          <select id="settings-ble" disabled>
+        <label for="direct-settings-ble" hidden>Bluetooth
+          <select id="direct-settings-ble" disabled>
             <option value="1">Enabled</option>
             <option value="0">Disabled</option>
             <option value="configure">Configure…</option>
           </select>
         </label>
-        <label for="settings-tcp-cli" hidden>TCP CLI
-          <select id="settings-tcp-cli" aria-describedby="settings-tcp-cli-help"
+        <label for="direct-settings-tcp-cli" hidden>TCP CLI
+          <select id="direct-settings-tcp-cli" aria-describedby="direct-settings-tcp-cli-help"
             title="LAN access to the board CLI. Requires Wi-Fi." disabled>
             <option value="1">Enabled</option>
             <option value="0">Disabled</option>
           </select>
-          <small id="settings-tcp-cli-help" hidden>LAN access to the board CLI. Requires Wi-Fi.</small>
+          <small id="direct-settings-tcp-cli-help" hidden>LAN access to the board CLI. Requires Wi-Fi.</small>
         </label>
       </div>
-      <p id="wireless-summary" role="status" aria-live="polite"></p>
+      <p id="direct-wireless-summary" role="status" aria-live="polite"></p>
       <details class="pin-map-disclosure">
         <summary>Pin configuration</summary>
         <div class="pin-tables">
@@ -130,8 +133,8 @@
         <div><dt>Board temperature</dt><dd id="temperature">--</dd></div>
         <div><dt>CLI port</dt><dd id="cdc-state">--</dd></div>
         <div><dt>Storage bus speed</dt><dd id="memory-speed">--</dd></div>
-        <div id="wifi-diagnostics" hidden><dt>Wi-Fi</dt><dd id="wifi-state">--</dd></div>
-        <div id="ble-diagnostics" hidden><dt>Bluetooth</dt><dd id="ble-state">--</dd></div>
+        <div id="direct-wifi-diagnostics" hidden><dt>Wi-Fi</dt><dd id="direct-wifi-state">--</dd></div>
+        <div id="direct-ble-diagnostics" hidden><dt>Bluetooth</dt><dd id="direct-ble-state">--</dd></div>
       </dl>
       <p class="sample-time" id="telemetry-freshness" role="status">telemetry: unavailable</p>
     </section>
@@ -185,14 +188,14 @@
     </section>
 
     <dialog class="confirmation-dialog" id="configuration-dialog" aria-labelledby="configuration-dialog-title"
-      aria-describedby="configuration-dialog-profile configuration-warning configuration-wireless-warning configuration-force-warning">
+      aria-describedby="configuration-dialog-profile configuration-warning direct-configuration-wireless-warning configuration-force-warning">
       <h2 id="configuration-dialog-title">Save and reboot?</h2>
       <p id="configuration-dialog-profile"></p>
       <p class="configuration-warning" id="configuration-warning">
         Firmware saves boot settings, then reboots the board and briefly disconnects USB.
         Close all CLI ports and stop external traffic first. Stop any storage test or USB drive activity before saving.
       </p>
-      <p class="configuration-warning" id="configuration-wireless-warning" hidden>
+      <p class="configuration-warning" id="direct-configuration-wireless-warning" hidden>
         Wi-Fi and Bluetooth credentials are saved with these settings. Keep a copy of the Control key; it cannot be read
         back. Flash credentials are not encrypted.
       </p>
@@ -270,42 +273,42 @@
     <h2 id="bluetooth-connection-title">Connect through Bluetooth</h2>
     <p>Scan uses this computer's Bluetooth adapter and opens the browser's nearby-device picker. Bluetooth runs only on
       boards with a saved control key; enter that key to connect.</p>
-    <label for="ble-control-key">Control key
-      <input id="ble-control-key" type="password" maxlength="64" autocomplete="off" spellcheck="false"></label>
+    <label for="direct-ble-control-key">Control key
+      <input id="direct-ble-control-key" type="password" maxlength="64" autocomplete="off" spellcheck="false"></label>
     <p id="bluetooth-connection-status" role="status" aria-live="polite"></p>
     <div class="dialog-actions">
       <button class="button" id="bluetooth-scan" type="button">Scan for boards</button>
       <button class="button button-secondary" id="bluetooth-connection-close" type="button">Close</button>
     </div>
   </dialog>
-  <dialog class="confirmation-dialog wireless-dialog" id="wifi-dialog" aria-labelledby="wifi-dialog-title">
-    <h2 id="wifi-dialog-title">Connect to Wi-Fi</h2>
+  <dialog class="confirmation-dialog wireless-dialog" id="direct-wifi-dialog" aria-labelledby="direct-wifi-dialog-title">
+    <h2 id="direct-wifi-dialog-title">Connect to Wi-Fi</h2>
     <p>Scan for nearby networks or enter a network name. A connection test does not save credentials to flash.</p>
-    <button class="button button-secondary" id="wifi-scan" type="button">Scan for networks</button>
-    <p id="wifi-status" role="status" aria-live="polite"></p>
-    <div id="wifi-networks" class="wifi-networks" role="listbox" aria-label="Available Wi-Fi networks"></div>
-    <button class="button button-secondary" id="wifi-other" type="button">Other network…</button>
-    <label id="wifi-manual-label" hidden>Network name (SSID)
-      <input id="wifi-ssid" maxlength="32" autocomplete="off"></label>
-    <label id="wifi-password-label">Password (leave blank for an open network)
-      <input id="wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
+    <button class="button button-secondary" id="direct-wifi-scan" type="button">Scan for networks</button>
+    <p id="direct-wifi-status" role="status" aria-live="polite"></p>
+    <div id="direct-wifi-networks" class="direct-wifi-networks" role="listbox" aria-label="Available Wi-Fi networks"></div>
+    <button class="button button-secondary" id="direct-wifi-other" type="button">Other network…</button>
+    <label id="direct-wifi-manual-label" hidden>Network name (SSID)
+      <input id="direct-wifi-ssid" maxlength="32" autocomplete="off"></label>
+    <label id="direct-direct-wifi-password-label">Password (leave blank for an open network)
+      <input id="direct-wifi-password" type="password" maxlength="63" autocomplete="new-password"></label>
     <div class="dialog-actions">
-      <button class="button" id="wifi-connect" type="button">Test connection</button>
-      <button class="button button-secondary" id="wifi-cancel" type="button">Cancel</button>
+      <button class="button" id="direct-wifi-connect" type="button">Test connection</button>
+      <button class="button button-secondary" id="direct-wifi-cancel" type="button">Cancel</button>
     </div>
   </dialog>
-  <dialog class="confirmation-dialog wireless-dialog" id="ble-dialog" aria-labelledby="ble-dialog-title">
-    <h2 id="ble-dialog-title">Bluetooth access</h2>
+  <dialog class="confirmation-dialog wireless-dialog" id="direct-ble-dialog" aria-labelledby="direct-ble-dialog-title">
+    <h2 id="direct-ble-dialog-title">Bluetooth access</h2>
     <p>Generate a new key and save it with Board configuration. The key authenticates control commands; it does not
       encrypt the Bluetooth connection. The board cannot show a saved key again.</p>
-    <label for="ble-secret">New control key
-      <input id="ble-secret" type="password" readonly autocomplete="off"></label>
+    <label for="direct-ble-secret">New control key
+      <input id="direct-ble-secret" type="password" readonly autocomplete="off"></label>
     <div class="dialog-actions">
-      <button class="button button-secondary" id="ble-generate" type="button">Generate key</button>
-      <button class="button button-secondary" id="ble-copy" type="button" disabled>Copy key</button>
-      <button class="button button-secondary" id="ble-cancel" type="button">Close</button>
+      <button class="button button-secondary" id="direct-ble-generate" type="button">Generate key</button>
+      <button class="button button-secondary" id="direct-ble-copy" type="button" disabled>Copy key</button>
+      <button class="button button-secondary" id="direct-ble-cancel" type="button">Close</button>
     </div>
-    <p id="ble-status" role="status" aria-live="polite"></p>
+    <p id="direct-ble-status" role="status" aria-live="polite"></p>
   </dialog>
 </body>
 </html>

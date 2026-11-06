@@ -4,11 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
   <title>PicoForge Console | Direct</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=48">
-  <link rel="stylesheet" href="css/direct.css?v=48">
-  <link rel="stylesheet" href="css/console.css?v=48">
-  <script type="module" src="js/console.mjs?v=48"></script>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/direct.css">
+  <link rel="stylesheet" href="css/console.css">
+  <script type="module" src="js/ui/console.mjs"></script>
 </head>
 <body class="console-page">
   <header class="topbar">

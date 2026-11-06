@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tools.host.direct_server import DirectHandler, DirectTerminal
+from host.direct.server import DirectHandler, DirectTerminal
 
 
 class DirectTerminalTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class DirectTerminalTests(unittest.TestCase):
     def test_authenticated_open_waits_for_a_board_bound_proof_before_terminal_io(self):
         connection = self.FakeSocket(self.CHALLENGE)
         terminal = DirectTerminal()
-        with patch("tools.host.direct_server.socket.create_connection", return_value=connection), \
+        with patch("host.direct.server.socket.create_connection", return_value=connection), \
                 patch.object(terminal, "_touch_locked"):
             opened = terminal.open("192.168.1.2")
             self.assertEqual(opened["challenge"], {
@@ -74,7 +74,7 @@ class DirectTerminalTests(unittest.TestCase):
         handler.headers["Origin"] = "http://localhost"
         self.assertFalse(handler._same_origin_loopback())
 
-    @patch("tools.host.direct_server.socket.create_connection")
+    @patch("host.direct.server.socket.create_connection")
     def test_open_uses_fixed_cli_port_and_closes_duplicate_connection(self, create_connection):
         first = self.FakeSocket(self.CHALLENGE)
         create_connection.return_value = first

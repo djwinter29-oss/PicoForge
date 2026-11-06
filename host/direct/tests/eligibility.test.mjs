@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveOperationEligibility } from "../js/eligibility.mjs?v=48";
+import { deriveOperationEligibility } from "../js/state/selectors.mjs";
 
 const readyState = (changes = {}) => ({
   link: "usb",
@@ -28,7 +28,9 @@ test("operation eligibility is one rule table for storage, settings, wireless an
     ["busy", readyState({ busy: true }), {}, [1, 1, 1, 0, 0, 0]],
     ["uncertain", readyState({ outcome_uncertain: true }), {}, [1, 1, 1, 0, 0, 0]],
     ["reboot pending", readyState({ reboot_pending: true }), {}, [1, 1, 1, 0, 0, 0]],
-    ["wireless busy", readyState(), { wirelessBusy: true }, [1, 1, 1, 0, 0, 0]],
+    ["wireless busy", readyState({ wireless_busy: true }), {}, [1, 1, 1, 0, 0, 0]],
+    ["form busy", readyState({ wireless_form_busy: true }), {}, [1, 1, 1, 0, 0, 0]],
+    ["command pending", readyState({ command_pending: true }), {}, [1, 1, 1, 0, 0, 0]],
     ["storage stale", readyState({ freshness: { 10: "stale", 11: "fresh" } }), {}, [0, 0, 0, 0, 0, 0]],
     ["self-test stale", readyState({ freshness: { 10: "fresh", 11: "stale" } }), {}, [0, 0, 0, 0, 0, 0]],
     ["MSC transition", readyState({ msc: { enabled: false, transition_pending: true } }), {}, [0, 0, 0, 0, 0, 0]],
@@ -38,7 +40,7 @@ test("operation eligibility is one rule table for storage, settings, wireless an
     ["self-test running", readyState({ self_test: { valid_for_control: true, active: true } }), {},
       [0, 1, 0, 0, 0, 1]],
     ["MSC enabled", readyState({ msc: { enabled: true, transition_pending: false } }), {}, [0, 1, 1, 1, 0, 0]],
-    ["outstanding", readyState(), { outstanding: {} }, [0, 1, 1, 1, 0, 1]],
+    ["outstanding", readyState({ command_pending: true }), {}, [1, 1, 1, 0, 0, 0]],
     ["Bluetooth", readyState({ link: "ble" }), {}, [0, 1, 1, 1, 0, 0]],
     ["Bluetooth MSC", readyState({ link: "ble", msc: { enabled: true, transition_pending: false } }), {},
       [0, 1, 1, 0, 0, 0]],
@@ -51,6 +53,6 @@ test("operation eligibility is one rule table for storage, settings, wireless an
     assert.deepEqual(flags.map(flag => Number(eligibility[flag])), expected, name);
   }
   assert.equal(deriveOperationEligibility(readyState({ connected: false })).connectionLocked, false);
-  assert.equal(deriveOperationEligibility(readyState({ connected: false }), { outstanding: {} }).connectionLocked,
+  assert.equal(deriveOperationEligibility(readyState({ connected: false, command_pending: true })).connectionLocked,
     true);
 });

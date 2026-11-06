@@ -23,8 +23,8 @@ server. It supports browser USB and Bluetooth diagnostics and controls, but not 
 
 Open `http://127.0.0.1:8000/` in a WebHID-capable browser and grant access to the vendor HID interface.
 The page owns its HTML, CSS, view logic, and favicon; it does not use Web Serial or any shared-dashboard module.
-It must not share any dashboard components with Python/.NET; see the authoritative
-[dashboard component isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
+It must not share any code with Python/.NET; see the authoritative
+[Direct independence policy](../../docs/development/host-tools.md#direct-dashboard-independence).
 Choose **USB**, then **Select board** to open the browser device chooser, including when devices were previously
 authorized, so the user selects which board to open. Cancel leaves the page disconnected. Close other clients
 using that board before connecting; the chooser cannot override another application's HID access.
@@ -35,20 +35,43 @@ The firmware and all host dashboards use version 1 of the authoritative
 [HID Report Reference](../../docs/reference/usb-hid.md), which lists every report and its exact length.
 Mandatory identity and configuration reports must be valid before the dashboard enables commands.
 
-Modules in `js/` keep one owner per concern:
+The browser loads plain ES modules directly; there is no bundle or build step:
 
-| Module | Owns |
-|---|---|
-| `protocol.mjs` | Opcode and capability names, pure report and Wi-Fi codecs, control-request rules, validators |
-| `device.mjs` | `PicoForgeWebHid` connection, serialized transactions and reconnect recovery |
-| `bluetooth.mjs` | `PicoForgeBluetooth` restricted BLE link over the same client interface |
-| `wireless.mjs` | Wi-Fi staging, scan, test, save workflows and the Feature 12 poll interval |
-| `recovery.mjs` | Allowlisted `sessionStorage` pending-operation records |
-| `eligibility.mjs` | The single source of command readiness rules |
-| `view.mjs` | All status and control rendering from one state snapshot |
-| `wireless-form.mjs`, `app.mjs` | The Wi-Fi dialog phase machine and page wiring (one coalesced render path) |
+```text
+host/direct/
+  index.html, console.html, server.py
+  js/
+    app.mjs                         composition and page lifetime only
+    protocol/
+      constants.mjs                 named firmware values
+      codec.mjs                     pure validation, encoding and decoding
+    transport/
+      transport.mjs                 common Transport contract
+      hid.mjs, ble.mjs              browser I/O, framing and link authentication
+    board/
+      session.mjs                   single-flight command queue, polling and freshness
+      journal.mjs                   allowlisted same-tab recovery records
+      workflows/wireless.mjs         Wi-Fi staging, scan, test, cancellation and save
+    state/
+      store.mjs, reducer.mjs         one dashboard snapshot and subscriptions
+      selectors.mjs                 the single operation-eligibility selector
+    ui/
+      dashboard.mjs                 event wiring and coalesced rendering
+      dashboard-view.mjs            section composition
+      sections/*.mjs                pure view models followed by thin DOM updates
+      dom.mjs                       required element lookup cached per document
+      console*.mjs, cli-screen.mjs   Direct console and popup authentication
+    timers.mjs                      abortable waits and page-owned timer scopes
+```
 
-WebHID supplies payload bytes without the report ID. Exact lengths are required; this adapter does not guess framing
+Protocol and state modules do not access the DOM or browser device APIs. HID and BLE are peer transports, each
+implementing the same `AbortSignal`-aware contract; neither imports the board session. The session owns commands,
+freshness, status polling and recovery for either link. Its single-flight queue rejects concurrent submissions
+instead of buffering writes against potentially changing board state, and never replays an uncertain command.
+UI sections derive presentation from snapshots before updating the DOM. Display-only storage retention belongs to
+each mounted view, not module-global state. The architecture contract test checks these dependency boundaries.
+
+WebHID supplies payload bytes without the report ID. Exact lengths are required; the transport does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.
 Stale measurements are removed, unavailable/stale freshness is shown per report, and disconnect clears
 connection caches. Wireless status is polled every 500 ms during tests/scans and every two seconds while idle;
@@ -70,8 +93,9 @@ samples clear retained details. Retained values are display-only and never autho
 When Wi-Fi and the board TCP CLI are connected, click the Wi-Fi value to open the Wi-Fi console in a new tab. Like
 the Python dashboard console, it is an interactive terminal: Enter runs a command, Tab completes, and arrow keys edit
 and recall history. It relays raw keystrokes over unencrypted TCP port 2323. The console reuses the matching Direct
-dashboard's board authentication instead of asking for the Control key again; keep that dashboard connected until
-the console authenticates. The bridge permits one terminal session and closes it after 15 seconds without a
+dashboard's board authentication instead of asking for the Control key again; it requests a one-use proof through
+the exact same-origin dashboard popup without putting a pairing secret in the URL. Keep that dashboard connected
+until the console authenticates. The bridge permits one terminal session and closes it after 15 seconds without a
 request. Run the included server instead of a generic static-file server to enable this feature. See the
 [console guide](../../docs/guides/console.md#direct-dashboard-authentication) for the rationale and security limits.
 
@@ -144,7 +168,11 @@ instead of clicking Start again. Cleanup leaves the filesystem mounted.
 ```sh
 node --test host/direct/tests/*.test.mjs
 python3 -m unittest discover -s host/direct/tests -p 'test_*.py'
+npx --yes --package typescript@5.9.3 tsc --project host/direct/js/tsconfig.json
 ```
+
+The no-emit JSDoc check covers protocol/state modules, the transport contract and its implementations, timer helpers,
+and selected UI helpers. It is a development check, not a build or a claim that every UI module is fully typed.
 
 For browser interaction checks from a repository checkout, serve the Direct dashboard and open
 `http://127.0.0.1:8000/tests/browser.html` in a supported browser:

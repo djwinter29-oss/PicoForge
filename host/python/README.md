@@ -3,9 +3,9 @@
 USB HID control, diagnostics, and a local dashboard for PicoForge firmware on Pico, Pico 2, and their W variants.
 Basic monitoring needs no SD card. Storage and wireless controls depend on the connected firmware's capabilities.
 
-Python and .NET share their own frontend in `host/web`. The Direct dashboard is independent: **no dashboard
-components are shared with Direct**. See the
-[dashboard isolation policy](../../docs/development/host-tools.md#dashboard-component-isolation).
+Python and .NET share their own frontend in `host/web`. The Direct dashboard is independent: **no code is shared
+with Direct**. See the
+[Direct independence policy](../../docs/development/host-tools.md#direct-dashboard-independence).
 This Python host connects over USB HID, not Bluetooth LE.
 Wireless status uses Feature 12 and all writes use the unified Feature 20 channel. The dashboard preserves saved
 service switches from Feature 2 and supports staged credentials, testing, scans, and USB-generated TCP CLI proofs.

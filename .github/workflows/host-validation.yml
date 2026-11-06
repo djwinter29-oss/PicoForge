@@ -41,6 +41,10 @@ jobs:
         with:
           node-version: "22.x"
 
+      - name: Check Direct JavaScript types
+        if: matrix.python == '3.12'
+        run: npx --yes --package typescript@5.9.3 tsc --project host/direct/js/tsconfig.json
+
       - name: Setup .NET
         if: matrix.python == '3.12'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0

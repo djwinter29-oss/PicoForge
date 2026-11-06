@@ -1,19 +1,9 @@
 /**
  * Pure version-1 HID report codecs and shared value rules for the Direct dashboard. No browser or device state.
  */
-/** WebHID chooser filter fields shared by every PicoForge USB product ID. */
-export const DEVICE_FILTER = Object.freeze({ vendorId: 0xcafe, usagePage: 0xff00, usage: 1 });
-/** USB product IDs that expose the PicoForge HID interface. */
-export const PRODUCT_IDS = Object.freeze([0x4011, 0x4012]);
-/** Report 1 capability bits; see docs/reference/usb-hid.md. */
-export const CAP = Object.freeze({
-  LED: 1, REBOOT: 2, SETTINGS: 4, SPI: 8, SDIO: 16, SELF_TEST: 32, FORCED_SAVE: 64, WIRELESS: 128,
-});
-/** Feature 20 control opcodes. */
-export const OP = Object.freeze({
-  LED: 1, REBOOT: 2, MSC: 3, SELF_TEST: 4, SAVE_SETTINGS: 5, STAGE_SSID: 6, STAGE_PASSWORD: 7, STAGE_KEY: 8,
-  TEST_WIFI: 9, CANCEL_TEST: 10, SCAN: 11, SCAN_ENTRY: 12, TCP_CLI_PROOF: 13,
-});
+import {
+  BLE_OPCODES, CAP, CLOCKS_MHZ, CONFIG_FLAGS, DEVICE_FILTER, OP, PRODUCT_IDS, WIRELESS_TEST_DETAILS,
+} from "./constants.mjs";
 
 function payload(report, size) {
   const view = report instanceof DataView ? report
@@ -28,10 +18,6 @@ export function requireValid(condition, label) {
   if (!condition) throw new Error(`Invalid HID ${label}`);
 }
 
-/** Saved system-clock requests in MHz; 0 selects the MCU default. */
-export const CLOCKS_MHZ = Object.freeze([0, 150, 200, 250]);
-/** Opcodes the restricted BLE command form accepts: LED, reboot and save settings. */
-export const BLE_OPCODES = Object.freeze([OP.LED, OP.REBOOT, OP.SAVE_SETTINGS]);
 // radios: bit 0 Wi-Fi, bit 1 Bluetooth; omitted (0) on boards without a radio.
 export const validSettings = settings => Boolean(settings) && CLOCKS_MHZ.includes(settings.system_clock_mhz)
   && [0, 1].includes(settings.sdcard_profile) && [undefined, 0, 1, 2, 3].includes(settings.radios)
@@ -47,7 +33,6 @@ export function parseHexBytes(value, length, label = "TCP CLI authentication fie
 }
 const bytesAt = (view, offset, size) => new Uint8Array(view.buffer, view.byteOffset + offset, size);
 const zero = bytes => bytes.every(byte => byte === 0);
-export const SAVE_SETTINGS_FORCE_MSC = 1;
 
 /** @brief Encode save-settings arguments: clock (LE16), SD profile, radios | TCP CLI << 2. */
 export const encodeSettings = (settings, tcpCliEnabled) => [settings.system_clock_mhz & 255,
@@ -90,14 +75,16 @@ export function decodeConfigReport(report, identity) {
   const led = view.getUint8(15);
   const detect = view.getUint8(16);
   const settings = { system_clock_mhz: view.getUint16(1, true), sdcard_profile: view.getUint8(3),
-    radios: flags >> 3 & 3, tcp_cli_enabled: Boolean(flags & 32) };
+    radios: (flags & CONFIG_FLAGS.RADIO_MASK) >> 3, tcp_cli_enabled: Boolean(flags & CONFIG_FLAGS.TCP_CLI) };
   const maxGpio = [1, 2, 3, 4].includes(identity.board_model) || identity.mcu_id === 1 ? 29
     : identity.mcu_id === 2 ? 47 : -1;
-  requireValid(validSettings(settings) && !(flags & ~63) && (identity.capabilities & 128 || !(flags & 56))
+  requireValid(validSettings(settings) && !(flags & ~CONFIG_FLAGS.VALID_MASK)
+    && (identity.capabilities & CAP.WIRELESS || !(flags & CONFIG_FLAGS.WIRELESS_MASK))
     && [0, 1, 255].includes(uart)
-    && (tx === 255) === (rx === 255) && (!(flags & 4) || (uart !== 255 && tx !== 255))
-    && Boolean(flags & 1) === (detect !== 255) && Boolean(flags & 2) === (led !== 255)
-    && (!(flags & 2) || Boolean(identity.capabilities & 1))
+    && (tx === 255) === (rx === 255) && (!(flags & CONFIG_FLAGS.MONITOR_UART) || (uart !== 255 && tx !== 255))
+    && Boolean(flags & CONFIG_FLAGS.CARD_DETECT) === (detect !== 255)
+    && Boolean(flags & CONFIG_FLAGS.LED) === (led !== 255)
+    && (!(flags & CONFIG_FLAGS.LED) || Boolean(identity.capabilities & CAP.LED))
     && [tx, rx, led, detect, ...gpios].every(pin => pin === 255 || pin <= maxGpio)
     && (identity.transport === "spi"
       ? gpios.slice(0, 4).every(pin => pin !== 255) && gpios.slice(4).every(pin => pin === 255)
@@ -264,7 +251,8 @@ export function decodeControlResult(report, { ble = false } = {}) {
   const data = bytesAt(view, 5, 63).slice();
   const detail = [3, 5, 6].includes(status) ? data[0] : 0;
   requireValid((ble || detail !== 28)
-    && (!ble || !known || BLE_OPCODES.includes(opcode) || status === 4 && error === 4), "transport result");
+    && (!ble || !known || BLE_OPCODES.some(value => value === opcode) || status === 4 && error === 4),
+  "transport result");
   const detailRules = {
     1: [5, [2, 3, 4, 5]], 2: [5, [2, 3, 4, 5]], 3: [3, [4]],
     4: [6, [4]], 5: [6, [4]], 6: [6, [4]], 7: [6, [4]], 10: [6, [4]],
@@ -295,22 +283,8 @@ export function matchesPicoForge(device) {
       && collection.usage === DEVICE_FILTER.usage);
 }
 
-export const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-
-export async function withTimeout(operation, milliseconds) {
-  let timer;
-  try {
-    return await Promise.race([operation, new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new DOMException("HID I/O timeout; command outcome uncertain", "TimeoutError")),
-        milliseconds);
-    })]);
-  } finally { clearTimeout(timer); }
-}
-
 const bytesOf = report => report instanceof DataView
   ? new Uint8Array(report.buffer, report.byteOffset, report.byteLength) : report;
-export const WIRELESS_TEST_DETAILS = ["", "Radio initialization failed", "Network not found", "Password rejected",
-  "No DHCP address", "Timed out", "Test connection lost"];
 
 /** Preserve opaque bytes separately from the printable, never round-tripped label. */
 export function displaySsid(bytes) {

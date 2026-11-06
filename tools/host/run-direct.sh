@@ -56,5 +56,5 @@ if [ ! -f "$WEB_ROOT/index.html" ]; then
     exit 1
 fi
 
-exec "$PYTHON" "$SCRIPT_DIR/direct_server.py" \
+exec "$PYTHON" "$WEB_ROOT/server.py" \
     --directory "$WEB_ROOT" --bind "$BIND_ADDRESS" --port "$PORT"

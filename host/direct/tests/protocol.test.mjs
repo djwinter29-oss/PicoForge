@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  PicoForgeWebHid, decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
+  decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
-  decodeControlResult, buildControlRequest, matchesPicoForge, OP, encodeSettings, decodeSettings,
-} from "../js/device.mjs?v=48";
-import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit } from "./support/fixtures.mjs";
+  decodeControlResult, buildControlRequest, matchesPicoForge, encodeSettings, decodeSettings,
+} from "../js/protocol/codec.mjs";
+import { OP } from "../js/protocol/constants.mjs";
+import { BoardSession } from "../js/board/session.mjs";
+import { HidTransport } from "../js/transport/hid.mjs";
+import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit, attachDevice }
+  from "./support/fixtures.mjs";
 
 test("explicit connect always requests selection regardless of previously authorized devices", async () => {
   for (const count of [0, 1, 2]) {
@@ -48,7 +52,7 @@ test("USB TCP CLI proof is board-bound and serialized through Feature 20 opcode 
 });
 
 test("unavailable recovery storage fails closed and keeps its error visible across disconnect", () => {
-  const unavailable = new PicoForgeWebHid(null, () => {}, { pendingStore: null });
+  const unavailable = new BoardSession(new HidTransport(null), () => {}, { pendingStore: null });
   assert.equal(unavailable.state.outcome_uncertain, true);
   assert.match(unavailable.state.error, /session storage is unavailable/);
   unavailable.clearConnection();
@@ -62,7 +66,7 @@ test("malformed saved operation records fail closed and cannot authorize a write
     version: 1, kind: "control", uid: "0102030405060708",
     request: { transaction_id: 1, opcode: 1 }, password: "unexpected",
   }));
-  const client = new PicoForgeWebHid(hid, () => {}, { sleep: async () => {}, pendingStore });
+  const client = new BoardSession(new HidTransport(hid), () => {}, { sleep: async () => {}, pendingStore });
   assert.match(client.state.error, /invalid/);
   await client.connect();
   emit(device, 3, telemetry());
@@ -331,7 +335,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   for (const field of ["hardware", "settings", "runtime", "memory", "msc", "self_test"]) {
     assert.equal(client.state[field], null, field);
   }
-  await client.attachDevice(device);
+  await attachDevice(client, device);
   assert.equal(client.state.freshness[10], "unavailable");
   assert.equal(client.state.memory, null);
   await client.disconnect();
@@ -440,7 +444,7 @@ test("disconnect during GET clears caches and reconnect resolves only the origin
   assert.equal(client.state.hardware, null);
   assert.equal(client.state.outcome_uncertain, true);
   device.receiveFeatureReport = normalRead;
-  await client.attachDevice(device);
+  await attachDevice(client, device);
   assert.equal(client.state.connected, true);
   assert.equal(client.state.runtime, null);
   assert.equal(client.state.outcome_uncertain, false);
@@ -470,8 +474,8 @@ test("pending control transactions survive a page reload and reconcile without r
   assert.equal(saved.uid, client.reconnectUid);
 
   device.receiveFeatureReport = receive;
-  const restored = new client.constructor(hid, () => {}, { sleep: async () => {}, pendingStore });
-  await restored.attachDevice(device);
+  const restored = new BoardSession(new HidTransport(hid), () => {}, { sleep: async () => {}, pendingStore });
+  await attachDevice(restored, device);
   assert.equal(restored.state.outcome_uncertain, false);
   assert.match(restored.state.recovery_message, /confirmed after reconnect/);
   assert.equal(restored.state.recovered_opcode, OP.LED, "the form keys recovery on the opcode, not the text");

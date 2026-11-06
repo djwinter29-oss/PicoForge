@@ -108,8 +108,8 @@ Whenever a Control key is saved, each connection receives the CRLF-terminated li
 `PFBLECTL1` (see the [Bluetooth LE protocol](../reference/bluetooth.md#command-proofs)), so proofs never cross
 services. Proofs expire after ten seconds; rejected proofs are rate-limited for two seconds. Without a key the
 listener does not serve. Python/.NET dashboards ask the selected board to produce this fixed proof through Feature
-`20` opcode `13` after checking that the challenge UID matches that board. The Direct console asks its matching
-dashboard tab for the proof over a same-origin `BroadcastChannel`; the dashboard checks the challenge UID, then uses
+`20` opcode `13` after checking that the challenge UID matches that board. The Direct console requests its proof from
+the exact same-origin popup opened by its dashboard using `postMessage`; the dashboard checks the challenge UID, then uses
 Feature `20` opcode `13` over USB or signs with the non-extractable key from its already-unlocked BLE session. Only
 the one-use proof crosses to the console and local bridge; the Control key is not sent there. If no matching Direct
 dashboard is connected, the console refuses to connect rather than prompting for the key. Standalone TCP clients
