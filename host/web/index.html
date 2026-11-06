@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>PicoForge Dashboard | {{ dashboard_type }}</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
   <link rel="stylesheet" href="/css/dashboard.css">
   <script type="module" src="/js/app.mjs"></script>
 </head>
@@ -35,7 +35,7 @@
         <h2 id="identity-title">Device information</h2>
         <div class="actions" aria-label="Board identification and controls">
           <button class="button button-led" id="rescan-boards" type="button">Rescan</button>
-          <select id="board-select" aria-label="Board attached to this server" disabled>
+          <select id="board-select" aria-label="Board attached to this server" title="Select the board managed by this host" disabled>
             <option value="">Scanning boards...</option>
           </select>
           <button class="button button-led" id="led-control" type="button" data-state="unknown"
@@ -243,7 +243,8 @@
       <h2 id="return-dialog-title">Return storage to Pico?</h2>
       <p class="configuration-warning" id="return-warning">
         Cached host writes may be lost and the filesystem may be corrupted. Stop all host file activity first.
-        Pico will revoke host access to the card and attempt to remount without formatting or repair.
+        Safely eject whenever possible. Pico will revoke host access to the card and attempt to remount without
+        formatting or repair. This action is not an operating-system eject.
       </p>
       <div class="dialog-actions">
         <button class="button button-cancel" id="cancel-return" type="button" autofocus>Cancel</button>
@@ -278,7 +279,8 @@
   </dialog>
   <dialog class="confirmation-dialog wireless-dialog" id="ble-dialog" aria-labelledby="ble-dialog-title">
     <h2 id="ble-dialog-title">Bluetooth control key</h2>
-    <p>Generate a new key and save it with Boot configuration. The key authenticates control commands; it does not
+    <p>Generate a new key, copy it to a safe location, and save it with Boot configuration.
+      The key authenticates control commands; it does not
       encrypt the Bluetooth connection. The board cannot show a saved key again.</p>
     <label for="ble-secret">New control key
       <input id="ble-secret" type="password" readonly autocomplete="off"></label>

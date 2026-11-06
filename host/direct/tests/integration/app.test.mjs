@@ -84,26 +84,12 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   };
   const prototypes = new Map(["connect", "setMsc", "saveSettings", "reboot"].map(name =>
     [name, BoardSession.prototype[name]]));
-  const elements = new Map();
-  const el = selector => {
-    const tag = selector.match(/^([a-z]+)#/)?.[1];
-    selector = selector.replace(/^[a-z]+(?=#)/, "");
-    if (!elements.has(selector)) elements.set(selector, {
-      namespaceURI: "http://www.w3.org/1999/xhtml", value: "0", dataset: {}, valueAsNumber: 32, children: [],
-      options: ["0", "1", "configure"].map(value => ({ value })),
-      open: false, showModal() { this.open = true; }, close() { this.open = false; this.onclose?.(); },
-      addEventListener(type, handler) { this[type === "close" ? "onclose" : type] = handler; },
-      setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; }, querySelectorAll() { return []; } });
-    if (tag) elements.get(selector).localName ??= tag;
-    return elements.get(selector);
-  };
+  const { document, element: el, fire } = createDocument();
   let client;
   /** Apply a client change and flush the dashboard's coalesced refresh. */
   const sync = async changes => { patchState(client, changes); await null; };
   const commands = [];
-  globalThis.document = { querySelector: el, createElement: () => ({ children: [],
-    append(...children) { this.children.push(...children); } }) };
+  globalThis.document = document;
   globalThis.window = { confirm() { assert.fail("Use styled dialogs, not browser confirmations"); } };
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { hid: new EventTarget() } });
   Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
@@ -126,8 +112,8 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   BoardSession.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
   try {
     await import(`../../web/js/app.mjs?test=${Date.now()}`);
-    await el("#usb-open").click();
-    await el("#usb-connect").click();
+    await fire("#usb-open", "click");
+    await fire("#usb-connect", "click");
     assert.equal(el("#settings-storage").value, "1");
     assert.equal(el("#settings-note").hidden, true);
     assert.equal(el("#status-message").hidden, false);
@@ -153,80 +139,81 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     assert.equal(el('[aria-labelledby="self-test-title"]').hidden, true);
     await sync({ pending_msc: null });
     assert.equal(el('[aria-labelledby="self-test-title"]').hidden, false);
-    el("#settings-clock").value = "250"; el("#settings-clock").change(); await null;
+    el("#settings-clock").value = "250"; await fire("#settings-clock", "change"); await null;
     await sync({ error: null });
     assert.equal(el("#settings-clock").value, "250");
-    await el("#settings-save").click();
+    await fire("#settings-save", "click");
     assert.deepEqual(commands, []);
     assert.equal(el("#configuration-dialog").open, true);
     assert.match(el("#configuration-dialog-profile").textContent, /250 MHz.*High-Speed/);
-    el("#cancel-configuration").click();
-    await el("#confirm-configuration").click();
+    await fire("#cancel-configuration", "click");
+    await fire("#confirm-configuration", "click");
     assert.deepEqual(commands, []);
-    await el("#settings-save").click();
-    await el("#confirm-configuration").click();
+    await fire("#settings-save", "click");
+    await fire("#confirm-configuration", "click");
     assert.deepEqual(commands, [["save", { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 }]]);
-    await el("#settings-reboot").click();
+    await fire("#settings-reboot", "click");
     assert.equal(commands.length, 1);
     assert.equal(el("#reboot-dialog").open, true);
-    el("#reboot-dialog").keydown({ key: "Escape", preventDefault() {} });
+    const escape = Object.assign(new Event("keydown", { cancelable: true }), { key: "Escape" });
+    el("#reboot-dialog").dispatchEvent(escape);
     assert.equal(el("#reboot-dialog").open, false);
-    await el("#confirm-reboot").click();
+    await fire("#confirm-reboot", "click");
     assert.equal(commands.length, 1);
-    await el("#settings-reboot").click();
-    await el("#confirm-reboot").click();
+    await fire("#settings-reboot", "click");
+    await fire("#confirm-reboot", "click");
     assert.deepEqual(commands[1], ["reboot", true]);
-    await el("#msc-control").click();
+    await fire("#msc-control", "click");
     assert.equal(el("#share-dialog").open, true);
     assert.equal(commands.length, 2);
-    el("#cancel-share").click();
-    await el("#confirm-share").click();
+    await fire("#cancel-share", "click");
+    await fire("#confirm-share", "click");
     assert.equal(commands.length, 2);
-    await el("#msc-control").click();
-    el("#share-dialog").keydown({ key: "Escape", preventDefault() {} });
-    await el("#confirm-share").click();
+    await fire("#msc-control", "click");
+    el("#share-dialog").dispatchEvent(escape);
+    await fire("#confirm-share", "click");
     assert.equal(commands.length, 2);
-    await el("#msc-control").click();
+    await fire("#msc-control", "click");
     await sync({ pending_self_test: { sequence: client.state.self_test?.sequence ?? null } });
-    await el("#confirm-share").click();
+    await fire("#confirm-share", "click");
     assert.equal(commands.length, 2);
     await sync({ pending_self_test: null });
-    await el("#msc-control").click();
-    await el("#confirm-share").click();
+    await fire("#msc-control", "click");
+    await fire("#confirm-share", "click");
     assert.deepEqual(commands[2], ["msc", true, false]);
     await sync({ msc: { enabled: true, transition_pending: false } });
-    el("#settings-clock").value = "200"; el("#settings-clock").change(); await null;
+    el("#settings-clock").value = "200"; await fire("#settings-clock", "change"); await null;
     assert.equal(el("#settings-clock").disabled, false);
-    await el("#settings-save").click();
+    await fire("#settings-save", "click");
     assert.equal(el("#configuration-force-warning").hidden, false);
-    el("#cancel-configuration").click();
-    await el("#confirm-configuration").click();
+    await fire("#cancel-configuration", "click");
+    await fire("#confirm-configuration", "click");
     assert.equal(commands.length, 3);
-    await el("#settings-save").click();
-    await el("#confirm-configuration").click();
+    await fire("#settings-save", "click");
+    await fire("#confirm-configuration", "click");
     assert.equal(client.testForceSave, true);
     commands.pop();
-    await el("#msc-control").click();
+    await fire("#msc-control", "click");
     assert.equal(commands.length, 3);
     assert.equal(el("#return-dialog").open, true);
-    el("#cancel-return").click();
-    await el("#confirm-return").click();
+    await fire("#cancel-return", "click");
+    await fire("#confirm-return", "click");
     assert.equal(commands.length, 3);
-    await el("#msc-control").click();
-    await el("#confirm-return").click();
+    await fire("#msc-control", "click");
+    await fire("#confirm-return", "click");
     assert.deepEqual(commands[3], ["msc", false, true]);
-    await el("#msc-control").click();
+    await fire("#msc-control", "click");
     await sync({ outcome_uncertain: true });
     assert.equal(el("#msc-control").disabled, true);
     assert.equal(el("#settings-save").disabled, true);
-    await el("#confirm-return").click();
+    await fire("#confirm-return", "click");
     assert.equal(commands.length, 4);
     await sync({ outcome_uncertain: false });
-    await el("#msc-control").click();
+    await fire("#msc-control", "click");
     assert.equal(el("#return-dialog").open, true);
     await sync({ connected: false });
     assert.equal(el("#return-dialog").open, false);
-    await el("#confirm-return").click();
+    await fire("#confirm-return", "click");
     assert.equal(commands.length, 4);
     await sync({ connected: true });
     await sync({ outcome_uncertain: false, freshness: { 3: "stale", 10: "stale", 11: "stale" },
@@ -315,25 +302,11 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   const prototypes = new Map(["connect", "disconnect", "saveSettings", "reboot"].map(name =>
     [name, BoardSession.prototype[name]]));
   const createConsoleProof = BleTransport.prototype.createConsoleProof;
-  const elements = new Map();
+  const { document, element: el, fire } = createDocument();
   const windowHandlers = new Map();
   let reloads = 0;
   let consolePopup;
-  const el = selector => {
-    const tag = selector.match(/^([a-z]+)#/)?.[1];
-    selector = selector.replace(/^[a-z]+(?=#)/, "");
-    if (!elements.has(selector)) elements.set(selector, {
-      namespaceURI: "http://www.w3.org/1999/xhtml", value: "", dataset: {}, valueAsNumber: 32, children: [],
-      options: ["0", "1", "configure"].map(value => ({ value })),
-      open: false, showModal() { this.open = true; },
-      close() { this.open = false; this.events.close?.(); }, focus() { this.focused = true; }, events: {},
-      addEventListener(type, handler) { this.events[type] = handler; if (type !== "close") this[type] = handler; },
-      setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; }, querySelectorAll() { return []; } });
-    if (tag) elements.get(selector).localName ??= tag;
-    return elements.get(selector);
-  };
-  globalThis.document = { querySelector: el, createElement: () => ({ append() {} }) };
+  globalThis.document = document;
   globalThis.location = { origin: "http://localhost", href: "http://localhost/", reload() { reloads++; } };
   globalThis.window = {
     addEventListener(type, handler) { windowHandlers.set(type, handler); },
@@ -403,41 +376,41 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     await import(`../../web/js/app.mjs?connections=${Date.now()}`);
     windowHandlers.get("pageshow")({ persisted: false });
     assert.equal(reloads, 0, "initial page display must not reload");
-    el("#usb-open").click(); await null;
+    await fire("#usb-open", "click"); await null;
     assert.equal(el("#usb-connection-dialog").open, true);
-    el("#usb-connection-close").click();
-    el("#bluetooth-open").click(); await null;
+    await fire("#usb-connection-close", "click");
+    await fire("#bluetooth-open", "click"); await null;
     assert.equal(el("#bluetooth-connection-dialog").open, true);
     assert.equal(scans, 0, "opening a dialog must not scan without another user gesture");
     assert.match(el("#bluetooth-connection-status").textContent, /Enter the control key/);
     assert.equal(el("#direct-ble-control-key").disabled, false);
     el("#direct-ble-control-key").value = "not-a-key";
-    await el("#bluetooth-scan").click();
+    await fire("#bluetooth-scan", "click");
     await null;
     assert.equal(scans, 0, "invalid input must not open the device chooser");
     assert.match(el("#bluetooth-connection-status").textContent, /Invalid Control key/);
     assert.match(el("#status-message").textContent, /Invalid Control key/);
-    el("#bluetooth-open").click(); await null;
+    await fire("#bluetooth-open", "click"); await null;
     assert.match(el("#bluetooth-connection-status").textContent, /Invalid Control key/,
       "another disconnected render preserves the error");
     failure = true;
     el("#direct-ble-control-key").value = "cd".repeat(32);
-    let scan = el("#bluetooth-scan").click();
+    let scan = fire("#bluetooth-scan", "click");
     assert.equal(usedKey, "cd".repeat(32));
     assert.equal(el("#direct-ble-control-key").value, "", "the key input is cleared as soon as it is submitted");
     await null;
     assert.equal(el("#bluetooth-scan").disabled, true);
     assert.equal(el("#direct-ble-control-key").disabled, true);
-    let prevented = false;
-    el("#bluetooth-connection-dialog").cancel({ preventDefault() { prevented = true; } });
-    assert.equal(prevented, true, "do not dismiss while a picker/connection is pending");
+    const cancel = new Event("cancel", { cancelable: true });
+    el("#bluetooth-connection-dialog").dispatchEvent(cancel);
+    assert.equal(cancel.defaultPrevented, true, "do not dismiss while a picker/connection is pending");
     finishScan(); await scan;
     assert.match(el("#bluetooth-connection-status").textContent, /rejected the control key/);
     assert.equal(el("#bluetooth-connection-dialog").open, true);
     assert.equal(el("#bluetooth-scan").disabled, false);
     failure = false;
     el("#direct-ble-control-key").value = "ab".repeat(32);
-    scan = el("#bluetooth-scan").click();
+    scan = fire("#bluetooth-scan", "click");
     finishScan(); await scan;
     assert.equal(scans, 2);
     assert.equal(usedKey, "ab".repeat(32));
@@ -453,17 +426,17 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(el("#direct-wifi-scan").disabled, true, "Wi-Fi provisioning actions stay USB-only");
     assert.equal(el("#direct-ble-generate").disabled, true, "Control-key provisioning stays USB-only");
     assert.equal(el("#msc-control").disabled, true, "storage ownership stays USB-only");
-    await el("#settings-reboot").click();
-    await el("#confirm-reboot").click();
+    await fire("#settings-reboot", "click");
+    await fire("#confirm-reboot", "click");
     assert.deepEqual(settingsCommands, [["reboot", true]]);
     el("#settings-clock").value = "250";
-    el("#settings-clock").change(); await null;
+    await fire("#settings-clock", "change"); await null;
     el("#direct-settings-tcp-cli").value = "0";
-    el("#direct-settings-tcp-cli").change(); await null;
-    await el("#settings-save").click();
+    await fire("#direct-settings-tcp-cli", "change"); await null;
+    await fire("#settings-save", "click");
     assert.match(el("#configuration-dialog-profile").textContent, /TCP CLI: Disabled/);
     assert.match(el("#direct-configuration-wireless-warning").textContent, /without sending Wi-Fi credentials/);
-    await el("#confirm-configuration").click();
+    await fire("#confirm-configuration", "click");
     assert.deepEqual(settingsCommands[1], ["save",
       { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 }, false, false]);
     await sync({ reboot_pending: false });
@@ -515,22 +488,22 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     await sync({ hardware: { ...client.state.hardware, serial_number: authRequest.uid.toUpperCase() } });
     await sync({ pending_request: { opcode: 1, transaction_id: 1 }, outcome_uncertain: true });
     assert.equal(el("#usb-open").disabled, true);
-    el("#bluetooth-open").click(); await null;
+    await fire("#bluetooth-open", "click"); await null;
     assert.match(el("#bluetooth-connection-status").textContent, /Connected to Nearby PicoForge/);
     assert.equal(el("#direct-ble-control-key").disabled, true);
     assert.equal(el("#bluetooth-scan").textContent, "Disconnect", "one button toggles while connected");
     assert.equal(el("#bluetooth-scan").disabled, false);
-    await el("#bluetooth-scan").click();
+    await fire("#bluetooth-scan", "click");
     assert.equal(client.transport.bleKey, null);
     assert.equal(el("#usb-open").disabled, true, "disconnect must not discard a pending command to switch transport");
     await sync({ outcome_uncertain: false, pending_request: null });
     assert.equal(el("#usb-open").disabled, false);
     el("#direct-ble-control-key").value = "ab".repeat(32);
-    el("#bluetooth-connection-close").click();
+    await fire("#bluetooth-connection-close", "click");
     assert.equal(el("#direct-ble-control-key").value, "", "closing the dialog discards an unsubmitted key");
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
-    el("#usb-open").click(); await null;
-    el("#bluetooth-open").click(); await null;
+    await fire("#usb-open", "click"); await null;
+    await fire("#bluetooth-open", "click"); await null;
     await sync({});
     assert.equal(el("#bluetooth-scan").disabled, true);
     assert.match(el("#bluetooth-connection-status").textContent, /supported browser/);

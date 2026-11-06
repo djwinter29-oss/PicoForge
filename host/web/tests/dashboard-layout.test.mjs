@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+test("shared pages use the same favicon as Direct and expose wireless selection and focus styling", () => {
+  const shared = readFileSync(new URL("../favicon.svg", import.meta.url));
+  assert.deepEqual(shared, readFileSync(new URL("../../direct/web/favicon.svg", import.meta.url)));
+  for (const page of ["../index.html", "../console.html"]) {
+    assert.match(readFileSync(new URL(page, import.meta.url), "utf8"), /\/favicon.svg\?v=3/);
+  }
+  const css = readFileSync(new URL("../css/dashboard.css", import.meta.url), "utf8");
+  assert.match(css, /\.wifi-network\[aria-pressed="true"\]/);
+  assert.match(css, /\.wifi-network:focus-visible/);
+  assert.match(css, /\.dialog-actions \{[^}]*flex-wrap: wrap/);
+});
+
 test("server dashboard keeps radio dialogs, confirmation controls and benchmark layout", () => {
   for (const path of ["../index.html"]) {
     const dashboard = readFileSync(new URL(path, import.meta.url), "utf8");

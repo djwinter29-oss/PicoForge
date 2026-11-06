@@ -12,10 +12,26 @@ identified board and appropriate USB permissions.
 
 - Python 3.10+ for the Python host and repository contracts
 - .NET 10 SDK for the .NET host and tests
-- Node.js with the built-in test runner for Direct dashboard tests
+- Node.js with the built-in test runner for shared and Direct dashboard tests
 - A WebHID-capable desktop browser for physical browser use
 
 Install only the toolchain needed for the host or checks you are changing.
+
+## Shared Dashboard Changes
+
+Edit `host/web` for both Python and .NET; do not edit generated `.NET wwwroot` copies. The shared and Direct dashboards
+remain separate implementations, with byte-identical favicons for consistent branding.
+
+Wireless drafts require successful, unexpired Wi-Fi testing before Save. Failed replacement tests invalidate the
+previous test; clearing temporary credentials must complete before other board operations resume. Control-key copy
+feedback is fenced to the current board lifecycle and key draft, so an earlier clipboard operation cannot claim that
+a replacement key was copied. Failed saves retain their error feedback; regenerate the key or disable Bluetooth
+before retrying. USB-shared storage blocks wireless Save and explains how to return ownership safely.
+
+Run `node --test host/web/tests/*.test.mjs` for shared frontend regressions. Serve `host/web` locally and open
+`/tests/browser.html` for mocked browser checks covering dialog focus, narrow layouts, network selection, wireless
+cancellation, and stale clipboard feedback.
+These checks do not establish physical board qualification.
 
 ## Run a Host Application
 
@@ -251,15 +267,18 @@ Direct is an independent product. It **must not share any code** with the Python
 JavaScript, Python, renderers, controls, protocol codecs, transport adapters, the terminal bridge, assets, tests, or
 test helpers. Do not introduce cross-dashboard imports, symlinks, shared component directories, build-time copying,
 or copy-paste forks kept in sync with `host/web`, `host/python`, or `host/dotnet`. Similar behavior must be designed,
-implemented, and maintained independently in Direct; a change to one dashboard never requires a change to the other.
+implemented, and maintained independently in Direct; behavioral changes do not require matching changes to the other.
+The sole asset exception is the branding favicon: keep the two separately hosted `favicon.svg` files byte-identical,
+without introducing build-time copying or a runtime dependency.
 
 Direct code, including its Python-standard-library bridge, lives in `host/direct`. Python and .NET may continue sharing
 their own frontend in `host/web`; this does not include
-Direct. The only common ground is the firmware [HID Report Reference](../reference/usb-hid.md) and BLE profile, which
+Direct. Common protocol behavior follows the firmware [HID Report Reference](../reference/usb-hid.md) and BLE profile, which
 are specifications, not shared implementations. Repository CI may run both independent test suites.
 The [dashboard isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check module/asset boundaries,
-that the Direct bridge imports nothing from the native hosts, that no Direct file is a byte-identical copy of a
-Python/.NET/web host file, and that the native hosts do not package or serve Direct. Near-copies are a review concern.
+that the Direct bridge imports nothing from the native hosts, that no Direct file except the branding favicon is a
+byte-identical copy of a Python/.NET/web host file, and that the native hosts do not package or serve Direct.
+Near-copies are a review concern.
 
 In the shared dashboard, active or pending self-tests disable board configuration and reboot controls without
 adding an automatic test warning above Pin configuration. The Save button state indicates unsaved changes without

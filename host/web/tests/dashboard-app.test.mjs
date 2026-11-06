@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { renderStatus } from "../js/dashboard.mjs";
+import { domFixture } from "./support/dom-fixture.mjs";
 
 test("server dashboard presents expected USB reconnection without hiding real errors", () => {
   const saved = globalThis.document;
@@ -25,6 +26,16 @@ test("server dashboard presents expected USB reconnection without hiding real er
     assert.equal(element("#status-message").textContent, "read error");
     assert.equal(element(".status-line").dataset.error, "true");
     assert.equal(element("#status-message").hidden, false);
+    const shared = { connected: true, settings_supported: true, hardware: { capabilities: 2 },
+      settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 1 },
+      wireless_dirty: true, wireless_stage_valid: true, msc: { enabled: true, transition_pending: false } };
+    renderStatus(shared);
+    assert.equal(element("#settings-save").disabled, true);
+    assert.match(element("#settings-note").textContent, /safely eject.*Return to Pico/);
+    assert.equal(element("#settings-save").title, element("#settings-note").textContent);
+    renderStatus({ ...shared, msc: { enabled: false, transition_pending: false } });
+    assert.equal(element("#settings-save").disabled, false);
+    assert.equal(element("#settings-save").title, "");
   } finally {
     globalThis.document = saved;
   }
@@ -39,7 +50,8 @@ function serverShape({ msc = null, filesystem_format = null, settings = null, me
 }
 
 test("shared dashboard preserves drafts and command state across status failures", async context => {
-  const handlers = new Map();
+  const fixture = domFixture();
+  const { handlers, elements, el: element } = fixture;
   /** Pick Configure… the way a browser does: focus, then an input event before change. */
   const configureRadio = radio => {
     handlers.get(`#settings-${radio}:focus`)();
@@ -47,18 +59,6 @@ test("shared dashboard preserves drafts and command state across status failures
     handlers.get(`#settings-${radio}:input`)();
   };
   let tick;
-  const elements = new Map();
-  const element = selector => {
-    if (!elements.has(selector)) {
-      const target = { textContent: "", value: "", valueAsNumber: 32, dataset: {}, style: {}, children: [],
-        open: false, showModal() { this.open = true; }, close() { this.open = false; },
-        replaceChildren(...children) { this.children = children; }, append(child) { this.children.push(child); },
-        classList: { toggle() {}, add() {}, remove() {} },
-        addEventListener: (type, handler) => handlers.set(`${selector}:${type}`, handler) };
-      elements.set(selector, new Proxy(target, { get: (object, key) => key in object ? object[key] : () => {} }));
-    }
-    return elements.get(selector);
-  };
   const connected = { connected: true, error: null, runtime: { led_available: true, led_on: false },
     hardware: { product_name: "PicoForge", board_model: "Pico 2", mcu: "RP2350", capabilities: 2 | 16,
       ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
@@ -109,12 +109,7 @@ test("shared dashboard preserves drafts and command state across status failures
     return new AbortController().signal;
   });
   const saved = { document: globalThis.document, window: globalThis.window, fetch: globalThis.fetch };
-  globalThis.document = {
-    querySelector: element,
-    createElement: () => ({ value: "", textContent: "", children: [],
-      append(...children) { this.children.push(...children); } }),
-    addEventListener: (type, handler) => handlers.set(`document:${type}`, handler),
-  };
+  globalThis.document = fixture.document;
   globalThis.window = { setInterval: callback => { tick = callback; }, confirm: () => true };
   const saveAndConfirm = async () => {
     handlers.get("#settings-save:click")();
@@ -910,11 +905,13 @@ test("shared dashboard preserves drafts and command state across status failures
     assert.equal(wirelessSettings.length, 1);
     assert.match(elements.get("#wifi-status").textContent, /Storage busy/);
     assert.match(elements.get("#settings-note").textContent, /Save failed: Storage busy/);
-    assert.equal(elements.get("#settings-save").disabled, false, "a rejected save stays retryable");
+    assert.equal(elements.get("#settings-save").disabled, true, "a rejected key save requires regeneration before retry");
+    assert.match(elements.get("#settings-save").title, /Generate a replacement/);
     assert.equal(elements.get("#wifi-password").value, "");
     assert.equal(elements.get("#ble-secret").value, "");
     wirelessFailure = 0;
     handlers.get("#ble-generate:click")();
+    assert.equal(elements.get("#settings-save").disabled, false, "regeneration makes the rejected save retryable");
     handlers.get("#settings-save:click")();
     const saving = handlers.get("#confirm-configuration:click")();
     assert.equal(elements.get("#board-select").disabled, true);

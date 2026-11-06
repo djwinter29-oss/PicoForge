@@ -141,6 +141,8 @@ Cancel or Escape sends no command. Safety gates are checked again at confirmatio
 Local settings editing remains available while USB storage is shared, but forced saving requires an additional
 host-cache data-loss confirmation. Sync/detach must succeed before flash programming. Credential changes cannot
 use that forced-save path. See the [forced-save policy](../../docs/reference/settings.md#forced-save-and-reboot).
+If wireless changes block Save while storage is shared, the button title and visible settings note explain the
+required sequence: stop host file activity, safely eject, then confirm **Return to Pico** before saving.
 
 ### Storage and benchmarks
 
@@ -234,6 +236,10 @@ together rather than splitting them solely to shorten files.
 
 The terminal retains at most 1000 rows of 512 columns, caches unedited row text, and reuses three text-only DOM nodes.
 Retired row caches are garbage-collectable. It is a bounded firmware CLI renderer, not a full terminal emulator.
+Live console output shares one pending animation frame; input transmission does not wait for that frame.
+Disconnect flushes final output and cancels its pending frame; navigation cancels it without rendering stale data.
+Bridge responses are validated per operation before adoption, including exact write acknowledgments. Malformed
+responses and partial writes surface errors rather than being retried.
 
 ## Checks
 
@@ -271,7 +277,8 @@ clearing staging without replay. Shared DOM fixtures use additive listeners and 
 | `tests/test_server.py` | Root-level server behavior |
 
 The no-emit JSDoc check covers protocol/state, transports, timers, dashboard/form composition, and console rendering.
-Negative contracts reject invalid state, configuration, callback, environment, and DOM types. Typing is incremental:
+Negative contracts reject invalid state, configuration, callback, environment, DOM, selector, and console-response
+types. Typing is incremental:
 the wider configuration still permits implicit `any`; not every UI module is fully typed.
 
 ### Browser checks
@@ -288,7 +295,8 @@ The runner owns an ephemeral loopback server and fails on incomplete checks, ass
 No browser-automation dependency is required by the dashboard at runtime.
 
 Coverage includes dialog focus/Escape, narrow viewports, invalid keys, Wi-Fi selection/cancellation/reset,
-replacement tests, failed-key-save recovery, and save/reconnect ownership. Fresh iframe fixtures prevent duplicate
+replacement tests, failed-key-save recovery, shared-storage Save blockers, and save/reconnect ownership.
+Fresh iframe fixtures prevent duplicate
 controller binding. Actual dashboard/console history navigation checks verify draft/output disposal, journal
 retention, and no terminal requests. WebHID is disabled for those history checks because its listeners prevent
 Chromium history-cache eligibility; they do not qualify connected hardware.
@@ -298,6 +306,10 @@ provisioning-feedback text writes, stable terminal nodes, bounded scrollback, an
 streaming. Median/p95 timings are diagnostics, not portable pass thresholds. Streaming measurements separate parsing,
 row-text construction, the `scrollHeight` layout read, and remaining DOM/scroll work. The remainder includes overhead
 and any other layout; independent phase percentiles must not be summed.
+Terminal measurements use production HTML/CSS in a 1000-by-800 iframe with connected presentation, focus, overflow,
+and bottom-scroll assertions, but no live TCP session. Integration tests separately verify frame coalescing, immediate
+input, final-output flushing, navigation cleanup, and no replay after a partial write. Coalescing reduces redundant
+renders when output accumulates before a frame; it does not claim to reduce the cost of an individual layout.
 
 To inspect the browser checks manually:
 

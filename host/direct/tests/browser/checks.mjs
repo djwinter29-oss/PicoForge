@@ -196,6 +196,60 @@ const withDashboardFixture = async action => {
   }
 };
 
+const withConsoleFixture = async action => {
+  const html = await (await fetch("../../web/console.html")).text();
+  const content = new DOMParser().parseFromString(html, "text/html");
+  for (const asset of content.querySelectorAll("link[href]")) {
+    asset.href = new URL(asset.getAttribute("href"), new URL("../../web/", location.href)).href;
+  }
+  // Measure production HTML/CSS without opening a real TCP connection or installing a second console controller.
+  content.querySelector("script").remove();
+  const frame = document.createElement("iframe");
+  frame.style.width = "1000px";
+  frame.style.height = "800px";
+  frame.srcdoc = `<!doctype html>${content.documentElement.outerHTML}`;
+  document.body.append(frame);
+  try {
+    await new Promise(resolve => frame.addEventListener("load", resolve, { once: true }));
+    const page = frame.contentDocument;
+    await page.fonts.ready;
+    page.querySelector("#connect").dataset.state = "connected";
+    page.querySelector("#console-status").textContent = "Connected";
+    const terminal = page.querySelector("#terminal");
+    terminal.setAttribute("aria-readonly", "false");
+    terminal.focus();
+    const style = frame.contentWindow.getComputedStyle(terminal);
+    check(style.overflowY === "auto" && style.whiteSpace === "pre" && style.fontSize === "13px",
+      "console measurements did not load production terminal CSS");
+    await action(terminal, page);
+  } finally { frame.remove(); }
+};
+
+await run("shared storage explains credential Save blocking and safe return releases it", async () => {
+  await withDashboardFixture(async (fixture, page) => {
+    page.querySelector("#direct-ble-generate").click();
+    await Promise.resolve();
+    fixture.patch({ msc: { enabled: true, transition_pending: false } });
+    await Promise.resolve();
+    const save = page.querySelector("#settings-save");
+    check(save.disabled && save.title.includes("safely eject"), "shared-storage Save blocker is unexplained");
+    check(page.querySelector("#settings-note").textContent === save.title, "Save title and visible reason disagree");
+    let returns = 0;
+    fixture.client.setMsc = async (enabled, force) => {
+      check(!enabled && force, "Return did not use the confirmed force-return intent");
+      returns++;
+      fixture.patch({ msc: { enabled: false, transition_pending: false } });
+    };
+    page.querySelector("#msc-control").click();
+    page.querySelector("#cancel-return").click();
+    check(returns === 0 && save.disabled, "Cancel changed storage ownership or released Save");
+    page.querySelector("#msc-control").click();
+    page.querySelector("#confirm-return").click();
+    await waitFor(() => !save.disabled, "confirmed Return did not release credential Save");
+    check(returns === 1 && !save.title.includes("shared"), "obsolete shared-storage blocker remains");
+  });
+});
+
 await run("save completion preserves newer drafts and verified forced-save recovery", async () => {
   for (const outcome of ["resolve", "reject", "forced", "forced-new-draft"]) {
     await withDashboardFixture(async (fixture, page) => {
@@ -299,14 +353,13 @@ await run("telemetry bursts coalesce and avoid unchanged connection-label writes
   });
 });
 
-await run("bounded console scrollback remains correct during cursor edits", async () => {
+await run("production-style console scrollback, cursor and scrolling remain correct", () => withConsoleFixture(async (terminal, page) => {
   const screen = new CliScreen();
   screen.write(`${"x".repeat(512)}\r\n`.repeat(999));
-  const terminal = document.createElement("pre");
-  document.body.append(terminal);
-  const render = createConsoleRenderer(terminal, document);
+  const render = createConsoleRenderer(terminal, page);
   const nodes = [...terminal.childNodes];
   const times = [];
+  const originalDisplay = screen.display;
   try {
     for (let index = 0; index < 60; index++) {
       screen.write(`${String.fromCharCode(65 + index % 26)}\b`);
@@ -327,7 +380,6 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
     check(!terminal.querySelector("svg"), "console output was rendered as HTML");
     const streamingTimes = [];
     const phaseTimes = { parse: [], text: [], dom: [], layout: [] };
-    const originalDisplay = screen.display;
     const scrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight").get;
     let textMs = 0, layoutMs = 0;
     screen.display = function () {
@@ -369,6 +421,9 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
         samples[Math.floor(samples.length * 0.95)].toFixed(2);
     }
     check(screen.display()[0].split("\n").length === 1000, "continuous output exceeded the row limit");
+    check(terminal.scrollHeight > terminal.clientHeight, "fixture did not exercise real scrollback");
+    check(Math.abs(terminal.scrollHeight - terminal.clientHeight - terminal.scrollTop) <= 1,
+      "continuous output did not follow the terminal bottom");
     check(nodes.every((node, index) => terminal.childNodes[index] === node), "streaming replaced terminal nodes");
     streamingTimes.sort((a, b) => a - b);
     results.dataset.streamingMedianMs = streamingTimes[Math.floor(streamingTimes.length / 2)].toFixed(2);
@@ -377,7 +432,7 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
     render(screen);
     check(nodes[1].textContent === " ", "interactive cursor did not advance after streaming");
     check(nodes[0].data.endsWith("> cmZ"), "interactive input echo was lost after streaming");
-  } finally { terminal.remove(); }
-});
+  } finally { screen.display = originalDisplay; delete terminal.scrollHeight; }
+}));
 
 results.dataset.complete = "true";

@@ -2,6 +2,137 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { mountConsole } from "../../web/js/ui/console.mjs";
+import { createDocument } from "../support/dom.mjs";
+
+test("console coalesces output frames, sends input immediately and never replays a partial write", async () => {
+  const { document, element, fire } = createDocument();
+  document.createTextNode = data => ({ data });
+  const handlers = new Map();
+  const frames = new Map();
+  const calls = [];
+  let frameId = 0, reads = 0, readSignal;
+  const opener = { postMessage(message) {
+    queueMicrotask(() => handlers.get("message")?.({
+      origin: "http://localhost", source: opener,
+      data: { type: "direct-console-auth-response", request_id: message.request_id,
+        uid: message.uid, proof: "ab".repeat(16) },
+    }));
+  } };
+  const window = {
+    opener, addEventListener: (type, handler) => handlers.set(type, handler),
+    removeEventListener: type => handlers.delete(type),
+    requestAnimationFrame: callback => { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame: id => frames.delete(id),
+  };
+  const fetch = async (url, options) => {
+    const operation = url.split("/").at(-1);
+    calls.push(operation);
+    let result;
+    if (operation === "open") result = { session: "session-a",
+      challenge: { nonce: "ab".repeat(16), uid: "cd".repeat(8) } };
+    else if (operation === "auth") result = { authenticated: true };
+    else if (operation === "write") result = { written: 1 }; // A two-byte write must fail without replay.
+    else if (operation === "read") {
+      reads++;
+      if (reads <= 2) result = { data: btoa(reads === 1 ? "first" : "second"), closed: false };
+      else {
+        readSignal = options.signal;
+        return new Promise((_, reject) => options.signal.addEventListener("abort",
+          () => reject(options.signal.reason), { once: true }));
+      }
+    } else result = { closed: true };
+    return { ok: true, json: async () => result };
+  };
+  const tick = () => new Promise(resolve => setTimeout(resolve, 10));
+  const wait = async condition => {
+    const deadline = Date.now() + 2000;
+    while (!condition() && Date.now() < deadline) await tick();
+    assert.equal(Boolean(condition()), true, "console continuation did not settle");
+  };
+  mountConsole({ document, window, location: { search: "?ipv4=192.168.1.9", origin: "http://localhost" }, fetch });
+  try {
+    await fire("#connect", "click");
+    await wait(() => reads === 3);
+    assert.equal(frameId, 1, "two output chunks share one deferred frame");
+    assert.equal(frames.size, 1);
+    const terminal = element("#terminal");
+    assert.equal(terminal.children[0].data, "", "output remains pending until the frame");
+    terminal.dispatchEvent(Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "Enter", isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false,
+    }));
+    assert.equal(calls.filter(operation => operation === "write").length, 1, "input was not delayed by output");
+    await tick();
+    const paste = Object.assign(new Event("paste", { cancelable: true }), {
+      clipboardData: { getData: () => "ab" },
+    });
+    terminal.dispatchEvent(paste);
+    await wait(() => element("#console-status").textContent.includes("did not confirm all input bytes"));
+    assert.match(element("#console-status").textContent, /input was not resent/);
+    assert.equal(calls.filter(operation => operation === "write").length, 2, "partial input was not replayed");
+    assert.equal(terminal.children[0].data, "firstsecond", "disconnect flushes final output");
+    assert.equal(frames.size, 0, "disconnect cancels the stale output frame");
+    assert.equal(readSignal.aborted, true);
+    reads = 0;
+    await fire("#connect", "click");
+    await wait(() => reads === 3);
+    const callback = frames.values().next().value;
+    frames.clear();
+    callback();
+    assert.equal(terminal.children[0].data, "firstsecond", "the shared frame renders both chunks");
+    await fire("#connect", "click");
+    reads = 0;
+    await fire("#connect", "click");
+    await wait(() => reads === 3);
+    assert.equal(frames.size, 1);
+    handlers.get("pagehide")();
+    assert.equal(frames.size, 0, "navigation cancels the pending output frame");
+    assert.equal(readSignal.aborted, true);
+    assert.equal(terminal.children[0].data, "", "navigation does not render stale buffered output");
+  } finally { handlers.get("pagehide")(); }
+});
+
+test("malformed successful bridge responses surface errors without continuing or retrying", async () => {
+  for (const malformedOperation of ["open", "auth", "read"]) {
+    const { document, element, fire } = createDocument();
+    document.createTextNode = data => ({ data });
+    const handlers = new Map();
+    const calls = [];
+    const opener = { postMessage(message) {
+      queueMicrotask(() => handlers.get("message")?.({
+        origin: "http://localhost", source: opener,
+        data: { type: "direct-console-auth-response", request_id: message.request_id,
+          uid: message.uid, proof: "ab".repeat(16) },
+      }));
+    } };
+    const window = {
+      opener, addEventListener: (type, handler) => handlers.set(type, handler),
+      removeEventListener: type => handlers.delete(type),
+      requestAnimationFrame() { assert.fail("Invalid output must not schedule a render"); },
+      cancelAnimationFrame() {},
+    };
+    const fetch = async url => {
+      const operation = url.split("/").at(-1);
+      calls.push(operation);
+      const responses = {
+        open: { session: "session-a", challenge: { nonce: "ab".repeat(16), uid: "cd".repeat(8) } },
+        auth: { authenticated: true }, close: { closed: true },
+      };
+      return { ok: true, json: async () => operation === malformedOperation ? {} : responses[operation] };
+    };
+    mountConsole({ document, window, location: { search: "?ipv4=192.168.1.9", origin: "http://localhost" }, fetch });
+    try {
+      await fire("#connect", "click");
+      await new Promise(resolve => setImmediate(resolve));
+      assert.match(element("#console-status").textContent,
+        new RegExp(`Invalid Direct terminal bridge ${malformedOperation} response`));
+      assert.equal(element("#connect").disabled, false);
+      assert.equal(calls.filter(operation => operation === malformedOperation).length, 1);
+      if (malformedOperation !== "open") assert.equal(calls.at(-1), "close");
+      assert.equal(calls.includes("write"), false);
+    } finally { handlers.get("pagehide")(); }
+  }
+});
 
 test("Direct console uses the connected dashboard for authentication without asking for the key", async () => {
   const handlers = new Map();
@@ -37,7 +168,8 @@ test("Direct console uses the connected dashboard for authentication without ask
   globalThis.window = { opener: dashboardWindow,
     addEventListener: (type, handler) => windowHandlers.set(type, handler),
     removeEventListener: type => windowHandlers.delete(type),
-    getSelection: () => ({ toString: () => "" }), confirm: () => true };
+    getSelection: () => ({ toString: () => "" }), confirm: () => true,
+    requestAnimationFrame: callback => setTimeout(callback, 0), cancelAnimationFrame: clearTimeout };
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   globalThis.fetch = async (url, options) => {
     const operation = url.split("/").at(-1);
@@ -50,7 +182,9 @@ test("Direct console uses the connected dashboard for authentication without ask
         options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
       });
     }
-    return { ok: true, json: async () => ({}) };
+    const result = operation === "auth" ? { authenticated: true }
+      : operation === "write" ? { written: atob(JSON.parse(options.body).data).length } : { closed: true };
+    return { ok: true, json: async () => result };
   };
   const tick = () => new Promise(resolve => setImmediate(resolve));
   try {

@@ -96,9 +96,9 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 }
 .button:hover:not(:disabled) { background: var(--teal-dark); }
 .button:focus-visible { outline: 3px solid var(--lime); outline-offset: 2px; }
-.button:disabled { opacity: .55; cursor: wait; }
-.button-secondary { background: var(--teal); color: #fff; box-shadow: 0 2px 4px #087b7026; }
-.button-secondary:hover:not(:disabled) { background: var(--teal-dark); }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+.button-secondary { background: var(--paper); border-color: #cbd6d3; color: var(--ink); }
+.button-secondary:hover:not(:disabled) { background: #e8eeeb; }
 .button-led { min-width: 136px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-color: #cbd6d3; background: var(--paper); color: var(--ink); }
 .button-led::before { content: ""; width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #a7b4b0; }
 .button-led[data-state="on"]::before { background: var(--teal); }
@@ -106,7 +106,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .button-led[data-state="on"] { border-color: var(--teal); }
 .button-led[data-state="unknown"] { color: var(--muted); border-style: dashed; }
 .button-led:hover:not(:disabled) { background: #e8eeeb; }
-.button-led[data-state="on"]:hover:not(:disabled) { background: #0d514b; }
+.button-led[data-state="on"]:hover:not(:disabled) { background: #0d514b; color: #fff; }
 
 .identity {
   display: grid;
@@ -174,7 +174,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .confirmation-dialog::backdrop { background: #102d2b70; }
 .confirmation-dialog h2, .confirmation-dialog p { margin-bottom: 12px; }
 .configuration-warning { color: var(--muted); font-size: 13px; }
-.dialog-actions { margin-top: 20px; display: flex; justify-content: end; gap: 8px; }
+.dialog-actions { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; }
 .dialog-actions .button { flex: 0 0 auto; }
 .wireless-dialog { max-height: min(760px, calc(100% - 32px)); overflow-y: auto; }
 .wireless-dialog label { display: grid; gap: 6px; margin-top: 12px; color: var(--muted); font-size: 13px; }
@@ -185,8 +185,15 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
 .wifi-network { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; color: var(--ink);
   background: var(--paper); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
 .wifi-network:last-child { border-bottom: 0; }
-.wifi-network[aria-selected="true"] { background: #e8f4f1; box-shadow: inset 3px 0 var(--teal); }
+.wifi-network[aria-pressed="true"] { background: #e8f4f1; box-shadow: inset 3px 0 var(--teal); }
+.wifi-network:hover:not(:disabled) { background: #e8f4f1; }
+.wifi-network:focus-visible { outline: 3px solid var(--teal); outline-offset: -3px; }
+.wifi-network:disabled { opacity: .55; cursor: not-allowed; }
+.wifi-network > span { min-width: 0; overflow-wrap: anywhere; }
 .wifi-network small { color: var(--muted); font: 12px var(--mono); }
+.wireless-dialog input:focus-visible, .self-test-controls input:focus-visible {
+  outline: 3px solid var(--lime); outline-offset: 2px;
+}
 .button-cancel { background: var(--paper); border-color: #cbd6d3; color: var(--ink); }
 .button-cancel:hover:not(:disabled) { background: #e8eeeb; }
 .button-danger { background: #fff; border-color: #dbb5aa; color: var(--coral); }
@@ -285,7 +292,7 @@ h2 { margin-bottom: 0; font-size: 18px; font-weight: 650; }
   .runtime[aria-labelledby="memory-title"] .runtime-grid, .self-test .runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .section-heading { align-items: start; flex-direction: column; gap: 8px; }
   .actions { width: 100%; }
-  .actions select { flex: 1; }
+  .actions select { flex: 1 1 180px; width: 0; }
   .button { flex: 1; padding-inline: 9px; }
   .settings-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -1,4 +1,4 @@
-import { renderWirelessStatus } from "./wireless-form.mjs?v=18";
+import { renderWirelessStatus } from "./wireless-form.mjs?v=19";
 
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";
@@ -86,13 +86,16 @@ export function renderStatus(snapshot) {
   ledControl.textContent = ledOn === null ? "Board LED: --" : `Board LED: ${ledOn ? "On" : "Off"}`;
   ledControl.dataset.state = ledOn === null ? "unknown" : ledOn ? "on" : "off";
   ledControl.setAttribute("aria-pressed", String(ledOn === true));
+  if (snapshot.can_set_led !== undefined) ledControl.disabled = !snapshot.can_set_led;
   ledControl.title = ledOn === null ? "Onboard LED unavailable"
     : `Turn onboard LED ${ledOn ? "off" : "on"}`;
   const msc = snapshot.msc;
   const mscControl = document.querySelector("#msc-control");
   mscControl.textContent = msc?.enabled ? "Return to Pico" : "Enable USB drive";
-  mscControl.disabled = snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
-    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending);
+  mscControl.disabled = snapshot.can_change_msc === undefined
+    ? snapshot.settings_busy || snapshot.msc_command_pending || !connected || !msc || Boolean(msc.transition_pending)
+    || Boolean(snapshot.self_test?.active) || Boolean(snapshot.self_test_command_pending)
+    : !snapshot.can_change_msc;
   document.querySelector("#msc-note").textContent = snapshot.msc_outcome_uncertain
     ? "Storage command outcome is uncertain. Check fresh ownership status before taking action."
     : msc?.request_rejected
@@ -150,15 +153,19 @@ function renderSettings(snapshot) {
     document.querySelector(selector).disabled = snapshot.settings_busy || !ready;
   }
   // Credentials have no forced-save path: provisioning requires firmware-owned storage.
+  const saveBlockReason = snapshot.wireless_save_block_reason || (snapshot.wireless_dirty && msc?.enabled
+    ? "Wireless changes cannot be saved while USB storage is shared. Stop host file activity, safely eject, "
+      + "then use Return to Pico before saving." : "");
   document.querySelector("#settings-save").disabled = snapshot.settings_busy || !ready
-    || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(snapshot.wireless_dirty && msc?.enabled)
+    || !(snapshot.settings_dirty || snapshot.wireless_dirty) || Boolean(saveBlockReason)
     || Boolean(snapshot.wireless_dirty && snapshot.wireless_stage_valid === false)
     || !((snapshot.hardware?.capabilities ?? 0) & 2);
+  document.querySelector("#settings-save").title = saveBlockReason;
   document.querySelector("#reboot-control").disabled = snapshot.settings_busy || !snapshot.connected
     || !((snapshot.hardware?.capabilities ?? 0) & 2) || !snapshot.msc
     || snapshot.msc.enabled || snapshot.msc.transition_pending || snapshot.self_test?.active
     || snapshot.self_test_command_pending || snapshot.msc_command_pending;
-  document.querySelector("#settings-note").textContent = snapshot.settings_message
+  document.querySelector("#settings-note").textContent = snapshot.settings_message || saveBlockReason
     || (!snapshot.connected ? "Waiting for a PicoForge connection."
       : !snapshot.settings_supported ? "Boot settings unavailable; update device firmware."
         : !msc ? "Waiting for storage ownership status."

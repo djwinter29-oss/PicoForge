@@ -3,6 +3,21 @@ import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { mountDashboard } from "../../web/js/ui/dashboard.mjs";
 import { deriveControlsViewModel } from "../../web/js/ui/sections/controls.mjs";
 import { queryElement } from "../../web/js/ui/dom.mjs";
+import { canRun, deriveOperationEligibility } from "../../web/js/state/selectors.mjs";
+import { validateBridgeResponse } from "../../web/js/ui/console.mjs";
+
+// @ts-expect-error Selector snapshots retain domain types.
+deriveOperationEligibility({ connected: "yes" });
+// @ts-expect-error Readiness operation names are a closed set.
+canRun({}, "save");
+const readResponse = validateBridgeResponse("read", {});
+// @ts-expect-error Read responses have boolean closure state.
+readResponse.closed = "false";
+// @ts-expect-error Read responses do not contain an open-session challenge.
+readResponse.challenge;
+const openResponse = validateBridgeResponse("open", {});
+// @ts-expect-error Challenge identities are strings.
+openResponse.challenge.uid = 123;
 
 const keyInput = queryElement("input#direct-ble-secret");
 keyInput.value = "";

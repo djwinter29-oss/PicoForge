@@ -6,17 +6,23 @@ import { CAP } from "../protocol/constants.mjs";
 import { REASON } from "./errors.mjs";
 
 const { COMMAND_BLOCKED: BLOCKED, USB_ONLY, CAPABILITY_UNAVAILABLE: NO_CAPABILITY } = REASON;
+/** @typedef {import("./reducer.mjs").DashboardState} DashboardState */
+/** @typedef {"led" | "reboot" | "msc" | "selfTest" | "settings" | "wireless"} Operation */
 
-/** @brief True while a control request or an accepted wireless lifecycle has no known outcome. */
+/** @brief True while a control request or an accepted wireless lifecycle has no known outcome.
+ * @param {DashboardState} state */
 export const commandPending = state => Boolean(state.pending_request || state.pending_wireless);
-/** @brief True while a requested MSC ownership change has not been observed. */
+/** @brief True while a requested MSC ownership change has not been observed.
+ * @param {DashboardState} state */
 export const mscPending = state => state.pending_msc != null;
-/** @brief True while a self-test start/cancel has not changed the reported sequence. */
+/** @brief True while a self-test start/cancel has not changed the reported sequence.
+ * @param {DashboardState} state */
 export const selfTestPending = state => state.pending_self_test != null;
 
 /**
  * @brief Whether the single command queue may accept a request, ignoring the wireless workflow lock (the session
  * admits only the workflow that holds it).
+ * @param {DashboardState} state
  */
 export function commandBlocked(state) {
   return Boolean(state.busy || commandPending(state) || mscPending(state) || selfTestPending(state)
@@ -25,7 +31,7 @@ export function commandBlocked(state) {
 
 /**
  * @brief Derive operation readiness from a domain snapshot.
- * @param state Domain state snapshot.
+ * @param {DashboardState} state Domain state snapshot.
  * @return Readiness flags: storageFresh (fresh storage/self-test reports, nothing pending), storageReady
  *   (fresh and no self-test running), and per-operation gates.
  */
@@ -54,6 +60,8 @@ export function deriveOperationEligibility(state) {
  * @brief Per-operation precondition: return the first failing reason code (state/errors.mjs), or null.
  * Operation-specific arguments (LED level, MSC direction, self-test action, forced save) are checked by the use case.
  */
+/** @type {Record<Operation, (state: DashboardState, eligibility: ReturnType<typeof deriveOperationEligibility>,
+ *   capabilities: number) => string | null>} */
 const RULES = {
   led: (state, e, caps) => !state.runtime?.led_available ? REASON.LED_TELEMETRY
     : !(caps & CAP.LED) ? NO_CAPABILITY : e.blocked ? BLOCKED : null,
@@ -72,8 +80,8 @@ const RULES = {
 
 /**
  * @brief The one readiness gate for user operations, shared by BoardSession methods and UI disabling.
- * @param state Domain state snapshot.
- * @param {"led" | "reboot" | "msc" | "selfTest" | "settings" | "wireless"} operation
+ * @param {DashboardState} state Domain state snapshot.
+ * @param {Operation} operation
  * @param {ReturnType<typeof deriveOperationEligibility>} [eligibility] Same-snapshot render cache; actions omit it.
  * @return {{allowed: boolean, reason: string | null}} `reason` is a REASON code; ui/messages.mjs has its text.
  */

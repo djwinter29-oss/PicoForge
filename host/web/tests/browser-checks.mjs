@@ -42,15 +42,15 @@ const mock = `<script>
     hardware: { product_name: "PicoForge", board_model: "Pico 2 W", mcu: "RP2350",
       capabilities: 128 | 16 | 2, ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true,
-    settings: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
-    memory: { mode: "spi" },
-    msc: { enabled: false, transition_pending: false },
+    board_configuration: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
+    memory: { mode: "spi", msc: { enabled: false, transition_pending: false } },
+    storage_stale: false,
     self_test: null,
     wireless: { ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
       ble_key_configured: false, tcp_cli_enabled: true }
   };
   window.fetch = async (input, options = {}) => {
-    const url = new URL(input, location.href);
+    const url = new URL(input, document.baseURI);
     if (url.pathname === "/api/boards") return response({
       boards: [{ id: "browser-board", serial_number: "browser-board", device_path: "/hid/browser" }],
       default_board_id: "browser-board"
@@ -62,8 +62,11 @@ const mock = `<script>
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }
     });
+    if (url.pathname === "/api/wireless/scan") return response({
+      networks: [{ ssid: "browser-network", ssid_hex: "62726f777365722d6e6574776f726b", secured: true, rssi: -40 }]
+    });
     if (url.pathname === "/api/wireless/cancel" && ++cancelAttempts === 1) {
-      return response({ error: "temporary failure" }, 503);
+      return response({ error: "temporary failure" }, 409);
     }
     if (url.pathname === "/api/wireless/cancel") return response({});
     return response({ error: "Unexpected browser-check request" }, 404);
@@ -111,6 +114,17 @@ await run("Wi-Fi cancellation failure remains open and retry succeeds", async ()
   radio.dispatchEvent(new Event("input", { bubbles: true }));
   check(dialog.open, "Wi-Fi dialog did not open");
   check(dialog.contains(page.activeElement), "focus did not move into the Wi-Fi dialog");
+  page.querySelector("#wifi-scan").click();
+  await waitFor(() => page.querySelector(".wifi-network"), "scan did not populate the network list");
+  const network = page.querySelector(".wifi-network");
+  network.click();
+  check(network.getAttribute("aria-pressed") === "true", "selected network is not announced as pressed");
+  const bounds = dialog.getBoundingClientRect();
+  check(bounds.left >= 0 && bounds.right <= page.documentElement.clientWidth,
+    "Wi-Fi dialog overflows the narrow viewport");
+  check(dialog.scrollWidth <= dialog.clientWidth, "Wi-Fi dialog content overflows horizontally");
+  page.querySelector("#wifi-other").click();
+  check(network.getAttribute("aria-pressed") === "false", "manual entry did not clear network selection");
   const ssid = page.querySelector("#wifi-ssid");
   ssid.value = "browser-check";
   ssid.dispatchEvent(new Event("input", { bubbles: true }));
@@ -131,3 +145,24 @@ await run("Wi-Fi cancellation failure remains open and retry succeeds", async ()
   await waitFor(() => !dialog.open, "cancellation retry did not close the dialog");
   check(page.activeElement === radio, "focus was not restored after cancellation retry");
 });
+
+await run("replacement Control key cannot receive stale clipboard feedback", async () => {
+  const radio = page.querySelector("#settings-ble");
+  radio.focus();
+  radio.value = "configure";
+  radio.dispatchEvent(new Event("input", { bubbles: true }));
+  let complete;
+  const clipboard = { writeText: () => new Promise(resolve => { complete = resolve; }) };
+  Object.defineProperty(dashboard.contentWindow.navigator, "clipboard", { configurable: true, value: clipboard });
+  page.querySelector("#ble-generate").click();
+  page.querySelector("#ble-copy").click();
+  check(typeof complete === "function", "clipboard operation did not start");
+  page.querySelector("#ble-generate").click();
+  const message = page.querySelector("#ble-status").textContent;
+  complete();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  check(page.querySelector("#ble-status").textContent === message, "stale clipboard success replaced current feedback");
+  page.querySelector("#ble-cancel").click();
+});
+
+results.dataset.done = "true";

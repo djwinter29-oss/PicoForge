@@ -56,9 +56,11 @@ def _file_digests(*roots):
             if path.is_file() and path.stat().st_size and not skipped.intersection(path.parts)}
 
 
-def test_direct_shares_no_file_copies_with_other_hosts():
+def test_direct_shares_no_file_copies_with_other_hosts_except_branding_favicon():
     direct = _file_digests(ROOT / "host/direct")
     others = _file_digests(*(ROOT / "host" / name for name in ("web", "python", "dotnet")))
     copies = sorted(f"{direct[digest].relative_to(ROOT)} == {others[digest].relative_to(ROOT)}"
-                    for digest in direct.keys() & others.keys())
+                    for digest in direct.keys() & others.keys()
+                    if not (direct[digest] == ROOT / "host/direct/web/favicon.svg"
+                            and others[digest] == ROOT / "host/web/favicon.svg"))
     assert not copies, "Direct must own its code and assets instead of copying them"

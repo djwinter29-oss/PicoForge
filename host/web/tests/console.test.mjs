@@ -3,6 +3,7 @@ import test from "node:test";
 import { ConsoleTerminal, consoleKey } from "../js/console-terminal.mjs";
 import { consoleRequest } from "../js/console-api.mjs";
 import { renderWirelessStatus } from "../js/wireless-form.mjs";
+import { domFixture } from "./support/dom-fixture.mjs";
 
 test("console requests enforce deadlines and abort with their session", async context => {
   let observedSignal;
@@ -23,19 +24,9 @@ test("console requests enforce deadlines and abort with their session", async co
 });
 
 test("console disconnect aborts a hung poll and does not retry pending input", async () => {
-  const handlers = new Map();
+  const fixture = domFixture();
+  const { handlers, elements } = fixture;
   const windowHandlers = new Map();
-  const elements = new Map();
-  const element = selector => {
-    if (!elements.has(selector)) elements.set(selector, {
-      disabled: false,
-      addEventListener: (type, handler) => handlers.set(`${selector}:${type}`, handler),
-      setAttribute() {},
-      replaceChildren() {},
-      focus() {},
-    });
-    return elements.get(selector);
-  };
   const saved = {
     document: globalThis.document,
     window: globalThis.window,
@@ -46,11 +37,7 @@ test("console disconnect aborts a hung poll and does not retry pending input", a
   let inputRequests = 0;
   let connectSignal;
   let holdConnect = false;
-  globalThis.document = {
-    querySelector: element,
-    createElement: () => ({}),
-    createTextNode: text => ({ text }),
-  };
+  globalThis.document = fixture.document;
   globalThis.location = { search: "" };
   globalThis.window = {
     addEventListener: (type, handler) => windowHandlers.set(type, handler),
@@ -66,7 +53,7 @@ test("console disconnect aborts a hung poll and does not retry pending input", a
       }
       return { ok: true, json: async () => ({ session: "session-a" }) };
     }
-    if (options.method === "DELETE") return { ok: true, json: async () => ({}) };
+    if (options.method === "DELETE") return { ok: true, json: async () => ({ ok: true }) };
     if (options.method === "PUT") inputRequests++;
     pollSignal ??= options.signal;
     return new Promise((_, reject) => {

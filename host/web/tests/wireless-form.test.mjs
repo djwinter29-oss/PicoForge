@@ -1,6 +1,188 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bindWirelessForm, renderWirelessStatus } from "../js/wireless-form.mjs";
+import { domFixture } from "./support/dom-fixture.mjs";
+
+function formFixture(context, overrides = {}) {
+  const previous = globalThis.document;
+  const fixture = domFixture();
+  const el = id => fixture.el(`#${id}`);
+  el("settings-wifi").value = "1";
+  el("settings-ble").value = "0";
+  globalThis.document = fixture.document;
+  const form = bindWirelessForm({
+    ready: () => true, supported: () => true, load: async () => ({ ssid: "saved", tcp_cli_enabled: true }),
+    test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 600 }), cancelTest: async () => {},
+    ...overrides,
+  });
+  context.after(() => { form.reset(); globalThis.document = previous; });
+  return { form, el };
+}
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+test("clipboard feedback belongs to the current key draft and board lifecycle", async context => {
+  for (const change of ["current", "regenerate", "disable", "saved", "failed-save", "reset"]) {
+    for (const succeeds of [true, false]) {
+      await context.test(`${change}: late clipboard ${succeeds ? "success" : "failure"}`, async context => {
+        const pending = deferred();
+        const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+        const copied = [];
+        Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+          clipboard: { writeText: text => { copied.push(text); return pending.promise; } },
+        } });
+        context.after(() => {
+          if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+          else delete globalThis.navigator;
+        });
+        const { form, el } = formFixture(context);
+        await form.load();
+        await el("ble-generate").fire("click");
+        const copy = el("ble-copy").fire("click");
+        assert.equal(copied.length, 1);
+        if (change === "regenerate") {
+          await el("ble-generate").fire("click");
+          assert.notEqual(el("ble-secret").value, copied[0]);
+        } else if (change === "disable") {
+          el("settings-ble").value = "0";
+          await el("settings-ble").fire("input");
+        } else if (change === "saved") form.finish({ ssid: "saved", ble_key_configured: true });
+        else if (change === "failed-save") form.finish(null, "Save failed");
+        else if (change === "reset") form.reset();
+        const feedback = el("ble-status").textContent;
+        if (succeeds) pending.resolve();
+        else pending.reject(new Error("clipboard unavailable"));
+        await copy;
+        if (change === "current") {
+          assert.match(el("ble-status").textContent, succeeds ? /Key copied/ : /Could not copy key: clipboard unavailable/);
+        } else assert.equal(el("ble-status").textContent, feedback);
+        if (change === "failed-save") {
+          assert.equal(feedback, "Save failed");
+          assert.equal(form.canSave(), false);
+          assert.throws(() => form.request(), /Generate a replacement/);
+          el("settings-ble").value = "0";
+          await el("settings-ble").fire("input");
+          assert.equal(form.canSave(), true, "disabling releases failed-key recovery");
+        }
+      });
+    }
+  }
+});
+
+test("failed replacement Wi-Fi testing invalidates the previous stage and blocks Save until known cleanup", async context => {
+  let fails = false;
+  const { form, el } = formFixture(context, {
+    test: async () => {
+      if (fails) throw new Error("access point refused");
+      return { ipv4: "192.0.2.1", remaining_seconds: 600 };
+    },
+  });
+  await form.load();
+  await el("wifi-connect").fire("click");
+  assert.equal(form.canSave(), true);
+  fails = true;
+  await el("wifi-connect").fire("click");
+  assert.equal(form.dirty(), true);
+  assert.equal(form.canSave(), false);
+  assert.equal(form.stageValid(), false);
+  assert.throws(() => form.request(), /Test the connection again or clear/);
+  await el("wifi-cancel").fire("click");
+  assert.equal(form.canSave(), true);
+  assert.equal(form.dirty(), false);
+});
+
+test("reset fences wireless continuations, including errors", async context => {
+  for (const operation of ["scan", "cancel", "test"]) {
+    for (const succeeds of [true, false]) {
+      await context.test(`${operation}: late ${succeeds ? "success" : "failure"}`, async context => {
+        const pending = deferred();
+        const { form, el } = formFixture(context, {
+          scan: () => pending.promise, cancelTest: () => pending.promise,
+          ...(operation === "test" ? { test: () => pending.promise } : {}),
+        });
+        await form.load();
+        if (operation === "cancel") await el("wifi-connect").fire("click");
+        const work = el({ scan: "wifi-scan", cancel: "wifi-cancel", test: "wifi-connect" }[operation]).fire("click");
+        form.reset();
+        await form.load();
+        el("wifi-status").textContent = "Current board";
+        el("wifi-dialog").showModal();
+        if (succeeds) pending.resolve(operation === "scan" ? [{ ssid: "old", ssid_hex: "6f6c64" }]
+          : { ipv4: "192.0.2.1", remaining_seconds: 600 });
+        else pending.reject(new Error("old board error"));
+        await work;
+        assert.equal(el("wifi-status").textContent, "Current board");
+        assert.equal(el("wifi-networks").children.length, 0);
+        assert.equal(el("wifi-dialog").open, true);
+        assert.equal(form.operationBusy(), false);
+        assert.equal(form.canSave(), true);
+      });
+    }
+  }
+});
+
+test("reset permits loading a new board before an old load settles", async context => {
+  const old = deferred();
+  const current = deferred();
+  let calls = 0;
+  const { form, el } = formFixture(context, { load: () => ++calls === 1 ? old.promise : current.promise });
+  const first = form.load();
+  form.reset();
+  const second = form.load();
+  assert.equal(calls, 2);
+  old.resolve({ ssid: "old board", tcp_cli_enabled: false });
+  await first;
+  assert.equal(el("wifi-ssid").value, "");
+  await form.load();
+  assert.equal(calls, 2, "old completion cannot unlock an in-flight load for the current board");
+  current.resolve({ ssid: "current board", tcp_cli_enabled: true });
+  await second;
+  assert.equal(el("wifi-ssid").value, "current board");
+});
+
+test("Wi-Fi expiry notifies Save eligibility once and stops its countdown", async context => {
+  let now = 0, changes = 0;
+  const ticks = new Map();
+  let timer = 0;
+  context.mock.method(Date, "now", () => now);
+  context.mock.method(globalThis, "setInterval", callback => { ticks.set(++timer, callback); return timer; });
+  context.mock.method(globalThis, "clearInterval", id => ticks.delete(id));
+  const { form, el } = formFixture(context, {
+    changed: () => changes++, test: async () => ({ ipv4: "192.0.2.1", remaining_seconds: 1 }),
+  });
+  await form.load();
+  await el("wifi-connect").fire("click");
+  assert.equal(form.canSave(), true);
+  const before = changes;
+  now = 1000;
+  for (const tick of ticks.values()) tick();
+  assert.equal(form.canSave(), false);
+  assert.equal(changes, before + 1);
+  assert.equal(ticks.size, 0);
+});
+
+test("scanned network buttons expose raw-SSID selection and clear it for manual entry", async context => {
+  const { form, el } = formFixture(context, {
+    scan: async () => [{ ssid: "one", ssid_hex: "6f6e65" }, { ssid: "two", ssid_hex: "74776f" }],
+  });
+  await form.load();
+  await el("wifi-scan").fire("click");
+  const [one, two] = el("wifi-networks").children;
+  await one.fire("click");
+  assert.equal(one.attributes["aria-pressed"], "true");
+  assert.equal(two.attributes["aria-pressed"], "false");
+  await two.fire("click");
+  assert.equal(one.attributes["aria-pressed"], "false");
+  assert.equal(two.attributes["aria-pressed"], "true");
+  await el("wifi-other").fire("click");
+  assert.equal(two.attributes["aria-pressed"], "false");
+  assert.equal(el("wifi-ssid").value, "");
+  assert.equal(form.canSave(), false);
+});
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
   const previous = globalThis.document;
@@ -132,7 +314,8 @@ test("scanned opaque SSIDs retain their bytes through testing and saving; manual
   const previous = globalThis.document;
   const elements = new Map();
   const node = () => ({
-    value: "", children: [], handlers: {}, options: ["0", "1", "configure"].map(value => ({ value })),
+    value: "", children: [], handlers: {}, dataset: {}, setAttribute() {},
+    options: ["0", "1", "configure"].map(value => ({ value })),
     label: { toggleAttribute() {} }, closest() { return this.label; },
     addEventListener(event, callback) { this.handlers[event] = callback; },
     replaceChildren(...children) { this.children = children; },

@@ -52,12 +52,15 @@ export function deriveControlsViewModel(state, ui, environment) {
   const { storageReady } = eligibility;
   const reason = operation => ui.formBusy ? "Finish the wireless operation first."
     : describe(canRun(state, operation, eligibility).reason);
+  const sharedCredentialReason = ui.wirelessDirty && state.msc?.enabled
+    ? "Wireless changes cannot be saved while USB storage is shared. Stop host file activity, safely eject, "
+      + "then use Return to Pico before saving." : null;
   const reasons = { "led-control": reason("led"), "msc-control": reason("msc"), "settings-reboot": reason("reboot"),
-    "settings-save": ui.wirelessSaveBlockReason || reason("settings") };
+    "settings-save": ui.wirelessSaveBlockReason || reason("settings") || sharedCredentialReason };
   const bleLinked = bluetooth && (state.connected || state.reconnecting);
   const usbUnsupported = !environment.secure || !environment.hid;
   const bleUnsupported = !environment.secure || !environment.ble;
-  const settingsNote = ui.settingsMessage || (!state.connected ? "Connect to read the saved settings."
+  const settingsNote = sharedCredentialReason || ui.settingsMessage || (!state.connected ? "Connect to read the saved settings."
     : !state.settings_supported ? "Persistent settings save is unavailable."
       : bluetooth && state.msc?.enabled
         ? "USB storage owns the card; settings and reboot require firmware-owned storage."
@@ -83,8 +86,7 @@ export function deriveControlsViewModel(state, ui, environment) {
       "bluetooth-connection-close": Boolean(state.busy),
       "led-control": Boolean(reasons["led-control"]),
       "msc-control": Boolean(reasons["msc-control"]),
-      "settings-save": Boolean(reasons["settings-save"]) || !ui.settingsDirty && !ui.wirelessDirty
-        || ui.wirelessDirty && Boolean(state.msc?.enabled),
+      "settings-save": Boolean(reasons["settings-save"]) || !ui.settingsDirty && !ui.wirelessDirty,
       "settings-reboot": Boolean(reasons["settings-reboot"]),
     },
     text: {

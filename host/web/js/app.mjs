@@ -1,5 +1,5 @@
 import { normalizeStatus, renderStatus as renderDashboardStatus, renderSelfTest, storageSpeed } from "./dashboard.mjs";
-import { bindWirelessForm } from "./wireless-form.mjs?v=18";
+import { bindWirelessForm } from "./wireless-form.mjs?v=19";
 
 const ledControl = document.querySelector("#led-control");
 const mscControl = document.querySelector("#msc-control");
@@ -22,6 +22,7 @@ const fetchWithDeadline = (url, options, timeoutMs) =>
   fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 let requestInProgress = false;
 let currentSnapshot = null;
+let disconnectedUi = false;
 let selfTestPendingSequence = null;
 let selfTestRequestInProgress = false;
 let ledRequestInProgress = false;
@@ -129,16 +130,16 @@ function operationState(snapshot = currentSnapshot) {
     mscPending,
     selfTestPending,
     storageCommandPending: mscPending || selfTestPending || Boolean(snapshot?.msc?.transition_pending),
-    busy: Boolean(settingsRequestInProgress || wirelessBusy || snapshot?.reboot_pending
+    busy: Boolean(commandResyncInProgress || settingsRequestInProgress || wirelessBusy || snapshot?.reboot_pending
       || outcomeUncertain || statusReadError !== null),
     settingsBusy,
-    canSetLed: !settingsRequestInProgress && !wirelessBusy && !snapshot?.reboot_pending && !outcomeUncertain
+    canSetLed: !commandResyncInProgress && !settingsRequestInProgress && !wirelessBusy && !snapshot?.reboot_pending && !outcomeUncertain
       && Boolean(snapshot?.connected && snapshot.runtime?.led_available)
       && !ledRequestInProgress && statusReadError === null,
-    canChangeMsc: !settingsRequestInProgress && !wirelessBusy && !snapshot?.reboot_pending
+    canChangeMsc: !commandResyncInProgress && !settingsRequestInProgress && !wirelessBusy && !snapshot?.reboot_pending
       && !(mscPending || selfTestPending || Boolean(snapshot?.msc?.transition_pending)) && !outcomeUncertain
       && Boolean(snapshot?.connected && snapshot.msc) && statusReadError === null,
-    boardSelectionBusy: scanningBoards || settingsRequestInProgress || wirelessForm.operationBusy()
+    boardSelectionBusy: commandResyncInProgress || scanningBoards || settingsRequestInProgress || wirelessBusy
       || ledRequestInProgress || mscRequestInProgress || selfTestRequestInProgress,
   };
 }
@@ -172,14 +173,17 @@ const wirelessForm = bindWirelessForm({
       }
       throw error;
     } finally {
-      wirelessProgress = null;
+      if (version === selectionVersion) wirelessProgress = null;
     }
   },
   cancelTest: async () => {
-    const response = await fetchWithDeadline(boardUrl("/api/wireless/cancel"), { method: "POST" }, 10000);
-    try { return await responseJson(response, `Cancel returned HTTP ${response.status}`); }
+    const version = selectionVersion;
+    try {
+      const response = await fetchWithDeadline(boardUrl("/api/wireless/cancel"), { method: "POST" }, 10000);
+      return await responseJson(response, `Cancel returned HTTP ${response.status}`);
+    }
     catch (error) {
-      if (hasUnknownOutcome(error)) uncertainCommand = neverSettles;
+      if (version === selectionVersion && hasUnknownOutcome(error)) uncertainCommand = neverSettles;
       throw error;
     }
   },
@@ -230,7 +234,6 @@ async function saveCombinedSettings(settings) {
     }
     wirelessForm.finish(null, error.message);
     throw error;
-    throw error;
   }
 }
 
@@ -252,15 +255,23 @@ function updateBoardSelectionControls() {
   rescanBoardsButton.disabled = boardSelectionBusy();
 }
 
+function updateCommandControls() {
+  const operations = operationState();
+  ledControl.disabled = !operations.canSetLed;
+  mscControl.disabled = !operations.canChangeMsc;
+}
+
 function renderStatus(snapshot) {
-  const operations = operationState(snapshot);
-  if (!snapshot.connected) {
+  if (snapshot.connected) disconnectedUi = false;
+  else if (!disconnectedUi) {
+    disconnectedUi = true;
     shareDialog.close();
     wirelessForm.reset();
     settingsDirty = false;
     settingsStorageDirty = false;
     settingsMessage = null;
   }
+  const operations = operationState(snapshot);
   updateBoardSelectionControls();
   renderDashboardStatus({
     ...snapshot,
@@ -271,6 +282,7 @@ function renderStatus(snapshot) {
     settings_dirty: settingsDirty,
     wireless_dirty: wirelessForm.dirty(),
     wireless_stage_valid: wirelessForm.stageValid(),
+    wireless_save_block_reason: wirelessForm.saveBlockReason(),
     settings_storage_dirty: settingsStorageDirty,
     settings_message: settingsMessage ?? snapshot.settings_message,
     msc_command_pending: operations.mscPending,
@@ -278,6 +290,8 @@ function renderStatus(snapshot) {
     status_read_error: statusReadError !== null,
     status_reading: requestInProgress,
     command_resyncing: commandResyncInProgress,
+    can_set_led: operations.canSetLed,
+    can_change_msc: operations.canChangeMsc,
   });
   wirelessForm.update();
   if (wirelessReady() && snapshot.wireless) {
@@ -287,6 +301,7 @@ function renderStatus(snapshot) {
 
 async function resyncCommandOutcome() {
   if (!currentSnapshot?.command_outcome_uncertain || commandResyncInProgress) return;
+  const version = selectionVersion;
   commandResyncInProgress = true;
   renderStatus(currentSnapshot);
   try {
@@ -296,6 +311,7 @@ async function resyncCommandOutcome() {
       body: JSON.stringify({ confirm: true }),
     }, 10000);
     const result = await responseJson(response, `Command re-sync returned HTTP ${response.status}`);
+    if (version !== selectionVersion) return;
     uncertainCommand = null;
     currentSnapshot.command_outcome_uncertain = false;
     currentSnapshot.outcome_uncertain = false;
@@ -305,10 +321,11 @@ async function resyncCommandOutcome() {
     saveBoardCommandState();
     await updateStatus();
   } catch (error) {
-    if (currentSnapshot) currentSnapshot.error = error.message;
+    if (version === selectionVersion && currentSnapshot) currentSnapshot.error = error.message;
   } finally {
     commandResyncInProgress = false;
-    if (currentSnapshot) renderStatus(currentSnapshot);
+    updateBoardSelectionControls();
+    if (version === selectionVersion && currentSnapshot) renderStatus(currentSnapshot);
   }
 }
 
@@ -360,9 +377,7 @@ async function updateStatus() {
     requestInProgress = false;
     mscStatusRefresh.disabled = statusReadError !== null;
     updateBoardSelectionControls();
-    const operations = operationState();
-    ledControl.disabled = !operations.canSetLed;
-    mscControl.disabled = !operations.canChangeMsc;
+    updateCommandControls();
     if (version !== selectionVersion) void updateStatus();
   }
 }
@@ -383,6 +398,7 @@ function selectBoard(boardId) {
   const selected = knownBoards.find(board => board.id === selectedBoard);
   selectedBoardLabel = selected ? boardLabel(selected) : selectedBoardLabel;
   selectionVersion++;
+  disconnectedUi = false;
   currentSnapshot = null;
   settingsDirty = false;
   settingsStorageDirty = false;
@@ -428,6 +444,7 @@ async function rescanBoards() {
     boardSelect.value = selectedBoard || "";
     if (previousBoard !== selectedBoard) {
       selectionVersion++;
+      disconnectedUi = false;
       currentSnapshot = null;
       settingsDirty = false;
       settingsStorageDirty = false;
@@ -511,10 +528,6 @@ async function setMsc(confirmReturn = false, confirmShare = false) {
     mscRequestInProgress = false;
     if (version === selectionVersion) {
       if (currentSnapshot) renderStatus(currentSnapshot);
-      mscControl.disabled = !currentSnapshot?.connected || !currentSnapshot?.msc
-        || mscPendingEnabled !== null || Boolean(currentSnapshot.msc.transition_pending)
-        || Boolean(currentSnapshot.self_test?.active)
-        || selfTestPendingSequence !== null;
       if (mscPendingEnabled !== null) void updateStatus();
     } else void updateStatus();
   }
@@ -551,9 +564,7 @@ async function setLed() {
   } finally {
     ledRequestInProgress = false;
     if (version === selectionVersion) {
-      ledControl.disabled = settingsRequestInProgress || wirelessForm.operationBusy()
-        || currentSnapshot?.reboot_pending || currentSnapshot?.outcome_uncertain
-        || !currentSnapshot?.connected || !currentSnapshot?.runtime?.led_available;
+      if (currentSnapshot) renderStatus(currentSnapshot);
       if (uncertainCommand) void updateStatus();
     } else void updateStatus();
   }
