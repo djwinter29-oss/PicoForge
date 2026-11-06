@@ -1,4 +1,4 @@
-import { bindWirelessForm } from "../js/ui/sections/wireless-form.mjs";
+import { bindWirelessForm } from "../web/js/ui/sections/wireless-form.mjs";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {
@@ -27,7 +27,7 @@ const run = async (name, action) => {
 const dashboard = document.querySelector("#dashboard");
 dashboard.style.width = "1000px";
 dashboard.style.height = "800px";
-dashboard.src = "../index.html";
+dashboard.src = "../web/index.html";
 await new Promise((resolve, reject) => {
   dashboard.addEventListener("load", resolve, { once: true });
   dashboard.addEventListener("error", reject, { once: true });

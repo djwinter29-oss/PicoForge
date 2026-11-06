@@ -18,8 +18,8 @@ from urllib.parse import urlsplit
 
 
 _SOURCE_ROOT = Path(__file__).resolve().parent
-_DEFAULT_WEB_ROOT = _SOURCE_ROOT if (_SOURCE_ROOT / "index.html").is_file() \
-    else Path(__file__).resolve().parents[2] / "host" / "direct"
+_DEFAULT_WEB_ROOT = _SOURCE_ROOT / "web" if (_SOURCE_ROOT / "web" / "index.html").is_file() \
+    else Path(__file__).resolve().parents[2] / "host" / "direct" / "web"
 
 
 class DirectTerminal:

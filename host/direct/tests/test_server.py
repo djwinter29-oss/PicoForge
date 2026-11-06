@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from host.direct.server import DirectHandler, DirectTerminal
+from host.direct.server import DirectHandler, DirectTerminal, _DEFAULT_WEB_ROOT
 
 
 class DirectTerminalTests(unittest.TestCase):
@@ -26,6 +26,11 @@ class DirectTerminalTests(unittest.TestCase):
             self.closed = True
 
     CHALLENGE = b"PicoForge AUTH 000102030405060708090a0b0c0d0e0f 0001020304050607\r\n"
+
+    def test_default_web_root_contains_only_browser_assets(self):
+        self.assertEqual(_DEFAULT_WEB_ROOT.name, "web")
+        self.assertTrue((_DEFAULT_WEB_ROOT / "index.html").is_file())
+        self.assertFalse((_DEFAULT_WEB_ROOT / "server.py").exists())
 
     def test_open_rejects_non_lan_addresses(self):
         with self.assertRaisesRegex(ValueError, "private LAN"):

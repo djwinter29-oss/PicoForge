@@ -363,7 +363,7 @@ force a save, or change USB storage ownership.
 `bluetooth.c` owns BLE state and callbacks; `bluetooth_profile.gatt` defines the attributes. `wireless_auth.c` owns the
 key and proofs. `usb_hid.c` dispatches BLE controls through `pf_hid_ble_control` and shared admission helpers. BLE work
 runs on the shared wireless owner task (see [execution and storage
-safety](../development/wireless-integration.md#execution-and-storage-safety)). The Direct client is in `host/direct/js`;
+safety](../development/wireless-integration.md#execution-and-storage-safety)). The Direct client is in `host/direct/web/js`;
 Python and .NET hosts do not use BLE. The current controller event handler consumes the legacy LE Connection Complete
 event emitted by CYW43; add Enhanced Connection Complete handling if controller privacy or a controller that emits
 enhanced events is introduced.

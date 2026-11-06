@@ -4,10 +4,10 @@ import {
   decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
   decodeControlResult, buildControlRequest, matchesPicoForge, encodeSettings, decodeSettings,
-} from "../js/protocol/codec.mjs";
-import { OP } from "../js/protocol/constants.mjs";
-import { BoardSession } from "../js/board/session.mjs";
-import { HidTransport } from "../js/transport/hid.mjs";
+} from "../web/js/protocol/codec.mjs";
+import { OP } from "../web/js/protocol/constants.mjs";
+import { BoardSession } from "../web/js/board/session.mjs";
+import { HidTransport } from "../web/js/transport/hid.mjs";
 import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit, attachDevice }
   from "./support/fixtures.mjs";
 

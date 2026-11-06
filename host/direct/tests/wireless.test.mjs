@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { BleTransport, BLE_SERVICE } from "../js/transport/ble.mjs";
-import { HidTransport } from "../js/transport/hid.mjs";
-import { BoardSession } from "../js/board/session.mjs";
-import { buildControlRequest, decodeControlResult } from "../js/protocol/codec.mjs";
+import { BleTransport, BLE_SERVICE } from "../web/js/transport/ble.mjs";
+import { HidTransport } from "../web/js/transport/hid.mjs";
+import { BoardSession } from "../web/js/board/session.mjs";
+import { buildControlRequest, decodeControlResult } from "../web/js/protocol/codec.mjs";
 import {
   cancelWireless, readWireless,
   saveWireless, scanWireless, testWireless, wirelessPollInterval,
-} from "../js/board/workflows/wireless.mjs";
-import { decodeWireless, displaySsid, ssidBytes } from "../js/protocol/codec.mjs";
+} from "../web/js/board/workflows/wireless.mjs";
+import { decodeWireless, displaySsid, ssidBytes } from "../web/js/protocol/codec.mjs";
 import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result, attachDevice }
   from "./support/fixtures.mjs";
 

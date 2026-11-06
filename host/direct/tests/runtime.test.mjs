@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createTimerScope, wait, withTimeout } from "../js/timers.mjs";
+import { createTimerScope, wait, withTimeout } from "../web/js/timers.mjs";
 
 test("page timer scopes cancel child work when an owner is disposed", async () => {
   const page = createTimerScope();

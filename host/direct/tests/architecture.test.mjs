@@ -4,7 +4,7 @@ import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-const root = new URL("../js/", import.meta.url);
+const root = new URL("../web/js/", import.meta.url);
 const paths = readdirSync(root, { recursive: true }).filter(path => path.endsWith(".mjs"))
   .map(path => path.replaceAll("\\", "/"));
 const sources = new Map(paths.map(path => [path, readFileSync(new URL(path, root), "utf8")]));

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDashboardView } from "../js/ui/dashboard-view.mjs";
-import { renderSelfTest } from "../js/ui/sections/self-test.mjs";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/protocol/codec.mjs";
+import { createDashboardView } from "../web/js/ui/dashboard-view.mjs";
+import { renderSelfTest } from "../web/js/ui/sections/self-test.mjs";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../web/js/protocol/codec.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 let renderStatus;

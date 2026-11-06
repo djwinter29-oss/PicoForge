@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { BoardSession } from "../js/board/session.mjs";
-import { BleTransport } from "../js/transport/ble.mjs";
-import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../js/protocol/codec.mjs";
+import { BoardSession } from "../web/js/board/session.mjs";
+import { BleTransport } from "../web/js/transport/ble.mjs";
+import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../web/js/protocol/codec.mjs";
 import { identity, config, selfTest } from "./support/fixtures.mjs";
 
 const memorySessionStorage = () => {
@@ -58,7 +58,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   };
   BoardSession.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
   try {
-    await import(`../js/app.mjs?test=${Date.now()}`);
+    await import(`../web/js/app.mjs?test=${Date.now()}`);
     await el("#usb-open").click();
     await el("#usb-connect").click();
     assert.equal(el("#settings-storage").value, "1");
@@ -325,7 +325,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     return Uint8Array.from({ length: 16 }, (_, index) => index);
   };
   try {
-    await import(`../js/app.mjs?connections=${Date.now()}`);
+    await import(`../web/js/app.mjs?connections=${Date.now()}`);
     el("#usb-open").click(); await null;
     assert.equal(el("#usb-connection-dialog").open, true);
     el("#usb-connection-close").click();

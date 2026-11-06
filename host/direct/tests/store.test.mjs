@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDashboardStore } from "../js/state/store.mjs";
-import { dashboardReducer } from "../js/state/reducer.mjs";
+import { createDashboardStore } from "../web/js/state/store.mjs";
+import { dashboardReducer } from "../web/js/state/reducer.mjs";
 
 test("dashboard reducer returns immutable snapshots and ignores unchanged patches", () => {
   const first = { connected: false, settings_dirty: false };

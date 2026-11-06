@@ -53,10 +53,10 @@ test("Direct console uses the connected dashboard for authentication without ask
   };
   const tick = () => new Promise(resolve => setImmediate(resolve));
   try {
-    await import(`../js/ui/console.mjs?test=${Date.now()}`);
+    await import(`../web/js/ui/console.mjs?test=${Date.now()}`);
     assert.equal(element("#console-target").textContent, "192.168.66.87:2323");
     assert.equal(elements.has("#console-auth-key"), false);
-    assert.doesNotMatch(readFileSync(new URL("../console.html", import.meta.url), "utf8"), /console-auth-key/);
+    assert.doesNotMatch(readFileSync(new URL("../web/console.html", import.meta.url), "utf8"), /console-auth-key/);
     handlers.get("#connect:click")();
     await tick();
     assert.deepEqual(calls[0], ["open", { ipv4: "192.168.66.87" }]);

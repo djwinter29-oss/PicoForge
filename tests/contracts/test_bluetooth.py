@@ -14,7 +14,7 @@ HANDLES = {"0001": 3, "0002": 5, "0003": 7, "000a": 9, "000b": 11, "0014": 13, "
 
 def test_ble_v2_profile_and_direct_client_share_uuid_layout():
     profile = (ROOT / "firmware/src/app/wireless/bluetooth/bluetooth_profile.gatt").read_text()
-    direct = (ROOT / "host/direct/js/transport/ble.mjs").read_text()
+    direct = (ROOT / "host/direct/web/js/transport/ble.mjs").read_text()
     service_uuid = "50fc0000-7c91-4d70-8b32-6e856443f502"
     assert f"PRIMARY_SERVICE, {service_uuid}" in profile
     assert service_uuid in direct

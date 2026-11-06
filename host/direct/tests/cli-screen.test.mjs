@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CliScreen, cliInputForKey } from "../js/ui/cli-screen.mjs";
+import { CliScreen, cliInputForKey } from "../web/js/ui/cli-screen.mjs";
 
 test("CLI screen applies the Embedded CLI line-editing escapes", () => {
   const screen = new CliScreen();

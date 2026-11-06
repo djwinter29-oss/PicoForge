@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveDashboardViewModel } from "../js/ui/sections/status-model.mjs";
-import { deriveStorageViewModel } from "../js/ui/sections/storage.mjs";
-import { deriveSelfTestViewModel } from "../js/ui/sections/self-test.mjs";
+import { deriveDashboardViewModel } from "../web/js/ui/sections/status-model.mjs";
+import { deriveStorageViewModel } from "../web/js/ui/sections/storage.mjs";
+import { deriveSelfTestViewModel } from "../web/js/ui/sections/self-test.mjs";
 
 test("dashboard view model derives connection messaging, readiness, and same-origin console URL", () => {
   const disconnected = deriveDashboardViewModel({});

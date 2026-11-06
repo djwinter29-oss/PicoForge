@@ -179,7 +179,7 @@ def test_unreleased_host_versions_are_debug():
     assert '<Version>0.0.0-debug</Version>' in (ROOT / "host/dotnet/PicoForge/PicoForge.csproj").read_text()
     assert '__version__ = "0.0.0-debug"' in (ROOT / "host/python/src/picoforge/__init__.py").read_text()
     for page in ("index.html", "console.html"):
-        assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct" / page).read_text()
+        assert "Direct · App v0.0.0-debug<" in (ROOT / "host/direct/web" / page).read_text()
 
 
 def test_python_release_stamps_metadata_and_app_version(tmp_path):
@@ -206,10 +206,10 @@ def test_python_release_stamps_metadata_and_app_version(tmp_path):
 def test_direct_release_stamps_both_app_headers(tmp_path):
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     script = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('sed -i "s/App v'))
-    output = tmp_path / "build/direct"
+    output = tmp_path / "build/direct/web"
     output.mkdir(parents=True)
     for page in ("index.html", "console.html"):
-        (output / page).write_bytes((ROOT / "host/direct" / page).read_bytes())
+        (output / page).write_bytes((ROOT / "host/direct/web" / page).read_bytes())
     subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path,
                    env={**os.environ, "VERSION": "1.2.3"}, check=True)
     for page in ("index.html", "console.html"):

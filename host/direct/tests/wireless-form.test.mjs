@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm } from "../js/ui/sections/wireless-form.mjs";
-import { renderWirelessStatus } from "../js/ui/sections/wireless.mjs";
+import { bindWirelessForm } from "../web/js/ui/sections/wireless-form.mjs";
+import { renderWirelessStatus } from "../web/js/ui/sections/wireless.mjs";
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
   const previous = globalThis.document;

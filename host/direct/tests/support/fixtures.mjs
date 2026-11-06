@@ -1,5 +1,5 @@
-import { BoardSession } from "../../js/board/session.mjs";
-import { HidTransport } from "../../js/transport/hid.mjs";
+import { BoardSession } from "../../web/js/board/session.mjs";
+import { HidTransport } from "../../web/js/transport/hid.mjs";
 
 export function identity(capabilities = 1 | 2 | 4 | 16 | 32) {
   const bytes = new Uint8Array(26);

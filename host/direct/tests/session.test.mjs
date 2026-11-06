@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BoardSession } from "../js/board/session.mjs";
-import { OP } from "../js/protocol/constants.mjs";
+import { BoardSession } from "../web/js/board/session.mjs";
+import { OP } from "../web/js/protocol/constants.mjs";
 import { config, fakeConnection, identity, result, telemetry } from "./support/fixtures.mjs";
 
 test("the same board session consumes either peer transport without HID-shaped device APIs", async () => {

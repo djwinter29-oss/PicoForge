@@ -40,7 +40,7 @@ def test_native_hosts_do_not_package_or_serve_direct_assets():
         for dependency in ("../direct", "/direct/", '"direct"', "'direct'", "wireless_ui"):
             assert dependency not in source
     assert (ROOT / "host/web/js/wireless-form.mjs").is_file()
-    assert (ROOT / "host/direct/js/ui/sections/wireless-form.mjs").is_file()
+    assert (ROOT / "host/direct/web/js/ui/sections/wireless-form.mjs").is_file()
 
 
 def test_direct_bridge_imports_nothing_from_native_hosts():

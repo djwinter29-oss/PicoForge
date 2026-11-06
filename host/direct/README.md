@@ -39,29 +39,33 @@ The browser loads plain ES modules directly; there is no bundle or build step:
 
 ```text
 host/direct/
-  index.html, console.html, server.py
-  js/
-    app.mjs                         composition and page lifetime only
-    protocol/
-      constants.mjs                 named firmware values
-      codec.mjs                     pure validation, encoding and decoding
-    transport/
-      transport.mjs                 common Transport contract
-      hid.mjs, ble.mjs              browser I/O, framing and link authentication
-    board/
-      session.mjs                   single-flight command queue, polling and freshness
-      journal.mjs                   allowlisted same-tab recovery records
-      workflows/wireless.mjs         Wi-Fi staging, scan, test, cancellation and save
-    state/
-      store.mjs, reducer.mjs         one dashboard snapshot and subscriptions
-      selectors.mjs                 the single operation-eligibility selector
-    ui/
-      dashboard.mjs                 event wiring and coalesced rendering
-      dashboard-view.mjs            section composition
-      sections/*.mjs                pure view models followed by thin DOM updates
-      dom.mjs                       required element lookup cached per document
-      console*.mjs, cli-screen.mjs   Direct console and popup authentication
-    timers.mjs                      abortable waits and page-owned timer scopes
+  server.py
+  web/
+    index.html, console.html, favicon.svg
+    css/
+      direct.css, console.css
+    js/
+      app.mjs                       composition and page lifetime only
+      protocol/
+        constants.mjs               named firmware values
+        codec.mjs                   pure validation, encoding and decoding
+      transport/
+        transport.mjs               common Transport contract
+        hid.mjs, ble.mjs            browser I/O, framing and link authentication
+      board/
+        session.mjs                 single-flight command queue, polling and freshness
+        journal.mjs                 allowlisted same-tab recovery records
+        workflows/wireless.mjs      Wi-Fi staging, scan, test, cancellation and save
+      state/
+        store.mjs, reducer.mjs       one dashboard snapshot and subscriptions
+        selectors.mjs               the single operation-eligibility selector
+      ui/
+        dashboard.mjs               event wiring and coalesced rendering
+        dashboard-view.mjs          section composition
+        sections/*.mjs              pure view models followed by thin DOM updates
+        dom.mjs                     required element lookup cached per document
+        console*.mjs, cli-screen.mjs Direct console and popup authentication
+      timers.mjs                    abortable waits and page-owned timer scopes
 ```
 
 Protocol and state modules do not access the DOM or browser device APIs. HID and BLE are peer transports, each
@@ -168,7 +172,7 @@ instead of clicking Start again. Cleanup leaves the filesystem mounted.
 ```sh
 node --test host/direct/tests/*.test.mjs
 python3 -m unittest discover -s host/direct/tests -p 'test_*.py'
-npx --yes --package typescript@5.9.3 tsc --project host/direct/js/tsconfig.json
+npx --yes --package typescript@5.9.3 tsc --project host/direct/web/js/tsconfig.json
 ```
 
 The no-emit JSDoc check covers protocol/state modules, the transport contract and its implementations, timer helpers,

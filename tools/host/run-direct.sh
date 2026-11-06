@@ -3,7 +3,8 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
-WEB_ROOT="$REPO_ROOT/host/direct"
+DIRECT_ROOT="$REPO_ROOT/host/direct"
+WEB_ROOT="$DIRECT_ROOT/web"
 PYTHON="${PYTHON:-python3}"
 BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
 PORT="${PORT:-8000}"
@@ -56,5 +57,5 @@ if [ ! -f "$WEB_ROOT/index.html" ]; then
     exit 1
 fi
 
-exec "$PYTHON" "$WEB_ROOT/server.py" \
+exec "$PYTHON" "$DIRECT_ROOT/server.py" \
     --directory "$WEB_ROOT" --bind "$BIND_ADDRESS" --port "$PORT"
