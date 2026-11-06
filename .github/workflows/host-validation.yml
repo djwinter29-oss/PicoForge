@@ -45,10 +45,14 @@ jobs:
         if: matrix.python == '3.12'
         run: npx --yes --package typescript@5.9.3 tsc --project host/direct/web/js/tsconfig.json
 
-      - name: Install Direct browser test dependencies
+      - name: Check shared JavaScript boundaries
+        if: matrix.python == '3.12'
+        run: npx --yes --package typescript@5.9.3 tsc --project host/web/tsconfig.json
+
+      - name: Install dashboard browser test dependencies
         if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
         run: |
-          python -m pip install --disable-pip-version-check --no-input -r host/direct/tests/browser/requirements.txt
+          python -m pip install --disable-pip-version-check --no-input -r host/direct/tests/browser/requirements.txt -r host/web/tests/browser/requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Run Direct browser checks
@@ -80,6 +84,10 @@ jobs:
           PYTHON: python
         shell: bash
         run: bash tools/validation/test-host.sh
+
+      - name: Run shared browser checks through Python and .NET hosting
+        if: matrix.os == 'ubuntu-24.04' && matrix.python == '3.12'
+        run: python host/web/tests/browser/run.py
 
       - name: Test minimum Python version
         if: matrix.python == '3.10'

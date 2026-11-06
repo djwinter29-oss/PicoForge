@@ -39,7 +39,7 @@ def _limit_console_request() -> None:
 def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None = None) -> Flask:
     """Create a testable status app; hardware monitoring starts only by default."""
     installed = Path(__file__).resolve().parents[1] / "web"
-    root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[4] / "web")
+    root = web_root or (installed if installed.is_dir() else Path(__file__).resolve().parents[4] / "web/src")
     boards = dashboard if dashboard is not None else DashboardBoards()
     console = ConsoleBridge()
     app = Flask(__name__, template_folder=str(root), static_folder=None)

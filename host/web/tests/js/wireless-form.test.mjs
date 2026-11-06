@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bindWirelessForm, renderWirelessStatus } from "../js/wireless-form.mjs";
-import { domFixture } from "./support/dom-fixture.mjs";
+import { bindWirelessForm, renderWirelessStatus } from "../../src/js/wireless-form.mjs";
+import { domFixture } from "../support/dom-fixture.mjs";
 
 function formFixture(context, overrides = {}) {
   const previous = globalThis.document;
@@ -443,4 +443,39 @@ test("failed temporary Wi-Fi cancellation retains the stage and permits a safe r
   } finally {
     globalThis.document = previous;
   }
+});
+
+test("Wi-Fi label links only with a connected board, a started listener and a local console URL", () => {
+  const saved = globalThis.document;
+  const elements = new Map();
+  const element = selector => {
+    if (!elements.has(selector)) elements.set(selector, {
+      children: [],
+      set textContent(value) { this.text = value; this.children = []; },
+      get textContent() { return this.text; },
+      querySelector() { return this.children[0]; },
+      replaceChildren(...children) { this.children = children; },
+    });
+    return elements.get(selector);
+  };
+  globalThis.document = { querySelector: element, createElement: () => ({}) };
+  try {
+    const state = { connected: true, hardware: { capabilities: 128 }, console_url: "/console?board=board-a",
+      wireless: { wifi_enabled: true, wifi_state: "connected", tcp_cli_started: true,
+        ssid: "HomeDev", ipv4: "192.168.66.87" } };
+    renderWirelessStatus(state);
+    const link = element("#wifi-state").children[0];
+    assert.equal(link.textContent, "HomeDev (192.168.66.87)");
+    assert.equal(link.href, "/console?board=board-a");
+    assert.equal(link.target, "_blank");
+    assert.equal(link.rel, "noopener noreferrer");
+    renderWirelessStatus(state);
+    assert.equal(element("#wifi-state").children[0], link, "polling preserves the focused link");
+    for (const change of [{ connected: false }, { wireless_error: "read failed" }, { console_url: undefined },
+      { wireless: { ...state.wireless, tcp_cli_started: false } },
+      { wireless: { ...state.wireless, wifi_state: "connecting" } }]) {
+      renderWirelessStatus({ ...state, ...change });
+      assert.equal(element("#wifi-state").children.length, 0);
+    }
+  } finally { globalThis.document = saved; }
 });

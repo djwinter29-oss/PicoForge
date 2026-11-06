@@ -20,6 +20,7 @@ public sealed class SharedDashboardAssetsTests
     [InlineData("css/console.css")]
     [InlineData("js/console.mjs")]
     [InlineData("js/console-terminal.mjs")]
+    [InlineData("js/console-api.mjs")]
     [InlineData("js/wireless-form.mjs")]
     public void OutputContainsCurrentSharedDashboardAsset(string relativePath)
     {
@@ -29,9 +30,18 @@ public sealed class SharedDashboardAssetsTests
     }
 
     [Fact]
+    public void SharedContentMappingIncludesOnlyDeployableSourceAssets()
+    {
+        var project = Path.Combine(WebRoot(), "../../dotnet/PicoForge/PicoForge.csproj");
+        var text = File.ReadAllText(project);
+        Assert.Contains("Content Include=\"../../web/src/**/*\"", text);
+        Assert.DoesNotContain("Content Include=\"../../web/**/*\"", text);
+    }
+
+    [Fact]
     public void StatusJsonMatchesTheSharedPythonContract()
     {
-        var path = Path.Combine(WebRoot(), "tests/status-contract.json");
+        var path = Path.Combine(WebRoot(), "../tests/status-contract.json");
         using var contract = JsonDocument.Parse(File.ReadAllText(path));
         var empty = new StatusResponse(false, null, null, null, null, null);
         var populated = empty with
@@ -91,6 +101,7 @@ public sealed class SharedDashboardAssetsTests
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/index.html")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/console.html")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/js/app.mjs")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/src/js/app.mjs")).StatusCode);
         await app.StopAsync();
     }
 
@@ -100,6 +111,6 @@ public sealed class SharedDashboardAssetsTests
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "host/dotnet/PicoForge.sln")))
             directory = directory.Parent;
         Assert.NotNull(directory);
-        return Path.Combine(directory.FullName, "host/web");
+        return Path.Combine(directory.FullName, "host/web/src");
     }
 }

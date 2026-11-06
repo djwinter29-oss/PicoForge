@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeStatus, renderStatus as renderServerStatus, renderSelfTest as renderServerSelfTest,
-} from "../js/dashboard.mjs";
+} from "../../src/js/dashboard.mjs";
 
 function withDocument(run) {
   const saved = globalThis.document;

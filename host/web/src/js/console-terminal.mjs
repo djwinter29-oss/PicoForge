@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * CLI terminal: the Embedded CLI cursor/insert/delete escapes, with bounded plain-text scrollback.
  * ponytail: 1000 lines of 512 columns and no general VT100/color support suffice for this CLI;
@@ -10,6 +11,7 @@ export class ConsoleTerminal {
   saved = [0, 0];
   escape = "";
 
+  /** @param {string} text */
   write(text) {
     for (const character of text) {
       if (this.escape) {
@@ -42,6 +44,7 @@ export class ConsoleTerminal {
     }
   }
 
+  /** @param {string} sequence */
   control(sequence) {
     const command = sequence.at(-1);
     const count = Math.min(512, Number(sequence.slice(0, -1)) || 1);
@@ -68,15 +71,18 @@ export class ConsoleTerminal {
   }
 }
 
+/** @param {Pick<KeyboardEvent, "key"> & Partial<Pick<KeyboardEvent, "ctrlKey" | "altKey" | "metaKey">>} event */
 export function consoleKey(event) {
   if (event.ctrlKey && !event.altKey && event.key.length === 1) {
     const code = event.key.toUpperCase().charCodeAt(0);
     return code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : null;
   }
   if (event.ctrlKey || event.altKey || event.metaKey) return null;
-  return ({
+  /** @type {Record<string, string>} */
+  const keys = {
     Enter: "\r", Tab: "\t", Backspace: "\x7f", Delete: "\x1b[3~",
     ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D",
     Home: "\x1b[H", End: "\x1b[F", Escape: "\x1b",
-  })[event.key] ?? (event.key.length === 1 ? event.key : null);
+  };
+  return keys[event.key] ?? (event.key.length === 1 ? event.key : null);
 }

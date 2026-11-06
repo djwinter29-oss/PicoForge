@@ -49,7 +49,7 @@ Self-tests and transitions still block saving; standalone reboot remains blocked
 - `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
 
 The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
-Build and publish always copy the current `host/web` assets into `wwwroot`; the .NET host serves those files,
+Build and publish always copy the current `host/web/src` assets into `wwwroot`; the .NET host serves those files,
 not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
 **Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
 Wireless uses the version-1 [Report 12 and Feature 20 contract](../../../docs/reference/usb-hid.md).

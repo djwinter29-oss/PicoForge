@@ -1,6 +1,9 @@
 const results = document.querySelector("#results");
 const dashboard = document.querySelector("#dashboard");
+const hostedResults = [];
 const report = (name, error) => {
+  hostedResults.push({ name, error: error?.message ?? null });
+  if (!results) return;
   const item = document.createElement("li");
   item.textContent = `${error ? "FAIL" : "PASS"} ${name}${error ? `: ${error.message}` : ""}`;
   item.dataset.result = error ? "fail" : "pass";
@@ -23,12 +26,13 @@ const run = async (name, action) => {
   }
 };
 
-const response = (body, status = 200) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => structuredClone(body),
-});
-const source = await (await fetch("../index.html")).text();
+let page;
+let dashboardWindow;
+if (globalThis.sharedBrowserHosted) {
+  page = document;
+  dashboardWindow = window;
+} else {
+const source = await (await fetch("../../src/index.html")).text();
 const mock = `<script>
   const response = (body, status = 200) => ({
     ok: status >= 200 && status < 300,
@@ -72,10 +76,12 @@ const mock = `<script>
     return response({ error: "Unexpected browser-check request" }, 404);
   };
 </script>
-<script type="module" src="/js/app.mjs"></script>`;
+<script type="module" src="js/app.mjs"></script>`;
 const html = source
-  .replace("<head>", '<head><base href="/">')
-  .replace('<script type="module" src="/js/app.mjs"></script>', mock);
+  .replace("<head>", `<head><base href="${new URL("../../src/", import.meta.url)}">`)
+  .replace('<script type="module" src="/js/app.mjs"></script>', mock)
+  .replaceAll('href="/', `href="${new URL("../../src/", import.meta.url)}`)
+  .replace('src="js/app.mjs"', `src="${new URL("../../src/js/app.mjs", import.meta.url)}"`);
 dashboard.style.width = "1000px";
 dashboard.style.height = "800px";
 dashboard.srcdoc = html;
@@ -83,7 +89,9 @@ await new Promise((resolve, reject) => {
   dashboard.addEventListener("load", resolve, { once: true });
   dashboard.addEventListener("error", reject, { once: true });
 });
-const page = dashboard.contentDocument;
+page = dashboard.contentDocument;
+dashboardWindow = dashboard.contentWindow;
+}
 await waitFor(() => page.querySelector("#connection-label").textContent === "Connected",
   "mock board did not connect");
 
@@ -101,7 +109,7 @@ await run("confirmation dialog focuses, closes with Escape, and restores focus",
 });
 
 await run("narrow viewport does not overflow horizontally", async () => {
-  dashboard.style.width = "360px";
+  if (dashboard) dashboard.style.width = "360px";
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   check(page.documentElement.scrollWidth <= page.documentElement.clientWidth, "dashboard overflows horizontally");
 });
@@ -153,7 +161,7 @@ await run("replacement Control key cannot receive stale clipboard feedback", asy
   radio.dispatchEvent(new Event("input", { bubbles: true }));
   let complete;
   const clipboard = { writeText: () => new Promise(resolve => { complete = resolve; }) };
-  Object.defineProperty(dashboard.contentWindow.navigator, "clipboard", { configurable: true, value: clipboard });
+  Object.defineProperty(dashboardWindow.navigator, "clipboard", { configurable: true, value: clipboard });
   page.querySelector("#ble-generate").click();
   page.querySelector("#ble-copy").click();
   check(typeof complete === "function", "clipboard operation did not start");
@@ -165,4 +173,5 @@ await run("replacement Control key cannot receive stale clipboard feedback", asy
   page.querySelector("#ble-cancel").click();
 });
 
-results.dataset.done = "true";
+if (results) results.dataset.done = "true";
+globalThis.sharedBrowserResults = hostedResults;

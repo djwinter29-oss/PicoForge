@@ -10,7 +10,7 @@
     <InternalsVisibleTo Include="PicoForge.Tests" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
-    <Content Include="../../web/**/*" Exclude="../../web/**/__pycache__/**;../../web/tests/**">
+    <Content Include="../../web/src/**/*" Exclude="../../web/src/**/__pycache__/**">
       <Link>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>

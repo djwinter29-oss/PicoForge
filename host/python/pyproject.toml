@@ -31,7 +31,7 @@ Issues = "https://github.com/djwinter29-oss/PicoForge/issues"
 picoforge = "picoforge.cli:main"
 
 [tool.setuptools]
-package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web"}
+package-dir = {"picoforge" = "src/picoforge", "picoforge.web" = "../web/src"}
 packages = ["picoforge", "picoforge.web", "picoforge.reports", "picoforge.hid", "picoforge.dashboard"]
 
 [tool.setuptools.package-data]

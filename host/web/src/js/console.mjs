@@ -13,6 +13,7 @@ let sessionController = null;
 let openingController = null;
 let input = "";
 let sending = false;
+let outputFrame = null;
 
 const endpoint = token => `/api/console?session=${encodeURIComponent(token)}`;
 
@@ -23,6 +24,21 @@ function render() {
   cursor.textContent = current;
   terminal.replaceChildren(document.createTextNode(before), cursor, document.createTextNode(after));
   terminal.scrollTop = terminal.scrollHeight;
+}
+
+function queueRender() {
+  if (outputFrame !== null) return;
+  outputFrame = window.requestAnimationFrame(() => {
+    outputFrame = null;
+    render();
+  });
+}
+
+function finishRender(flush) {
+  if (outputFrame === null) return;
+  window.cancelAnimationFrame(outputFrame);
+  outputFrame = null;
+  if (flush) render();
 }
 
 /** Show one Connect/Disconnect toggle; the connected state also drives the top-bar light via CSS. */
@@ -38,6 +54,7 @@ async function close(message = "Disconnected") {
   session = null;
   sessionController = null;
   controller?.abort();
+  finishRender(true);
   input = "";
   status.textContent = message;
   terminal.setAttribute("aria-readonly", "true");
@@ -58,7 +75,7 @@ async function poll(token, signal) {
       const text = decoder.decode(bytes, { stream: !result.closed });
       if (text) {
         screen.write(text);
-        render();
+        queueRender();
       }
       if (result.closed) {
         await close("Connection closed by board; check terminal output before retrying commands");
@@ -148,6 +165,7 @@ terminal.addEventListener("paste", event => {
 });
 connect.addEventListener("click", () => { void (session ? close() : open()); });
 window.addEventListener("pagehide", () => {
+  finishRender(false);
   openingController?.abort();
   openingController = null;
   const token = session;

@@ -116,6 +116,29 @@ function saveBoardCommandState(boardId = selectedBoard) {
     mscPendingEnabled,
   });
 }
+/**
+ * @typedef {object} OperationSnapshot
+ * @property {boolean} [connected]
+ * @property {boolean} [outcome_uncertain]
+ * @property {boolean} [command_outcome_uncertain]
+ * @property {boolean} [reboot_pending]
+ * @property {{led_available?: boolean}} [runtime]
+ * @property {{transition_pending?: boolean}} [msc]
+ * @property {{active?: boolean}} [self_test]
+ * @property {boolean} [self_test_command_pending]
+ *
+ * @typedef {object} OperationState
+ * @property {boolean} outcomeUncertain
+ * @property {boolean} mscPending
+ * @property {boolean} selfTestPending
+ * @property {boolean} storageCommandPending
+ * @property {boolean} busy
+ * @property {boolean} settingsBusy
+ * @property {boolean} canSetLed
+ * @property {boolean} canChangeMsc
+ * @property {boolean} boardSelectionBusy
+ */
+/** @param {OperationSnapshot | null} [snapshot] @returns {OperationState} */
 function operationState(snapshot = currentSnapshot) {
   const wirelessBusy = wirelessForm.operationBusy();
   const outcomeUncertain = uncertainCommand !== null
@@ -123,7 +146,7 @@ function operationState(snapshot = currentSnapshot) {
   const mscPending = mscRequestInProgress || mscPendingEnabled !== null;
   const selfTestPending = selfTestRequestInProgress || selfTestPendingSequence !== null
     || Boolean(snapshot?.self_test?.active || snapshot?.self_test_command_pending);
-  const settingsBusy = settingsRequestInProgress || wirelessForm.inFlight() || statusReadError !== null
+  const settingsBusy = commandResyncInProgress || settingsRequestInProgress || wirelessForm.inFlight() || statusReadError !== null
     || snapshot?.reboot_pending || outcomeUncertain;
   return {
     outcomeUncertain,
@@ -602,7 +625,7 @@ async function saveSettings() {
   if (!currentSnapshot?.connected || !currentSnapshot.settings_supported
       || !(settingsDirty || wirelessForm.dirty())
       || wirelessForm.operationBusy() || !wirelessForm.canSave()
-      || settingsRequestInProgress || storageCommandPending() || operationState().outcomeUncertain || !msc
+      || settingsRequestInProgress || storageCommandPending() || operationState().busy || !msc
       || msc.enabled !== force
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)) return;
   const combined = wirelessForm.dirty();
@@ -670,7 +693,7 @@ async function rebootDevice() {
   if (!rebootDialog.open) return;
   rebootDialog.close();
   const msc = currentSnapshot?.msc;
-  if (!currentSnapshot?.connected || settingsRequestInProgress || storageCommandPending()
+  if (!currentSnapshot?.connected || operationState().busy || storageCommandPending()
       || !((currentSnapshot.hardware?.capabilities ?? 0) & 2)
       || !msc || msc.enabled) return;
   settingsRequestInProgress = true;

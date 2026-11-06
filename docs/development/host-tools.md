@@ -1,6 +1,6 @@
 # Host Tools Development
 
-PicoForge has Python and .NET dashboards that share the frontend in `host/web`, plus the independent Direct dashboard
+PicoForge has Python and .NET dashboards that share the frontend in `host/web/src`, plus the independent Direct dashboard
 in `host/direct`, which connects over USB (WebHID) or Bluetooth LE (Web Bluetooth). For installation and everyday use,
 see the [Python host guide](../../host/python/README.md), [.NET host guide](../../host/dotnet/PicoForge/README.md),
 and [Direct dashboard guide](../../host/direct/README.md).
@@ -19,18 +19,67 @@ Install only the toolchain needed for the host or checks you are changing.
 
 ## Shared Dashboard Changes
 
-Edit `host/web` for both Python and .NET; do not edit generated `.NET wwwroot` copies. The shared and Direct dashboards
+Edit `host/web/src` for both Python and .NET; do not edit generated `.NET wwwroot` copies. The shared and Direct dashboards
 remain separate implementations, with byte-identical favicons for consistent branding.
+
+The shared dashboard keeps deployable assets separate from tests and tooling:
+
+```text
+host/web/
+  src/
+    index.html, console.html, favicon.svg
+    css/
+    js/
+  tests/
+    index.test.mjs, favicon.test.mjs
+    css/          # stylesheet contracts
+    js/           # unit tests named after their source module
+    integration/  # mounted app lifecycle and backend interaction
+    browser/      # Chromium checks, measurements, runner, and requirements
+    support/      # shared-dashboard-only DOM and API fixtures
+    types/        # negative type contracts
+    status-contract.json
+    run-tests.mjs
+  tsconfig.json
+```
+
+Public routes remain `/`, `/console`, `/favicon.svg`, `/css/...`, and `/js/...`; `src` is a repository layout, not a URL
+prefix. Python source imports use `host/web/src`; wheel assets remain under `picoforge/web`. .NET copies only the source
+assets into `wwwroot`. Neither host packages the test harness or type-check configuration.
 
 Wireless drafts require successful, unexpired Wi-Fi testing before Save. Failed replacement tests invalidate the
 previous test; clearing temporary credentials must complete before other board operations resume. Control-key copy
 feedback is fenced to the current board lifecycle and key draft, so an earlier clipboard operation cannot claim that
 a replacement key was copied. Failed saves retain their error feedback; regenerate the key or disable Bluetooth
 before retrying. USB-shared storage blocks wireless Save and explains how to return ownership safely.
+Re-sync locks board selection and discards continuations from a previous board generation. Cancellation delivery
+timeouts and network failures retain uncertain outcomes; known refusals remain retryable after explicit cleanup.
+Disconnected polling clears drafts once per lifecycle transition, not on every status render.
 
-Run `node --test host/web/tests/*.test.mjs` for shared frontend regressions. Serve `host/web` locally and open
-`/tests/browser.html` for mocked browser checks covering dialog focus, narrow layouts, network selection, wireless
-cancellation, and stale clipboard feedback.
+Shared frontend regressions use independent mounted scenarios and an additive-listener DOM fixture. Console API and
+terminal modules have strict JavaScript type checks, with typed operation snapshots for incremental editor assistance;
+the remaining application and view modules are not yet strictly checked.
+
+```sh
+node host/web/tests/run-tests.mjs
+npx --yes --package typescript@5.9.3 tsc --project host/web/tsconfig.json
+python3 -m pip install -r host/web/tests/browser/requirements.txt
+python3 -m playwright install chromium
+python3 host/web/tests/browser/run.py
+```
+
+The browser runner requires the Python host dependencies and .NET 10 SDK. It builds the .NET host and serves the actual
+Python/.NET templates and assets with their production response headers; API replies are mocked, so no hardware
+requests are made. Both hosts run the same focus, narrow-layout, network-selection, cancellation, and clipboard checks.
+For a static-only manual check, serve `host/web` locally and open `/tests/browser/index.html`.
+
+Console success bodies are validated by operation; malformed acknowledgements close the session without replaying
+input. Output is coalesced into one pending animation frame; input is sent immediately, disconnect flushes final
+output, and page navigation cancels pending output.
+The runner measures parsing, text construction, DOM replacement, and layout using the actual console module and styles
+at 1,000 lines of 150 columns, over 30 six-chunk bursts. Local Chromium measurements reduced renders per burst from
+six to one and median layout time from roughly 108–122 ms to 25–27 ms. Timings are environment-dependent, not a
+performance guarantee; the runner enforces one render per burst rather than a machine-specific millisecond threshold.
 These checks do not establish physical board qualification.
 
 ## Run a Host Application
@@ -133,7 +182,7 @@ They can also be run individually:
 ```sh
 python3 -m unittest discover -s host/python/tests -v
 node host/direct/tests/run-tests.mjs
-node --test host/web/tests/*.test.mjs
+node host/web/tests/run-tests.mjs
 dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo --filter "Category!=Performance"
 ```
 
@@ -146,7 +195,7 @@ desktop browser:
 
 ```sh
 python3 -m http.server 8000 --directory host/web
-# Open http://127.0.0.1:8000/tests/browser.html
+# Open http://127.0.0.1:8000/tests/browser/index.html
 ```
 
 These checks use a mocked board API and do not qualify physical USB, firmware, or radio behavior. Keep device
@@ -198,7 +247,7 @@ for a localhost dashboard; move HID I/O to a dedicated thread only if concurrent
 
 ## Shared Frontend and Protocol Boundaries
 
-Python and .NET serve the same assets from `host/web`; keep shared UI behavior backend-neutral and preserve the common
+Python and .NET serve the same assets from `host/web/src`; keep shared UI behavior backend-neutral and preserve the common
 API response contract. Direct is independent and owns its renderer and assets under `host/direct`. Keep browser-specific
 USB handling there rather than creating a second Python/.NET frontend.
 The dashboards do not import or package each other's assets. Each owns its wireless form module and its Node tests;
@@ -215,7 +264,7 @@ and after the [freshness limit](../reference/usb-hid.md#input-freshness), and th
 the snapshot is read, so a silent board ages out without a new report. Both servers nest USB-drive ownership (`msc`) and
 `filesystem_format` in `memory`, and next-boot settings (`system_clock_mhz`, `sdcard_profile`, `radios`,
 `tcp_cli_enabled`) in `board_configuration` beside the boot-time `stored_*` values; `normalizeStatus()` in
-`host/web/js/dashboard.mjs` lifts them out for the view. Feature `12` wireless status arrives in the same snapshot as
+`host/web/src/js/dashboard.mjs` lifts them out for the view. Feature `12` wireless status arrives in the same snapshot as
 `wireless` and `wireless_error`; the server polls it every 0.5 s during a scan or connection test and every 2 s
 otherwise.
 

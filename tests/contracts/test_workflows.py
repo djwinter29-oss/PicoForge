@@ -299,7 +299,7 @@ def test_release_gates_packages_on_reusable_complete_host_validation():
     assert "tools/validation/setup-ceedling-testing.sh test:all" in host
     assert "tools/validation/test-host.sh" in host
     runner = (ROOT / "tools/validation/test-host.sh").read_text()
-    for suite in ("host/python/tests", "host/direct/tests/run-tests.mjs", "host/web/tests/*.test.mjs",
+    for suite in ("host/python/tests", "host/direct/tests/run-tests.mjs", "host/web/tests/run-tests.mjs",
                   "host/dotnet/PicoForge.sln"):
         assert suite in runner
 
@@ -316,6 +316,20 @@ def test_host_validation_covers_three_os_and_two_python_versions():
     assert "shell: bash\n        run: bash tools/validation/test-host.sh" in workflow
     assert "if: matrix.python == '3.10'" in workflow
     assert "if: matrix.python == '3.12'" in workflow
+
+
+def test_shared_dashboard_boundaries_and_both_native_hosts_have_browser_validation():
+    workflow = (ROOT / ".github/workflows/host-validation.yml").read_text()
+    assert "typescript@5.9.3 tsc --project host/web/tsconfig.json" in workflow
+    assert "-r host/web/tests/browser/requirements.txt" in workflow
+    assert "run: python host/web/tests/browser/run.py" in workflow
+    assert workflow.index("- name: Install Python host dependencies") < workflow.index(
+        "- name: Run shared browser checks through Python and .NET hosting")
+    assert workflow.index("- name: Setup .NET") < workflow.index(
+        "- name: Run shared browser checks through Python and .NET hosting")
+    runner = (ROOT / "host/web/tests/browser/run.py").read_text()
+    assert '(("Python", python_host), (".NET", dotnet_host))' in runner
+    assert '"renders"]["median"] == 1' in runner
 
 
 def test_release_uses_commit_epoch_before_configuring_artifact_names():

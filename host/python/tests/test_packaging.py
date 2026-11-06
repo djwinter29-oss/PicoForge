@@ -55,7 +55,7 @@ class PackagingTests(unittest.TestCase):
     def test_wheel_packages_every_dashboard_asset_from_host_web(self):
         setuptools = tomllib.loads((PROJECT / "pyproject.toml").read_text())["tool"]["setuptools"]
         web = (PROJECT / setuptools["package-dir"]["picoforge.web"]).resolve()
-        self.assertEqual(web, PROJECT.parent / "web")
+        self.assertEqual(web, PROJECT.parent / "web/src")
         self.assertIn("picoforge.web", setuptools["packages"])
         patterns = setuptools["package-data"]["picoforge.web"]
         assets = [p.relative_to(web).as_posix() for p in web.rglob("*")

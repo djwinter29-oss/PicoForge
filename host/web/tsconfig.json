@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "allowJs": true,
-    "checkJs": true,
+    "checkJs": false,
     "noEmit": true,
     "strict": true,
     "target": "ES2022",
@@ -10,7 +10,8 @@
     "lib": ["ES2022", "DOM"]
   },
   "files": [
-    "console-api.mjs",
-    "../tests/types/console-types.mjs"
+    "src/js/console-api.mjs",
+    "src/js/console-terminal.mjs",
+    "tests/types/console-types.mjs"
   ]
 }

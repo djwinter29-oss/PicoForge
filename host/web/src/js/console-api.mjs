@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @typedef {{session: string}} ConsoleSession
  * @typedef {{data: string, closed: boolean}} ConsoleRead

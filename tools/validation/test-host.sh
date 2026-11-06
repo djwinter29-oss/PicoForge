@@ -22,7 +22,7 @@ printf '%s\n' '=== Direct dashboard tests ==='
 "$PYTHON" -m unittest discover -s "$REPO_ROOT/host/direct/tests" -p 'test_*.py' -v
 
 printf '%s\n' '=== Python/.NET dashboard tests ==='
-"$NODE" --test "$REPO_ROOT"/host/web/tests/*.test.mjs
+"$NODE" "$REPO_ROOT/host/web/tests/run-tests.mjs"
 
 printf '%s\n' '=== .NET host tests ==='
 "$DOTNET" test "$REPO_ROOT/host/dotnet/PicoForge.sln" \
