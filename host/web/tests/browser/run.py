@@ -218,7 +218,6 @@ def check_native_transitions(page: Page, origin: str, host_name: str) -> None:
 
 def check_accessibility_smoke(page: Page, origin: str, host_name: str) -> None:
     """Traverse native focus order, check visible focus, and exercise confirmation and clipboard refusal."""
-    page.add_init_script("""() => {}""")
     page.add_init_script("""
         window.confirmationCloseListeners = 0;
         const add = EventTarget.prototype.addEventListener;

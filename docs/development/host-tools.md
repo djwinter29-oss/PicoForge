@@ -179,7 +179,11 @@ fields as permission to replace Wi-Fi credentials.
 Optional diagnostic fields are checked separately from lifecycle facts. Missing manufacturer details display `--`;
 malformed diagnostic values are removed with an explicit status warning, without discarding valid ownership facts,
 drafts or command capabilities. Lifecycle validation remains fail-closed. Diagnostic normalization does not mutate
-the response, and unknown additional fields remain compatible.
+the response, and unknown additional fields remain compatible. Rendering distinguishes unavailable facts (`--`),
+explicit `false` (for example, a closed CLI port), and the reported unassigned GPIO sentinel (`255`). Missing UART
+indices do not produce a numbered heading, and missing reset causes do not masquerade as reported `Unknown` values.
+CID dates require years 2000–2255 and months 1–12; manufacturer IDs, GPIOs and reset causes require integer byte values,
+and UART indices must be 0, 1 or 255. Native hosts remain responsible for MCU/board-specific GPIO validity.
 Benchmark labels follow the native hosts' state vocabulary, and missing-card diagnostics use reported card-detect
 wiring rather than a fixed board GPIO.
 Wi-Fi test progress and staged-credential countdowns use monotonic elapsed time; wall-clock changes neither expire a
@@ -212,13 +216,27 @@ Three further native scenarios per host cover renewed confirmation after a remot
 tested network, and local conflict discard with cleanup retry while preserving clock/storage drafts. Focused sequence
 tests also cover credential replacement during confirmation, missing credential prerequisites, repeated observations,
 and known/unknown cleanup failures.
-Each engine/host combination also checks keyboard-only clock editing and confirmation, initial Cancel focus,
-Escape/focus restoration without sending a command, 200-percent zoom, 320-pixel reflow, dialog reflow and explicit
-clipboard-refusal feedback without reporting success. These automated checks do not certify screen-reader usability.
-Before release, manually verify named settings and dialog controls, disabled-action explanations, status/error
-announcements and focus restoration with a screen reader on each supported desktop platform. Record the reader,
-browser, platform and results alongside physical-board provisioning/reconnect qualification; neither qualification is
-established by these mocked browser tests.
+Each engine/host combination also traverses clock editing, Save confirmation and Bluetooth configuration with native
+Tab/Shift+Tab and Enter, without programmatic focus jumps. Checks verify visible, in-viewport, unobscured focus,
+initial Cancel focus and Escape/focus restoration without sending a command. Repeated dialog keypresses must leave
+exactly one mounted confirmation-close listener; mounted regressions also cover all four confirmation dialogs.
+Boundary-to-render browser checks verify unavailable, explicit-false and unassigned diagnostic states while retaining
+settings drafts and valid command admission.
+Reflow checks exercise CSS zoom at 200 percent, a 320-pixel viewport, dialog reflow and explicit clipboard-refusal
+feedback without reporting success. CSS zoom is not native browser-zoom certification, and these automated checks do
+not certify screen-reader usability.
+
+Before release, perform and record these manual qualification checks:
+
+- With a screen reader on each supported desktop platform, verify named settings and dialog controls, disabled-action
+  explanations, status/error announcements and focus restoration. Record the reader, browser, platform and results.
+- Using native browser zoom, check 200-percent and 400-percent zoom for readable content, reachable controls and visible
+  focus; distinguish necessary pin-table/console scrolling from page-wide overflow.
+- On physical boards, qualify provisioning, credential expiry, storage ownership transitions and disconnect/reconnect
+  recovery with representative traffic. Record board, firmware, host, steps and results.
+
+Screen-reader, native browser-zoom and physical-board qualification remain manual and are not established by these
+mocked browser tests. The current automated coverage does not justify marking any of those manual checks complete.
 Wireless test mocks change the polled SSID and staged-pair generation like the firmware, rather than continuing to
 report the saved SSID after a successful test. Runtime boundary tests also reject missing or mistyped lifecycle facts
 and test identities. These are protocol-shaped simulations, not physical provisioning qualification.
