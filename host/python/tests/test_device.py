@@ -59,6 +59,190 @@ class HidEnumerationTests(unittest.TestCase):
 
 
 class HidDeviceTests(unittest.TestCase):
+    def test_close_waits_for_native_io_and_later_operations_reject_the_closed_handle(self):
+        for operation in ("control", "input", "configuration", "identity", "wireless"):
+            with self.subTest(operation=operation):
+                from test_protocol import identity_report
+                from test_wireless import status
+
+                client = self.connection([telemetry()])
+                client.configuration = None
+                client._expected_serial_number = None
+                client.identity["capabilities"] |= 128
+                client._device.close = Mock()
+                client._device.feature_reports = {
+                    1: [identity_report(capabilities=0xB5)], 2: [configuration()],
+                    12: [status()], 20: [control_result()],
+                }
+                entered, release, closing = threading.Event(), threading.Event(), threading.Event()
+                errors = []
+                calls = {
+                    "control": lambda: client.set_led(True),
+                    "input": client.read_input_report,
+                    "configuration": client.read_configuration,
+                    "identity": client.read_info,
+                    "wireless": client.read_wireless,
+                }
+                native_method = ("send_feature_report" if operation == "control"
+                                 else "read" if operation == "input" else "get_feature_report")
+                native = getattr(client._device, native_method)
+                lock = threading.RLock()
+
+                class ObservedLock:
+                    def __enter__(self):
+                        if threading.current_thread().name == "hid-close":
+                            closing.set()
+                        return lock.__enter__()
+
+                    def __exit__(self, *args):
+                        return lock.__exit__(*args)
+
+                def blocked(*args):
+                    entered.set()
+                    if not release.wait(3):
+                        raise AssertionError("native I/O release timed out")
+                    return native(*args)
+
+                def run(call):
+                    try:
+                        call()
+                    except Exception as error:
+                        errors.append(error)
+
+                client._control_lock = ObservedLock()
+                setattr(client._device, native_method, blocked)
+                worker = threading.Thread(target=run, args=(calls[operation],))
+                closer = threading.Thread(target=run, args=(client.close,), name="hid-close")
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    closer.start()
+                    self.assertTrue(closing.wait(1), "close must acquire the shared native I/O lock")
+                    client._device.close.assert_not_called()
+                    self.assertFalse(client.closed)
+                finally:
+                    release.set()
+                    worker.join(3)
+                    if closer.ident is not None:
+                        closer.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertFalse(closer.is_alive())
+                self.assertEqual(errors, [])
+                client._device.close.assert_called_once()
+                client.close()
+                client._device.close.assert_called_once()
+                for call in calls.values():
+                    with self.assertRaisesRegex(ConnectionError, "closed"):
+                        call()
+
+    def test_concurrent_close_is_owned_once_even_when_native_cleanup_fails(self):
+        for fails in (False, True):
+            with self.subTest(fails=fails):
+                client = self.connection()
+                entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+                errors = []
+                lock = threading.RLock()
+
+                class ObservedLock:
+                    def __enter__(self):
+                        if threading.current_thread().name == "second-close":
+                            waiting.set()
+                        return lock.__enter__()
+
+                    def __exit__(self, *args):
+                        return lock.__exit__(*args)
+
+                client._control_lock = ObservedLock()
+
+                def close():
+                    entered.set()
+                    if not release.wait(3):
+                        raise AssertionError("native close release timed out")
+                    if fails:
+                        raise OSError("native close failed")
+
+                def run():
+                    try:
+                        client.close()
+                    except Exception as error:
+                        errors.append(error)
+
+                client._device.close = Mock(side_effect=close)
+                workers = [threading.Thread(target=run), threading.Thread(target=run, name="second-close")]
+                workers[0].start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    workers[1].start()
+                    self.assertTrue(waiting.wait(1))
+                    client._device.close.assert_called_once()
+                finally:
+                    release.set()
+                    for worker in workers:
+                        if worker.ident is not None:
+                            worker.join(3)
+                self.assertTrue(all(not worker.is_alive() for worker in workers))
+                client._device.close.assert_called_once()
+                if fails:
+                    self.assertEqual(len(errors), 2)
+                    self.assertEqual({type(error) for error in errors}, {OSError, RuntimeError})
+                    with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                        client.read_input_report()
+                    with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                        client.close()
+                    client._device.close.assert_called_once()
+                else:
+                    self.assertEqual(errors, [])
+                    self.assertTrue(client.closed)
+
+    def test_read_queued_during_close_never_uses_the_native_handle(self):
+        client = self.connection()
+        closing, waiting, release = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+        lock = threading.RLock()
+
+        class ObservedLock:
+            def __enter__(self):
+                if threading.current_thread().name == "queued-read":
+                    waiting.set()
+                return lock.__enter__()
+
+            def __exit__(self, *args):
+                return lock.__exit__(*args)
+
+        def close():
+            closing.set()
+            if not release.wait(3):
+                raise AssertionError("native close release timed out")
+
+        def run(call):
+            try:
+                call()
+            except Exception as error:
+                errors.append(error)
+
+        client._control_lock = ObservedLock()
+        client._device.close = Mock(side_effect=close)
+        client._device.read = Mock()
+        closer = threading.Thread(target=run, args=(client.close,))
+        reader = threading.Thread(target=run, args=(client.read_input_report,), name="queued-read")
+        closer.start()
+        try:
+            self.assertTrue(closing.wait(1))
+            reader.start()
+            self.assertTrue(waiting.wait(1))
+            client._device.read.assert_not_called()
+        finally:
+            release.set()
+            closer.join(3)
+            if reader.ident is not None:
+                reader.join(3)
+        self.assertFalse(closer.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ConnectionError)
+        client._device.read.assert_not_called()
+        client._device.close.assert_called_once()
+
     def test_initializes_cached_device_state(self):
         transport = Mock()
         with patch("picoforge.hid.device._select_device", return_value={

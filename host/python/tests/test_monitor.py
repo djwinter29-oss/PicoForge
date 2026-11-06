@@ -126,20 +126,28 @@ class MonitorMscTests(unittest.TestCase):
         monitor._command_outcome_uncertain = True
         monitor._uncertain_command = (7, 11)
         monitor._uncertain_wireless_operation = ("scan", 3)
+        monitor._wireless_received_at = 0.0
+        monitor._snapshot["wireless_error"] = "previous read failed"
         client.reconcile_outcome.return_value = None
         with self.assertRaises(CommandOutcomeUncertain):
             monitor.resync_command()
         self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertEqual(monitor._wireless_received_at, 0.0)
         client.reconcile_outcome.assert_called_once_with((7, 11), ("scan", 3))
 
         control_result = {"transaction_id": 7, "opcode": 11, "status": "completed"}
         wireless = {"scan_generation": 3, "scan_state": "complete"}
         client.reconcile_outcome.return_value = control_result, wireless
-        self.assertEqual(monitor.resync_command(), {
-            "uncertain": False, "control_result": control_result, "wireless": wireless,
-        })
-        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
-        self.assertEqual(monitor.snapshot()["wireless"], wireless)
+        with patch("picoforge.dashboard.monitor.time.monotonic", return_value=100.0):
+            self.assertEqual(monitor.resync_command(), {
+                "uncertain": False, "control_result": control_result, "wireless": wireless,
+            })
+            self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+            self.assertEqual(monitor.snapshot()["wireless"], wireless)
+            self.assertIsNone(monitor.snapshot()["wireless_error"])
+            self.assertEqual(monitor._wireless_received_at, 100.0)
+        with patch("picoforge.dashboard.monitor.time.monotonic", return_value=106.0):
+            self.assertTrue(monitor.snapshot()["wireless"]["stale"])
 
     def test_malformed_input_report_does_not_abort_wireless_poll_drain(self):
         client = Mock(command_uncertain=False)
@@ -360,7 +368,7 @@ class MonitorReconnectTests(unittest.TestCase):
 
 
 class MonitorWirelessCancellationTests(unittest.TestCase):
-    def test_late_cancel_failure_does_not_replace_successful_test_result(self):
+    def test_late_cancel_predelivery_failure_keeps_cleanup_retryable(self):
         client = Mock()
         snapshot = {
             "connected": True,
@@ -378,11 +386,12 @@ class MonitorWirelessCancellationTests(unittest.TestCase):
         client.test_wireless.side_effect = finish_test
         client.cancel_wireless_test.side_effect = OSError("USB disconnected during cleanup")
 
-        with self.assertLogs("picoforge.dashboard.monitor", "ERROR"), \
-                self.assertRaises(CommandOutcomeUncertain):
+        with self.assertLogs("picoforge.dashboard.monitor", "WARNING"), \
+                self.assertRaisesRegex(RuntimeError, "retry clearing"):
             monitor.test_wireless("network")
         client.cancel_wireless_test.assert_called_once_with()
-        self.assertTrue(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"])
 
 
 class MonitorSettingsTests(unittest.TestCase):
@@ -443,6 +452,54 @@ class MonitorSettingsTests(unittest.TestCase):
 
 
 class MonitorPollingTests(unittest.TestCase):
+    def test_wireless_snapshot_expires_at_six_seconds_without_mutating_reported_facts(self):
+        monitor = make_monitor(snapshot={
+            "connected": True, "wireless": {"wifi_state": "connected", "stale": False},
+        }, fresh=False)
+        monitor._wireless_received_at = 100.0
+        for now, stale in ((105.0, False), (105.999, False), (106.0, True), (1000.0, True)):
+            with self.subTest(now=now), \
+                    patch("picoforge.dashboard.monitor.time.monotonic", return_value=now):
+                snapshot = monitor.snapshot()
+                self.assertEqual(snapshot["wireless"]["stale"], stale)
+                self.assertEqual(snapshot["wireless_error"] is not None, stale)
+                self.assertFalse(monitor._snapshot["wireless"]["stale"])
+        monitor._wireless_received_at = None
+        self.assertTrue(monitor.snapshot()["wireless"]["stale"], "missing receipt is not fresh")
+
+    def test_worker_updates_wireless_receipt_only_on_success_and_clears_it_on_disconnect(self):
+        client = Mock()
+        client.read_info.return_value = {"supported": True, "wireless_supported": True, "settings_supported": False}
+        client.read_configuration.return_value = {}
+        client.read_input_report.return_value = None
+        client.read_wireless.side_effect = [
+            {"stale": False}, OSError("Feature 12 failed"), {"stale": False},
+        ]
+        monitor = DeviceMonitor(client_factory=lambda: client, autostart=False)
+        clock = [100.0]
+        snapshots = []
+        receipts = []
+
+        def wait(_timeout):
+            if monitor._stop.is_set():
+                return True
+            snapshots.append(monitor.snapshot())
+            receipts.append(monitor._wireless_received_at)
+            clock[0] += 6.0
+            if len(snapshots) == 3:
+                monitor._stop.set()
+            return monitor._stop.is_set()
+
+        with patch("picoforge.dashboard.monitor.time.monotonic", side_effect=lambda: clock[0]):
+            monitor._stop.wait = wait
+            monitor._run()
+        self.assertEqual(receipts, [100.0, 100.0, 112.0])
+        self.assertEqual([snapshot["wireless"]["stale"] for snapshot in snapshots], [False, True, False])
+        self.assertEqual([snapshot["wireless_error"] for snapshot in snapshots], [None, "Feature 12 failed", None])
+        monitor._reset_snapshot()
+        self.assertIsNone(monitor._wireless_received_at)
+        self.assertIsNone(monitor.snapshot()["wireless"])
+
     def test_idle_polling_slows_and_status_request_restores_active_cadence(self):
         client = Mock()
         client.read_info.return_value = {

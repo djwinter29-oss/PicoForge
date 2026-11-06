@@ -120,6 +120,7 @@ function storageCommandPending(snapshot = currentSnapshot) {
 }
 const wirelessForm = bindWirelessForm({
   supported: () => Boolean(currentSnapshot?.hardware?.capabilities & 128),
+  cleanupRequired: () => Boolean(currentSnapshot?.wireless_cleanup_required),
   ready: wirelessReady,
   load: async () => currentSnapshot.wireless,
   scan: async () => {
@@ -291,11 +292,16 @@ function renderStatus(snapshot) {
 }
 
 async function resyncCommandOutcome() {
-  if (!currentSnapshot?.command_outcome_uncertain || commandResyncInProgress) return;
+  if ((!currentSnapshot?.command_outcome_uncertain && !currentSnapshot?.wireless_cleanup_required)
+    || commandResyncInProgress) return;
   const version = selectionVersion;
   commandResyncInProgress = true;
   renderStatus(currentSnapshot);
   try {
+    if (!currentSnapshot.command_outcome_uncertain && currentSnapshot.wireless_cleanup_required) {
+      if (await wirelessForm.clearTest()) await updateStatus();
+      return;
+    }
     const response = await fetchWithDeadline(boardUrl("/api/control/resync"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -310,6 +316,11 @@ async function resyncCommandOutcome() {
     uncertainCommand = null;
     currentSnapshot.command_outcome_uncertain = false;
     currentSnapshot.error = null;
+    if (result.control_result?.opcode === 10 && !["idle", "pending"].includes(result.control_result.status)) {
+      const completed = result.control_result.status === "completed";
+      if (completed) currentSnapshot.wireless_cleanup_required = false;
+      wirelessForm.cancelResolved(completed);
+    }
     if (result.wireless) currentSnapshot.wireless = result.wireless;
     if (result.control_result) currentSnapshot.control_result = result.control_result;
     saveBoardCommandState();

@@ -316,6 +316,26 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(sent, [6, 7, 9, 10])
         self.assertFalse(client._command_uncertain)
 
+    def test_failed_cancel_is_known_and_lost_cancel_reconciles_its_own_result_only(self):
+        for lost in (False, True):
+            with self.subTest(lost=lost):
+                client = self.client([
+                    status(), result(6, 1), result(7, 2), result(9, 3),
+                    OSError("lost cancel reply") if lost else result(10, 4, state=6, error=6),
+                ])
+                stop = threading.Event()
+                stop.set()
+                with self.assertRaises((OSError, RuntimeError)):
+                    client.test_wireless("Pico", "secret12", cancel=stop)
+                self.assertEqual(client.command_uncertain, lost)
+                self.assertIsNone(client.uncertain_wireless_operation)
+                self.assertEqual(client.uncertain_command, (4, 10) if lost else None)
+                if lost:
+                    client._device.get_feature_report.side_effect = [result(10, 4)]
+                    self.assertIsNotNone(client.reconcile_outcome((4, 10), None))
+                    self.assertFalse(client.command_uncertain)
+                self.assertEqual(client._device.send_feature_report.call_count, 4)
+
     def test_timeout_does_not_replay_scan_save_or_proof(self):
         # A stale result cannot resolve a SET, even when its opcode matches.
         for opcode in (5, 11, 13):

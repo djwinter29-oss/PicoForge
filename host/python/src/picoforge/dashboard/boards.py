@@ -75,6 +75,8 @@ class DashboardBoards:
                 }
                 boards.append(board)
 
+            # Absence cannot resolve a conflict for an identity whose owner may still hold a handle.
+            ambiguous |= (self._ambiguous - seen) & self._known.keys()
             for board_id in ambiguous - self._ambiguous:
                 _LOGGER.warning("Quarantining duplicate PicoForge board identity %s", board_id)
             changed = self._ambiguous ^ ambiguous
@@ -100,6 +102,7 @@ class DashboardBoards:
                     continue
                 self._known.pop(board_id)
                 self._last_seen.pop(board_id)
+                self._ambiguous.discard(board_id)
                 monitor = self._monitors.pop(board_id, None)
                 if monitor is not None:
                     self._retiring[board_id] = monitor

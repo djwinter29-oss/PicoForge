@@ -155,7 +155,7 @@ class WirelessTestCancelled(RuntimeError):
 def _serialized(
     method: Callable[Concatenate[PicoForgeHid, _P], _T],
 ) -> Callable[Concatenate[PicoForgeHid, _P], _T]:
-    """Keep the result slot and multi-command wireless lifecycles owned by one caller."""
+    """Keep native I/O, disposal and multi-command lifecycles owned by one caller."""
     @wraps(method)
     def call(self: PicoForgeHid, *args: _P.args, **kwargs: _P.kwargs) -> _T:
         with self._control_lock:
@@ -210,6 +210,7 @@ class PicoForgeHid:
         """True while the last Feature 12 read showed a scan or connection test in progress."""
         return self._wireless_active
 
+    @_serialized
     def read_info(self) -> HardwareIdentity:
         self._require_open()
         report = self._device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE)
@@ -223,6 +224,7 @@ class PicoForgeHid:
                 raise ProtocolError("HID identity UID disagrees with the USB serial string")
         return identity
 
+    @_serialized
     def read_configuration(self) -> BoardConfiguration:
         self._require_open()
         identity = self._supported_identity()
@@ -231,6 +233,7 @@ class PicoForgeHid:
         self.configuration = configuration
         return configuration
 
+    @_serialized
     def read_input_report(self, timeout_ms: int = 250) -> InputReport | None:
         if timeout_ms < 0:
             raise ValueError("timeout_ms must not be negative")
@@ -301,6 +304,7 @@ class PicoForgeHid:
         command = build_control_command_report(self._next_transaction_id(), ControlOpcode.REBOOT, flags=1)
         return self._execute_control(command, ControlOpcode.REBOOT)
 
+    @_serialized
     def read_wireless(self) -> WirelessStatus:
         self._require_open()
         self._require(CAP_WIRELESS, "Wireless provisioning is unavailable on this firmware")
@@ -496,13 +500,16 @@ class PicoForgeHid:
         self._uncertain_wireless_operation = (kind, expected_generation)
         while monotonic() < deadline:
             if cancel is not None and cancel.is_set():
+                previous_result = self.last_command_result
                 try:
                     self._uncertain_command = None
                     self._uncertain_wireless_operation = None
                     self.cancel_wireless_test()
                 except Exception:
-                    self._uncertain_command = self._uncertain_command or command_reference
-                    self._uncertain_wireless_operation = (kind, expected_generation)
+                    # A sent cancel owns its result; the cancelled test need not reach its old terminal state.
+                    if self._uncertain_command is None and self.last_command_result is previous_result:
+                        self._uncertain_command = command_reference
+                        self._uncertain_wireless_operation = (kind, expected_generation)
                     raise
                 raise WirelessTestCancelled("Wi-Fi test cancelled")
             if on_poll is not None:
@@ -541,7 +548,9 @@ class PicoForgeHid:
             ControlOpcode.MSC,
         )
 
+    @_serialized
     def close(self) -> None:
+        """Wait for accepted native I/O, then close once; a failed close is terminal."""
         if self._close_error is not None:
             raise RuntimeError("HID cleanup failed; restart before reconnecting") from self._close_error
         if not self.closed:

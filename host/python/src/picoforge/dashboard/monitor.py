@@ -37,6 +37,7 @@ _MSC_RECONNECT_TIMEOUT_SECONDS = 5.0
 _INPUT_POLL_INTERVAL_SECONDS = 0.05
 _IDLE_INPUT_POLL_INTERVAL_SECONDS = 0.5
 _IDLE_WIRELESS_POLL_INTERVAL_SECONDS = 5.0
+_WIRELESS_MAX_AGE_SECONDS = 6.0
 _VIEWER_IDLE_TIMEOUT_SECONDS = 5.0
 _BUSY_WAIT_SECONDS = 2.0
 _P = ParamSpec("_P")
@@ -76,6 +77,7 @@ def _empty_snapshot() -> DashboardSnapshot:
         "wireless_phase": None,
         "wireless": None,
         "wireless_error": None,
+        "wireless_cleanup_required": False,
     }
 
 
@@ -108,6 +110,7 @@ class DeviceMonitor:
         self._stop = threading.Event()
         self._snapshot = _empty_snapshot()
         self._input_received_at: dict[str, float] = {}
+        self._wireless_received_at: float | None = None
         self._last_status_request_at = time.monotonic() - _VIEWER_IDLE_TIMEOUT_SECONDS
         self._command_outcome_uncertain = False
         self._uncertain_command: tuple[int, int] | None = None
@@ -115,6 +118,7 @@ class DeviceMonitor:
         self._msc_reconnect_deadline = 0.0
         self._msc_reconnect_enabled: bool | None = None
         self._wireless_test_cancel: threading.Event | None = None
+        self._wireless_cleanup_required = False
         self._identity_ambiguous = False
         self._thread = threading.Thread(target=self._run, name="picoforge-hid-monitor", daemon=True)
         if autostart:
@@ -126,13 +130,20 @@ class DeviceMonitor:
         with self._lock:
             result = deepcopy(self._snapshot)
             received_at = self._input_received_at.copy()
+            wireless_received_at = self._wireless_received_at
             result["command_outcome_uncertain"] = self._command_outcome_uncertain
+            result["wireless_cleanup_required"] = self._wireless_cleanup_required
         now = time.monotonic()
         for kind, (max_age, flag) in _REPORTS.items():
             stale = kind not in received_at or now - received_at[kind] >= max_age
             result[flag] = stale
             if stale:
                 result[kind] = None
+        wireless = result["wireless"]
+        if wireless is not None and (wireless_received_at is None
+                                     or now - wireless_received_at >= _WIRELESS_MAX_AGE_SECONDS):
+            wireless["stale"] = True
+            result["wireless_error"] = result["wireless_error"] or "Wireless status is stale; wait for a refresh"
         return result
 
     def status_snapshot(self) -> DashboardSnapshot:
@@ -142,9 +153,10 @@ class DeviceMonitor:
         return self.snapshot()
 
     def _reset_snapshot(self, **fields: Any) -> None:
-        """Replace the snapshot with an empty one plus fields and forget every input report age."""
+        """Replace the snapshot with an empty one plus fields and forget all report receipt ages."""
         with self._lock:
             self._input_received_at = {}
+            self._wireless_received_at = None
             self._snapshot = cast(DashboardSnapshot, {**_empty_snapshot(), **fields})
 
     def close(self) -> None:
@@ -159,7 +171,7 @@ class DeviceMonitor:
         if not self._device_lock.acquire(blocking=False):
             return False
         try:
-            if self._command_outcome_uncertain:
+            if self._command_outcome_uncertain or self._wireless_cleanup_required:
                 return False
             self._stop.set()
             return True
@@ -183,7 +195,7 @@ class DeviceMonitor:
         return self._active_client
 
     @contextmanager
-    def _device(self) -> Generator[None, None, None]:
+    def _device(self, *, allow_cleanup: bool = False) -> Generator[None, None, None]:
         """Own the board for one API command, or refuse quickly while a long Wi-Fi operation holds it."""
         # ponytail: a 2 s wait turns a 15 s scan or 35 s test into a quick 409 instead of a hung request; queue
         # commands per board if users need them to run after the operation instead of retrying.
@@ -195,6 +207,8 @@ class DeviceMonitor:
             with self._lock:
                 if self._identity_ambiguous:
                     raise BoardConflict("Duplicate PicoForge board identity; disconnect boards with duplicate serials")
+                if self._wireless_cleanup_required and not allow_cleanup:
+                    raise BoardConflict("Temporary Wi-Fi credentials need cleanup; retry clearing the Wi-Fi test")
             yield
         finally:
             self._device_lock.release()
@@ -242,6 +256,8 @@ class DeviceMonitor:
             if (result["status"] == "completed"
                     and result.get("opcode") in (ControlOpcode.REBOOT, ControlOpcode.SAVE_SETTINGS)):
                 self._snapshot["reboot_pending"] = True
+            if result["status"] == "completed" and result.get("opcode") == ControlOpcode.WIFI_CANCEL:
+                self._wireless_cleanup_required = False
             if self._snapshot.get("connected"):
                 self._snapshot["control_result"] = result
 
@@ -253,10 +269,10 @@ class DeviceMonitor:
                 raise BoardConflict("The board LED is unavailable")
             result = self._send_control(client.set_led, on)
             PicoForgeHid.require_completed(result, "LED")
-        with self._lock:
-            runtime = self._snapshot.get("runtime")
-            if isinstance(runtime, dict):
-                runtime["led_on"] = on
+            with self._lock:
+                runtime = self._snapshot.get("runtime")
+                if isinstance(runtime, dict):
+                    runtime["led_on"] = on
         return {"control_result": result}
 
     def set_msc(self, enable: bool, *, force: bool = False) -> MscResponse:
@@ -334,7 +350,7 @@ class DeviceMonitor:
 
     def resync_command(self) -> ResyncResponse:
         """Clear uncertainty only when the board reports the exact pending operation as final."""
-        with self._device():
+        with self._device(allow_cleanup=True):
             if not self._command_outcome_uncertain:
                 return {"uncertain": False, "control_result": None, "wireless": None}
             client = self._client(require_configuration=False)
@@ -359,8 +375,7 @@ class DeviceMonitor:
                     self._publish_control_result(control_result)
                 if self._snapshot.get("connected"):
                     if wireless is not None:
-                        self._snapshot["wireless"] = wireless
-                        self._snapshot["wireless_error"] = None
+                        self._publish_wireless(wireless)
             return {"uncertain": False, "control_result": control_result, "wireless": wireless}
 
     def _require_wireless_idle(self) -> PicoForgeHid:
@@ -396,27 +411,45 @@ class DeviceMonitor:
             with self._lock:
                 self._wireless_test_cancel = stop
             cancel_sent = False
+            previous_result = client.last_command_result
             try:
                 return {"test": self._send_control(client.test_wireless, ssid, password,
                                                    on_poll=self._drain_input_reports,
                                                    on_progress=self._set_wireless_phase, cancel=stop)}
             except WirelessTestCancelled:
                 cancel_sent = True
+                with self._lock:
+                    self._wireless_cleanup_required = False
                 raise
             finally:
                 with self._lock:
                     self._wireless_test_cancel = None
                 self._set_wireless_phase(None)
+                last_result = client.last_command_result
+                cancel_sent |= (last_result is not None and last_result is not previous_result
+                                and last_result["opcode"] == ControlOpcode.WIFI_CANCEL)
                 # A cancel that arrived after the client's last check must still clear the test credentials.
                 if stop.is_set() and not cancel_sent and not self._command_outcome_uncertain:
-                    try:
-                        self._send_control(client.cancel_wireless_test)
-                    except (OSError, BoardConflict, ProtocolError) as error:
-                        _LOGGER.exception("Late Wi-Fi test cancellation failed; board command state is uncertain")
-                        self._record_uncertain_command(client)
-                        raise CommandOutcomeUncertain(
-                            "Late Wi-Fi test cancellation failed; command outcome is uncertain"
-                        ) from error
+                    self._clear_wireless_test(client)
+
+    def _clear_wireless_test(self, client: PicoForgeHid) -> None:
+        """Retain cleanup ownership until cancellation completes; only unknown delivery requires Re-sync."""
+        with self._lock:
+            self._wireless_cleanup_required = True
+        try:
+            self._send_control(client.cancel_wireless_test)
+        except (OSError, BoardConflict, ProtocolError) as error:
+            _LOGGER.warning("Wi-Fi test cleanup failed; explicit cleanup retry is required: %s", error)
+            raise BoardConflict("Could not clear temporary Wi-Fi credentials; retry clearing the Wi-Fi test") from error
+        with self._lock:
+            self._wireless_cleanup_required = False
+
+    def _publish_wireless(self, wireless: WirelessStatus) -> None:
+        """Publish successful Feature 12 data with its receipt time, never extend freshness on failure."""
+        with self._lock:
+            self._snapshot["wireless"] = wireless
+            self._snapshot["wireless_error"] = None
+            self._wireless_received_at = time.monotonic()
 
     def _set_wireless_phase(self, phase: str | None) -> None:
         with self._lock:
@@ -459,11 +492,12 @@ class DeviceMonitor:
         # A running test owns the board for up to 35 s; it sends the cancel at its next 0.5 s poll instead.
         with self._lock:
             if self._wireless_test_cancel is not None:
+                self._wireless_cleanup_required = True
                 self._wireless_test_cancel.set()
                 return {"cancelled": True}
-        with self._device():
+        with self._device(allow_cleanup=True):
             client = self._require_wireless_idle()
-            self._send_control(client.cancel_wireless_test)
+            self._clear_wireless_test(client)
             return {"cancelled": True}
 
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResponse:
@@ -528,10 +562,10 @@ class DeviceMonitor:
                             except (OSError, ProtocolError, BoardConflict) as error:
                                 wireless, wireless_error = None, str(error)
                             with self._lock:
-                                self._snapshot["wireless_error"] = wireless_error
                                 if wireless is not None:
-                                    self._snapshot["wireless"] = wireless
+                                    self._publish_wireless(wireless)
                                 else:
+                                    self._snapshot["wireless_error"] = wireless_error
                                     previous_wireless = self._snapshot["wireless"]
                                     if previous_wireless is not None:
                                         previous_wireless["stale"] = True

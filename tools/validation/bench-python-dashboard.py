@@ -66,13 +66,16 @@ def bench_host(seconds):
     app = create_app(OneBoard(monitor))
     try:
         def refresh():
-            monitor._input_received_at = dict.fromkeys(("runtime", "memory", "self_test"), time.monotonic())
+            now = time.monotonic()
+            monitor._input_received_at = dict.fromkeys(("runtime", "memory", "self_test"), now)
+            monitor._wireless_received_at = now
 
         def snapshot():
             refresh()
             return monitor.snapshot()
 
         assert all(snapshot()[section] is not None for section in ("runtime", "memory", "self_test", "wireless"))
+        assert snapshot()["wireless"]["stale"] is False
         print(f"snapshot() copy (including receipt refresh): {per_call_us(snapshot, 20000):.1f} us")
         # Keep the fixed benchmark payload fresh without changing production freshness thresholds.
         with app.test_client() as client:

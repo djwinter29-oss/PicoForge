@@ -40,6 +40,7 @@ class DashboardSnapshot(TypedDict):
     wireless_phase: str | None
     wireless: WirelessStatus | None
     wireless_error: str | None
+    wireless_cleanup_required: bool
     command_resync_supported: bool
 
 

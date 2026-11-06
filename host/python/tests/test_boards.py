@@ -16,6 +16,74 @@ class IdleMonitor:
 
 
 class DashboardBoardsTests(unittest.TestCase):
+    def test_absent_quarantined_monitor_can_retire_without_retaining_identity_forever(self):
+        attached = [{"serial_number": "same", "device_path": "/hid/a"}]
+        now = [0.0]
+        monitor = make_monitor()
+        closed = threading.Event()
+        original_close = monitor.close
+
+        def close():
+            original_close()
+            closed.set()
+
+        monitor.close = close
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: monitor, clock=lambda: now[0])
+        self.addCleanup(boards.close)
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.monitor(board_id)
+        attached.append({"serial_number": "same", "device_path": "/hid/b"})
+        boards.boards()
+        attached.clear()
+        now[0] = 29.0
+        self.assertTrue(boards.boards()["warnings"])
+        with self.assertRaises(BoardConflict):
+            boards.monitor(board_id)
+        now[0] = 30.0
+        boards.boards()
+        self.assertTrue(closed.wait(1))
+        with self.assertRaisesRegex(LookupError, "unknown board"):
+            boards.monitor(board_id)
+        self.assertNotIn(board_id, boards._ambiguous)
+        self.assertNotIn("warnings", boards.boards())
+
+    def test_duplicate_identity_never_owned_does_not_leave_an_unbounded_quarantine(self):
+        attached = [{"serial_number": "same", "device_path": "/hid/a"},
+                    {"serial_number": "same", "device_path": "/hid/b"}]
+        boards = DashboardBoards(discover=lambda: attached)
+        self.addCleanup(boards.close)
+        self.assertTrue(boards.boards()["warnings"])
+        attached.clear()
+        self.assertNotIn("warnings", boards.boards())
+        self.assertFalse(boards._ambiguous)
+
+    def test_quarantine_survives_absent_expiry_when_unresolved_ownership_prevents_retirement(self):
+        for unresolved in ("_command_outcome_uncertain", "_wireless_cleanup_required"):
+            with self.subTest(unresolved=unresolved):
+                attached = [{"serial_number": "same", "device_path": "/hid/a"}]
+                now = [0.0]
+                monitor = make_monitor()
+                setattr(monitor, unresolved, True)
+                boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: monitor,
+                                         clock=lambda: now[0])
+                self.addCleanup(boards.close)
+                board_id = boards.boards()["boards"][0]["id"]
+                boards.monitor(board_id)
+                attached.append({"serial_number": "same", "device_path": "/hid/b"})
+                boards.boards()
+                attached.clear()
+                now[0] = 60.0
+                self.assertTrue(boards.boards()["warnings"])
+                self.assertFalse(monitor._stop.is_set())
+                with self.assertRaises(BoardConflict):
+                    boards.monitor(board_id)
+                with self.assertRaisesRegex(BoardConflict, "Duplicate"):
+                    monitor.set_led(True)
+                attached[:] = [{"serial_number": "same", "device_path": "/hid/new"}]
+                self.assertNotIn("warnings", boards.boards())
+                self.assertIs(boards.monitor(board_id), monitor)
+                self.assertTrue(getattr(monitor, unresolved), "unique discovery cannot resolve command ownership")
+
     def test_expiration_overlapping_a_command_preserves_the_result_and_write_block(self):
         for uncertain in (False, True):
             with self.subTest(uncertain=uncertain):

@@ -2,6 +2,7 @@
 
 import threading
 import unittest
+from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
 from helpers import make_monitor
@@ -30,6 +31,46 @@ class CommandInvariantTests(unittest.TestCase):
         if cleanup:
             self.addCleanup(monitor.close)
         return client, monitor
+
+    def test_led_publication_finishes_before_the_next_command_can_own_the_board(self):
+        client, monitor = self.ready()
+        client._device.feature_reports[20] = [
+            test_device.control_result(transaction=1), test_device.control_result(transaction=2),
+        ]
+        monitor._snapshot["runtime"] = {"led_on": False}
+        released, resume = threading.Event(), threading.Event()
+        original = monitor._device
+        errors = []
+
+        @contextmanager
+        def ownership():
+            with original():
+                yield
+            if threading.current_thread().name == "first-led":
+                released.set()
+                if not resume.wait(3):
+                    raise AssertionError("LED publication release timed out")
+
+        def first():
+            try:
+                monitor.set_led(True)
+            except Exception as error:
+                errors.append(error)
+
+        monitor._device = ownership
+        worker = threading.Thread(target=first, name="first-led")
+        worker.start()
+        try:
+            self.assertTrue(released.wait(2))
+            self.assertTrue(monitor.snapshot()["runtime"]["led_on"], "publish before releasing ownership")
+            monitor.set_led(False)
+        finally:
+            resume.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual([bool(payload[5]) for payload in client._device.sent], [True, False])
+        self.assertFalse(monitor.snapshot()["runtime"]["led_on"])
 
     def test_connection_publication_owns_the_client_and_initial_snapshot_together(self):
         client, monitor = self.ready()
@@ -324,6 +365,40 @@ class CommandInvariantTests(unittest.TestCase):
         monitor.set_led(True)
         self.assertEqual(len(client._device.sent), 1)
 
+    def test_absence_cannot_clear_quarantine_until_positive_unique_discovery(self):
+        client, monitor = self.ready()
+        attached = [{"serial_number": "same", "device_path": "/hid/a"}]
+        factory = Mock(return_value=monitor)
+        boards = DashboardBoards(discover=lambda: attached, monitor_factory=factory, clock=lambda: 0.0)
+        self.addCleanup(boards.close)
+        board_id = boards.boards()["boards"][0]["id"]
+        boards.monitor(board_id)
+        attached.append({"serial_number": "same", "device_path": "/hid/b"})
+        boards.boards()
+        app = create_app(boards)
+        self.addCleanup(app.extensions["picoforge_console"].close_all)
+        http = app.test_client()
+
+        for devices in ([], [{"serial_number": "other", "device_path": "/hid/c"}], []):
+            attached[:] = devices
+            listing = http.get("/api/boards")
+            self.assertEqual(listing.status_code, 200)
+            self.assertTrue(listing.json["warnings"])
+            self.assertEqual(http.post("/api/led?board=" + board_id, json={"on": True}).status_code, 409)
+            with self.assertRaises(BoardConflict):
+                boards.monitor(board_id)
+            with self.assertRaises(BoardConflict):
+                monitor.set_led(True)
+            self.assertEqual(client._device.sent, [])
+
+        attached[:] = [{"serial_number": "same", "device_path": "/hid/new"}]
+        self.assertNotIn("warnings", http.get("/api/boards").json)
+        self.assertIs(boards.monitor(board_id), monitor)
+        client._device.feature_reports[20] = [test_device.control_result()]
+        self.assertEqual(http.post("/api/led?board=" + board_id, json={"on": True}).status_code, 200)
+        self.assertEqual(len(client._device.sent), 1)
+        factory.assert_called_once()
+
     def test_failed_discovery_cannot_clear_identity_quarantine(self):
         client, monitor = self.ready()
         attached = [{"serial_number": "same", "device_path": "/hid/a"}]
@@ -387,6 +462,106 @@ class CommandInvariantTests(unittest.TestCase):
         finally:
             release.set()
             worker.join(2)
+
+
+class WirelessCleanupInvariantTests(unittest.TestCase):
+    def ready(self, cancel_result, *, late=True):
+        client = test_wireless.WirelessTests().client([
+            test_wireless.status(), test_wireless.result(6, 1), test_wireless.result(7, 2),
+            test_wireless.result(9, 3),
+            test_wireless.status(wifi=5, flags=0xB3, test=1, staged=3), cancel_result,
+        ])
+        client._device.read.return_value = []
+        monitor = make_monitor(client, {
+            "connected": True, "hardware": {"wireless_supported": True, "self_test_supported": False,
+                                           "led_available": True},
+            "memory": {"msc": {"enabled": False, "transition_pending": False}},
+        })
+        boards = Mock()
+        boards.monitor.return_value = monitor
+        app = create_app(boards)
+        self.addCleanup(app.extensions["picoforge_console"].close_all)
+        original = client.test_wireless
+
+        def finish_then_cancel(*args, **kwargs):
+            if not late:
+                # The request arrives during the first poll, before the native test can finish.
+                kwargs["on_poll"] = lambda: monitor.cancel_wireless_test()
+                return original(*args, **kwargs)
+            answer = original(*args, **kwargs)
+            self.assertEqual(monitor.cancel_wireless_test(), {"cancelled": True})
+            return answer
+
+        client.test_wireless = finish_then_cancel
+        return client, monitor, app.test_client()
+
+    def test_known_late_cancel_failure_requires_explicit_cleanup_not_unresolvable_resync(self):
+        client, monitor, http = self.ready(test_wireless.result(10, 4, state=6, error=6))
+        response = http.post("/api/wireless/test?board=a", json={"ssid": "Pico", "password": "password"})
+        self.assertEqual(response.status_code, 409)
+        snapshot = monitor.snapshot()
+        self.assertTrue(snapshot["wireless_cleanup_required"])
+        self.assertFalse(snapshot["command_outcome_uncertain"])
+        self.assertFalse(client.command_uncertain)
+        self.assertFalse(monitor.try_retire(), "cleanup ownership must survive discovery retirement")
+        self.assertEqual(http.post("/api/led?board=a", json={"on": True}).status_code, 409)
+        self.assertEqual(http.post("/api/control/resync?board=a", json={"confirm": True}).status_code, 200)
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"], "Re-sync is not cleanup")
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list], [6, 7, 9, 10])
+
+        client._device.get_feature_report.side_effect = [
+            test_wireless.result(10, 5, state=6, error=6), test_wireless.result(10, 6), test_wireless.result(1, 7),
+        ]
+        self.assertEqual(http.post("/api/wireless/cancel?board=a").status_code, 409)
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertEqual(http.post("/api/wireless/cancel?board=a").status_code, 200)
+        self.assertFalse(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertEqual(http.post("/api/led?board=a", json={"on": True}).status_code, 200)
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list],
+                         [6, 7, 9, 10, 10, 10, 1])
+
+    def test_unknown_late_cancel_keeps_exact_reference_and_reconciles_without_resending(self):
+        client, monitor, http = self.ready(OSError("lost cancellation reply"))
+        response = http.post("/api/wireless/test?board=a", json={"ssid": "Pico", "password": "password"})
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(response.json["uncertain"])
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertEqual(monitor._uncertain_command, (4, ControlOpcode.WIFI_CANCEL))
+        client._device.get_feature_report.side_effect = [test_wireless.result(10, 4)]
+        self.assertEqual(http.post("/api/wireless/cancel?board=a").status_code, 409)
+        self.assertEqual(http.post("/api/control/resync?board=a", json={"confirm": True}).status_code, 200)
+        self.assertFalse(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertEqual(client._device.send_feature_report.call_count, 4)
+
+    def test_running_test_known_cancel_failure_is_not_automatically_retried(self):
+        client, monitor, http = self.ready(test_wireless.result(10, 4, state=6, error=6), late=False)
+        # A running cancellation is sent instead of reading the final joined state.
+        client._device.get_feature_report.side_effect = [
+            test_wireless.status(), test_wireless.result(6, 1), test_wireless.result(7, 2),
+            test_wireless.result(9, 3), test_wireless.status(wifi=4, test=1),
+            test_wireless.result(10, 4, state=6, error=6),
+        ]
+        response = http.post("/api/wireless/test?board=a", json={"ssid": "Pico", "password": "password"})
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertEqual([call.args[0][3] for call in client._device.send_feature_report.call_args_list], [6, 7, 9, 10])
+
+    def test_failed_cancel_reconciliation_keeps_cleanup_until_an_explicit_success(self):
+        client, monitor, http = self.ready(OSError("lost cancellation reply"))
+        self.assertEqual(http.post("/api/wireless/test?board=a",
+                                   json={"ssid": "Pico", "password": "password"}).status_code, 503)
+        client._device.get_feature_report.side_effect = [
+            test_wireless.result(10, 4, state=6, error=6), test_wireless.result(10, 5),
+        ]
+        self.assertEqual(http.post("/api/control/resync?board=a", json={"confirm": True}).status_code, 200)
+        self.assertFalse(monitor.snapshot()["command_outcome_uncertain"])
+        self.assertTrue(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertEqual(client._device.send_feature_report.call_count, 4)
+        self.assertEqual(http.post("/api/wireless/cancel?board=a").status_code, 200)
+        self.assertFalse(monitor.snapshot()["wireless_cleanup_required"])
+        self.assertEqual(client._device.send_feature_report.call_count, 5)
 
 
 class ConfigurationInvariantTests(unittest.TestCase):

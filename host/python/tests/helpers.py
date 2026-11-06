@@ -20,4 +20,5 @@ def make_monitor(client=None, snapshot=None, *, fresh=True):
         monitor._snapshot = {**_empty_snapshot(), **snapshot}
     if fresh:
         monitor._input_received_at = dict.fromkeys(("runtime", "memory", "self_test"), math.inf)
+        monitor._wireless_received_at = math.inf
     return monitor

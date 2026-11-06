@@ -4,6 +4,7 @@
  * @property {boolean} [connected]
  * @property {boolean} [outcome_uncertain]
  * @property {boolean} [command_outcome_uncertain]
+ * @property {boolean} [wireless_cleanup_required]
  * @property {boolean} [reboot_pending]
  * @property {{led_available?: boolean}} [runtime]
  * @property {{transition_pending?: boolean, enabled?: boolean}} [msc]
@@ -39,12 +40,13 @@
 export function operationState(snapshot, activity = {}, sizeMib = NaN) {
   const outcomeUncertain = Boolean(activity.uncertain || snapshot?.outcome_uncertain || snapshot?.command_outcome_uncertain);
   const rebootPending = Boolean(activity.rebootPending || snapshot?.reboot_pending);
+  const cleanupRequired = Boolean(snapshot?.wireless_cleanup_required);
   const mscPending = Boolean(activity.mscInFlight || activity.mscPending || snapshot?.msc_command_pending);
   const selfTestPending = Boolean(activity.selfTestInFlight || activity.selfTestPending || snapshot?.self_test_command_pending);
   const storageCommandPending = mscPending || selfTestPending
     || Boolean(snapshot?.self_test?.active || snapshot?.msc?.transition_pending);
   const busy = Boolean(activity.resyncing || activity.saving || activity.wirelessBusy || rebootPending
-    || outcomeUncertain || activity.statusFailed || snapshot?.busy);
+    || outcomeUncertain || cleanupRequired || activity.statusFailed || snapshot?.busy);
   const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot?.filesystem_format ?? "");
   const test = snapshot?.self_test;
   const validSize = Number.isInteger(sizeMib) && sizeMib >= 1 && sizeMib <= 1024;
@@ -52,7 +54,7 @@ export function operationState(snapshot, activity = {}, sizeMib = NaN) {
   return {
     outcomeUncertain, rebootPending, mscPending, selfTestPending, storageCommandPending, busy,
     settingsBusy: Boolean(activity.resyncing || activity.saving || activity.wirelessInFlight || rebootPending
-      || outcomeUncertain || activity.statusFailed),
+      || outcomeUncertain || cleanupRequired || activity.statusFailed),
     canSetLed: !busy && Boolean(snapshot?.connected && snapshot.runtime?.led_available) && !activity.ledInFlight,
     canChangeMsc: !busy && !storageCommandPending && Boolean(snapshot?.connected && snapshot.msc),
     canStartSelfTest: Boolean(testReady && !test.active && !selfTestPending && !busy && !mscPending

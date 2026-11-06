@@ -55,6 +55,9 @@ before retrying. USB-shared storage blocks wireless Save and explains how to ret
 Re-sync locks board selection and discards continuations from a previous board generation. Cancellation delivery
 timeouts and network failures retain uncertain outcomes; known refusals remain retryable after explicit cleanup.
 Disconnected polling clears drafts once per lifecycle transition, not on every status render.
+When the Python host reports `wireless_cleanup_required`, unrelated writes remain blocked and the status action offers
+**Clear Wi-Fi test**. Known cleanup failures permit only an explicit cleanup retry. Unknown cancellation delivery
+requires **Re-sync** first; a confirmed completed cancel clears local recovery state without resending it.
 
 The pure operation policy combines reported facts and local activity for command admission and rendering. Benchmark
 size edits use the complete view projection, never a raw status render that could discard local gates. Local delivery,
@@ -152,7 +155,9 @@ packaged or source-installed Python host with representative RP2040 and RP2350 b
    reconnects normally. An already accepted HID operation may finish.
 7. If duplicate-serial boards are available, rescan while both are connected. Verify the ambiguous identity disappears
    from the selector with a warning and previously obtained references cannot send commands; an unrelated board stays
-   usable. Remove the duplicate and verify the original monitor is reused without replaying an unresolved command.
+   usable. Disconnect both and rescan within the 30-second serial-board grace period: absence must not remove the warning
+   or enable commands through retained references. Reconnect only one and verify positive unique discovery clears
+   quarantine and reuses the original monitor without replaying an unresolved command.
 8. Record worst observed UI/report update delay, monitor process CPU, reconnect result, and any errors. Treat a failed
    step as a qualification gap; do not infer reliability from host unit tests.
 
@@ -236,24 +241,44 @@ See the [test ownership index](../../tests/README.md) for cross-project checks a
 Report codecs are pure functions grouped by report family. Decoded shapes belong to `picoforge.reports.models`;
 `picoforge.hid.models` preserves previous imports as compatibility exports. Annotation-only imports do not initialize
 HID transport.
-The HID client owns one handle, serializes Feature 20 transactions and wireless lifecycles, and validates exact result
+The HID client owns one handle, serializes native reads, Feature 20 transactions, disposal and wireless lifecycles,
+and validates exact result
 references without replaying uncertain writes. The monitor owns reconnects and snapshots, preserving unresolved command
 references across client replacement. Routes validate HTTP requests and serialize public responses without modifying
 internal snapshots. CLI module execution and the installed console script both delegate to the same entry point.
+Public HID reads and close share the existing reentrant transaction lock. Close waits for accepted I/O, closes the
+native handle once, and makes queued operations fail as closed; concurrent closes cannot retry failed cleanup.
+Nested reads and forced-save reopening reuse that lock. Native calls still must return before close can finish.
 The worker installs the active client and initial connected snapshot under the same command ownership; it removes the
 client before publishing a disconnected snapshot under that ownership. Requests cannot use a partially installed
 connection or have an accepted transition overwritten by startup publication.
+LED publication also finishes before releasing command ownership, so an earlier request cannot overwrite a later
+successful LED command in the snapshot.
 One result-publication path applies `reboot_pending` for completed settings saves and explicit reboots, including when
 subsequent saved-value or credential-commit validation fails. Those mismatches still return an error and do not publish
 the requested settings as confirmed. Re-sync uses the same path without replaying the command. Refused, failed and
 uncertain results do not claim completion. One shared gate refuses every subsequent command until reconnection resets
 the snapshot; read-only status and Re-sync remain available.
 
+Temporary Wi-Fi cleanup has a separate `wireless_cleanup_required` snapshot flag. A known cancellation failure does
+not fabricate transaction uncertainty with missing reconciliation references. It retains cleanup ownership and blocks
+unrelated commands until an explicit cancellation succeeds. Re-sync remains read-only: a completed cancel clears
+cleanup, while a failed cancel leaves cleanup required and permits an explicit retry. An unknown cancel retains its
+own exact transaction reference, not the cancelled test's terminal generation. Neither path replays the original test.
+Discovery retirement retains monitors with cleanup pending, including across handle reconnection.
+
+Successful worker or Re-sync wireless reads record a monotonic receipt time. Snapshots mark wireless status stale and
+set `wireless_error` at six seconds without a successful refresh, without modifying stored report data. The six-second
+bound leaves scheduling margin above the five-second idle poll; failed reads do not extend it. Console creation
+rejects disconnected, failed, expired, or cleanup-required wireless state before opening a TCP connection.
+
 Discovery runs outside the board registry lock; scans are serialized and publish only complete results, never after
 shutdown. A duplicate identity is omitted from the selector and reported through optional discovery `warnings`; other
 boards remain selectable. Its retained monitor rejects new commands, including through previously obtained references,
 but does not interrupt accepted commands or discard uncertain outcomes. A complete unique rescan clears quarantine and
-reuses the monitor; a failed enumeration cannot clear it.
+reuses the monitor; absent identities, unrelated boards, and failed enumeration cannot clear it. Quarantine for an
+absent known identity ends only on positive unique discovery or a successful retirement claim that prevents new commands.
+Unowned duplicate identities are forgotten when absent, rather than accumulating quarantine entries indefinitely.
 Absent serial-numbered boards expire after 30 seconds, path-only boards after 5 seconds. Uncertain commands
 retain their monitors until confirmed re-sync or shutdown. At most 16 monitors may be active or retiring. Each expired
 monitor must first claim idle command ownership without waiting: active commands postpone expiry, unresolved outcomes
@@ -292,7 +317,8 @@ Pinned contributor validators live in `host/python/tests/requirements.txt`, outs
 Tests cover independent imports and module launching in fresh processes, retirement/shutdown races, native cleanup
 failure, authentication deadlines, timer ownership, non-UTF-8 HID paths, body limits, and dependency-lock consistency.
 Cross-operation tests combine the real monitor, HID client and HTTP routes over a fake native transport to verify reboot
-gates, reconciliation, reconnection and identity quarantine. Event-controlled publication tests verify command ownership
+gates, reconciliation, reconnection, cleanup retry and identity quarantine. Receipt-boundary tests cover wireless expiry,
+refresh recovery and console admission. Event-controlled LED and connection publication tests verify command ownership
 without timing sleeps; compound-failure tests cover candidate validation followed by native cleanup failure and terminal
 monitor shutdown. The documented benchmark is also run as a subprocess.
 These are hardware-free checks; polling, snapshot copying, and wireless lifecycle boundaries should change only after

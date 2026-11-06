@@ -299,5 +299,97 @@ test("wireless mutation contract failures retain uncertainty and prevent replay"
       await perform();
       assert.equal(count(), 1);
     });
+
   }
+});
+
+test("known server cleanup failures offer explicit retry without another test or Re-sync", async context => {
+  const { connected, state, handlers, elements, requestedUrls } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  connected.wireless_cleanup_required = true;
+  await state.tick();
+  await settle();
+  assert.equal(elements.get("#command-resync").hidden, false);
+  assert.equal(elements.get("#command-resync").textContent, "Clear Wi-Fi test");
+  assert.equal(elements.get("#board-select").disabled, false);
+  assert.match(elements.get("#status-message").textContent, /credentials need cleanup/);
+  for (const id of ["#led-control", "#settings-save", "#reboot-control", "#msc-control"])
+    assert.equal(elements.get(id).disabled, true, id);
+  const before = requestedUrls.length;
+  await handlers.get("#led-control:click")();
+  await handlers.get("#wifi-scan:click")();
+  assert.equal(requestedUrls.length, before);
+  state.responses.set("/api/wireless/cancel", () => ({
+    ok: false, status: 409, json: async () => ({ error: "Cleanup failed", uncertain: false }),
+  }));
+  await handlers.get("#command-resync:click")();
+  assert.match(elements.get("#wireless-summary").textContent, /Cleanup failed/);
+  assert.equal(elements.get("#command-resync").disabled, false);
+  state.responses.set("/api/wireless/cancel", () => {
+    connected.wireless_cleanup_required = false;
+    return reply({ cancelled: true });
+  });
+  await handlers.get("#command-resync:click")();
+  assert.equal(elements.get("#command-resync").hidden, true);
+  assert.equal(elements.get("#led-control").disabled, false);
+  assert.equal(elements.get("#wireless-summary").hidden, true);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 2);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/test?")).length, 0);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/control/resync?")).length, 0);
+});
+
+test("unknown cleanup result requires Re-sync and a confirmed cancel clears local recovery state", async context => {
+  const { connected, state, handlers, elements, requestedUrls } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  connected.wireless_cleanup_required = true;
+  await state.tick();
+  state.responses.set("/api/wireless/cancel", () => {
+    connected.command_outcome_uncertain = true;
+    connected.command_resync_supported = true;
+    throw new TypeError("lost reply");
+  });
+  await handlers.get("#command-resync:click")();
+  await state.tick();
+  assert.equal(elements.get("#command-resync").textContent, "Re-sync");
+  assert.equal(elements.get("#led-control").disabled, true);
+  state.resyncResult.control_result = { status: "completed", opcode: 10 };
+  state.responses.set("/api/control/resync", () => {
+    connected.command_outcome_uncertain = false;
+    connected.wireless_cleanup_required = false;
+    return reply(state.resyncResult);
+  });
+  await handlers.get("#command-resync:click")();
+  assert.equal(elements.get("#command-resync").hidden, true);
+  assert.equal(elements.get("#led-control").disabled, false);
+  assert.equal(elements.get("#wireless-summary").hidden, true);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 1);
+});
+
+test("Re-sync of a failed cancel allows only an explicit cleanup retry", async context => {
+  const { connected, state, handlers, elements, requestedUrls } = await appFixture(context);
+  connected.hardware.capabilities |= 128;
+  connected.storage_stale = false;
+  connected.wireless_cleanup_required = true;
+  await state.tick();
+  state.responses.set("/api/wireless/cancel", () => {
+    connected.command_outcome_uncertain = true;
+    connected.command_resync_supported = true;
+    throw new TypeError("lost reply");
+  });
+  await handlers.get("#command-resync:click")();
+  await state.tick();
+  state.resyncResult.control_result = { status: "failed", opcode: 10 };
+  await handlers.get("#command-resync:click")();
+  assert.equal(elements.get("#command-resync").textContent, "Clear Wi-Fi test");
+  assert.equal(elements.get("#led-control").disabled, true);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 1);
+  state.responses.set("/api/wireless/cancel", () => {
+    connected.wireless_cleanup_required = false;
+    return reply({ cancelled: true });
+  });
+  await handlers.get("#command-resync:click")();
+  assert.equal(elements.get("#led-control").disabled, false);
+  assert.equal(requestedUrls.filter(url => url.startsWith("/api/wireless/cancel?")).length, 2);
 });

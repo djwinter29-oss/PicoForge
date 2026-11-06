@@ -37,3 +37,13 @@ test("benchmark policy enforces actual size bounds, ownership, and initialized f
   assert.equal(operationState({ ...ready, self_test: { active: true, state: "writing" } }).canCancelSelfTest, true);
   assert.equal(operationState({ ...ready, self_test: { active: true, state: "cleanup" } }).canCancelSelfTest, false);
 });
+
+test("known wireless cleanup blocks writes without inventing transaction uncertainty or locking selection", () => {
+  const state = operationState({ ...ready, wireless_cleanup_required: true }, {}, 32);
+  assert.equal(state.outcomeUncertain, false);
+  assert.equal(state.settingsBusy, true);
+  assert.equal(state.canSetLed, false);
+  assert.equal(state.canChangeMsc, false);
+  assert.equal(state.canStartSelfTest, false);
+  assert.equal(state.boardSelectionBusy, false);
+});

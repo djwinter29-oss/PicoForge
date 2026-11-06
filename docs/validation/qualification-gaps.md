@@ -23,7 +23,8 @@ follow the [getting-started safety precautions](../guides/getting-started.md#bef
 - **Python host timing and lifecycle:** the 50 ms HID polling interval, real report freshness, CPU cost under multiple
   monitors, USB detach/reconnect, MSC ownership handoff, completed-save/reboot gating, duplicate-identity recovery, and
   shutdown during wireless operations or TCP authentication have not yet been qualified on physical boards.
-  Hardware-free tests cover these lifecycle gates but do not close this gap. Follow the
+  Hardware-free tests cover these lifecycle gates, ordered LED publication, six-second wireless expiry, and known/unknown
+  cancellation recovery, but do not close this gap. Follow the
   [Python host hardware procedure](../development/host-tools.md#qualify-the-python-host-with-hardware).
 - **.NET host timing and lifecycle:** the 100 ms HID polling interval, report freshness, multi-board CPU cost, USB
   detach/reconnect, forced-save recovery, and MSC ownership handoff have not yet been qualified on physical boards.

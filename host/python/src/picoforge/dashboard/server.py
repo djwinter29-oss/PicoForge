@@ -156,7 +156,11 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
                 }), 400
             board_id = request.args.get("board")
             monitor = boards.monitor(board_id)
-            wireless = monitor.snapshot().get("wireless")
+            snapshot = monitor.snapshot()
+            if (not snapshot["connected"] or snapshot.get("wireless_error")
+                    or snapshot.get("wireless_cleanup_required")):
+                raise BoardConflict("The board's wireless status is unavailable; refresh or clear the Wi-Fi test")
+            wireless = snapshot.get("wireless")
             if wireless is None:
                 raise BoardConflict("Waiting for the board's wireless status")
             return jsonify({

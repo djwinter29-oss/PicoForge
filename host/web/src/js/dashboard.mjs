@@ -112,7 +112,9 @@ export function renderStatus(snapshot) {
   renderMemory(memory, snapshot.filesystem_format, Boolean(snapshot.storage_stale), snapshot.msc);
   renderSelfTest(snapshot);
 
-  const message = snapshot.error ?? (snapshot.reconnecting ? "Reconnecting after USB-drive mode change..."
+  const message = snapshot.error ?? (snapshot.wireless_cleanup_required
+    ? "Temporary Wi-Fi credentials need cleanup. Clear the Wi-Fi test before sending another command."
+    : snapshot.reconnecting ? "Reconnecting after USB-drive mode change..."
     : runtime ? "HID telemetry is live"
     : connected && snapshot.telemetry_stale ? "Telemetry report is stale"
     : connected ? "Waiting for first status report"
@@ -123,7 +125,9 @@ export function renderStatus(snapshot) {
   document.querySelector("#status-message").textContent = message;
   const commandResync = document.querySelector("#command-resync");
   if (commandResync) {
-    commandResync.hidden = !snapshot.command_resync_supported || !snapshot.command_outcome_uncertain;
+    const cleanup = snapshot.wireless_cleanup_required && !snapshot.command_outcome_uncertain;
+    commandResync.textContent = cleanup ? "Clear Wi-Fi test" : "Re-sync";
+    commandResync.hidden = !cleanup && (!snapshot.command_resync_supported || !snapshot.command_outcome_uncertain);
     commandResync.disabled = !connected || snapshot.command_resyncing || snapshot.status_read_error;
   }
 }

@@ -5,7 +5,8 @@
 export function renderWirelessStatus(snapshot) {
   const wireless = snapshot.wireless;
   const unavailable = !snapshot.connected ? "--" : snapshot.wireless_error ? "Unavailable" : !wireless ? "--" : null;
-  const consoleReady = !unavailable && wireless?.wifi_enabled && wireless.wifi_state === "connected"
+  const consoleReady = !unavailable && !snapshot.wireless_cleanup_required && !wireless?.stale
+    && wireless?.wifi_enabled && wireless.wifi_state === "connected"
     && wireless.tcp_cli_started && snapshot.console_url;
   const render = (name, text) => {
     document.querySelector(`#${name}-diagnostics`).hidden = !(snapshot.hardware?.capabilities & 128);
@@ -38,7 +39,9 @@ export function renderWirelessStatus(snapshot) {
 }
 
 /** Bind the staged Wi-Fi/Bluetooth dialogs to one atomic boot configuration save. */
-export function bindWirelessForm({ load, scan, test, cancelTest, ready, supported, changed = () => {} }) {
+export function bindWirelessForm({
+  load, scan, test, cancelTest, ready, supported, cleanupRequired = () => false, changed = () => {},
+}) {
   const el = id => document.querySelector(`#${id}`);
   const wifiDialog = el("wifi-dialog");
   const bleDialog = el("ble-dialog");
@@ -71,7 +74,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     ? Math.max(0, wifiStage.remaining_seconds - Math.floor((Date.now() - wifiStage.tested_at) / 1000)) : 0;
   const testExpired = () => radioOn("settings-wifi") && wifiStage?.use_tested_wifi && remainingTestSeconds() === 0;
   const saveBlockReason = () => busy ? "Finish the wireless operation before saving."
-    : wifiCanceling || wifiCancelError ? "Clear the temporary Wi-Fi test before saving."
+    : wifiCanceling || wifiCancelError || cleanupRequired() ? "Clear the temporary Wi-Fi test before saving."
       : wifiTestAttempted && !wifiStage ? "Test the connection again or clear the temporary Wi-Fi test before saving."
         : radioOn("settings-wifi") && wifiEdited ? "Network details changed; test the connection again before saving."
           : testExpired() ? "Test credentials expired; test the connection again before saving."
@@ -79,7 +82,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   const refresh = () => {
     const available = supported();
     const tcpReady = available && ready() && !busy && !wifiCancelError && radioOn("settings-wifi");
-    const wifiBlocked = busy || wifiCanceling || wifiCancelError !== null;
+    const wifiBlocked = busy || wifiCanceling || wifiCancelError !== null || cleanupRequired();
     const tcp = el("settings-tcp-cli");
     if (tcp) {
       tcp.disabled = !tcpReady || !status;
@@ -103,7 +106,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     el("wifi-connect").textContent = testTimer !== null ? "Testing…" : "Test connection";
     el("wifi-cancel").disabled = busy || wifiCanceling || wifiCancelRequiresReconnect;
     el("wifi-cancel").textContent = wifiCanceling ? "Clearing…"
-      : wifiCancelError ? "Retry clearing test" : "Cancel";
+      : wifiCancelError || cleanupRequired() ? "Retry clearing test" : "Cancel";
     for (const id of ["wifi-ssid", "wifi-password"]) el(id).disabled = wifiBlocked;
     for (const button of el("wifi-networks").children) {
       button.disabled = wifiBlocked;
@@ -169,10 +172,24 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
       list.append(button);
     });
   };
+  const testCleared = () => {
+    clearInterval(stagedTimer);
+    stagedTimer = null;
+    wifiStage = null;
+    wifiTestAttempted = false;
+    wifiEdited = false;
+    wifiCancelError = null;
+    wifiCancelRequiresReconnect = false;
+    el("wifi-ssid").value = "";
+    selectedSsidHex = null;
+    clearWifiInputs();
+    refresh();
+    changed();
+  };
   const discardWifi = async () => {
     if (wifiCanceling || wifiCancelRequiresReconnect) return false;
     const current = generation;
-    if (wifiTestAttempted) {
+    if (wifiTestAttempted || cleanupRequired()) {
       wifiCanceling = true;
       refresh();
       changed();
@@ -194,18 +211,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
         }
       }
     }
-    clearInterval(stagedTimer);
-    stagedTimer = null;
-    wifiStage = null;
-    wifiTestAttempted = false;
-    wifiEdited = false;
-    wifiCancelError = null;
-    wifiCancelRequiresReconnect = false;
-    el("wifi-ssid").value = "";
-    selectedSsidHex = null;
-    clearWifiInputs();
-    refresh();
-    changed();
+    testCleared();
     return true;
   };
 
@@ -390,6 +396,12 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
   el("ble-cancel").addEventListener("click", () => bleDialog.close());
 
   return {
+    clearTest: discardWifi,
+    cancelResolved(completed) {
+      wifiCancelRequiresReconnect = false;
+      if (completed) testCleared();
+      else { refresh(); changed(); }
+    },
     dirty,
     operationBusy: () => busy || wifiCanceling || wifiCancelError !== null,
     inFlight: () => busy || wifiCanceling,

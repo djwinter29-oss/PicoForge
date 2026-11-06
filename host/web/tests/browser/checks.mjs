@@ -57,7 +57,7 @@ const mock = `<script>
       ble_key_configured: false, tcp_cli_enabled: true }
   };
   window.sharedBrowserState = {connected, unknown: false, scans: 0, leds: 0, tests: 0,
-    ledUncertain: false, mismatch: false};
+    ledUncertain: false, mismatch: false, cleanupFailure: false, cleanups: 0};
   window.fetch = async (input, options = {}) => {
     const url = new URL(input, document.baseURI);
     const state = window.sharedBrowserState;
@@ -99,6 +99,12 @@ const mock = `<script>
     if (url.pathname === "/api/wireless/scan") return response({
       networks: [{ ssid: "browser-network", ssid_hex: "62726f777365722d6e6574776f726b", secured: true, rssi: -40 }]
     });
+    if (url.pathname === "/api/wireless/cancel" && connected.wireless_cleanup_required) {
+      state.cleanups++;
+      if (state.cleanupFailure) return response({error: "Cleanup failed", uncertain: false}, 409);
+      connected.wireless_cleanup_required = false;
+      return response({cancelled: true});
+    }
     if (url.pathname === "/api/wireless/cancel" && ++cancelAttempts === 1) {
       return response({ error: "temporary failure" }, 409);
     }
@@ -178,6 +184,20 @@ await run("command lifecycle gates, restart recovery, and confirmation focus", a
   state.mismatch = false;
   state.connected.board_configuration.system_clock_mhz = 250;
   await reconnect();
+
+  state.connected.wireless_cleanup_required = true;
+  state.cleanupFailure = true;
+  refresh();
+  await waitFor(() => !el("command-resync").hidden, "cleanup recovery was not offered");
+  check(el("command-resync").textContent === "Clear Wi-Fi test", "known cleanup failure incorrectly asks for Re-sync");
+  check(el("led-control").disabled, "cleanup requirement permits unrelated writes");
+  el("command-resync").click();
+  await waitFor(() => el("wireless-summary").textContent.includes("Cleanup failed"), "cleanup failure was hidden");
+  check(!el("command-resync").disabled, "explicit cleanup retry is unavailable");
+  state.cleanupFailure = false;
+  el("command-resync").click();
+  await waitFor(() => !el("led-control").disabled, "confirmed cleanup did not restore commands");
+  check(state.cleanups === 2, "cleanup was automatically replayed");
 
   const opener = page.querySelector("#msc-control");
   const dialog = page.querySelector("#share-dialog");

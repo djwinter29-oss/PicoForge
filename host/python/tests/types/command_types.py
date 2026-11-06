@@ -4,12 +4,12 @@
 
 from picoforge.dashboard.console import ConsoleBridge
 from picoforge.dashboard.boards import DashboardBoards
-from picoforge.dashboard.models import ControlResponse, MscResponse, ResyncResponse, SettingsResponse
+from picoforge.dashboard.models import ControlResponse, DashboardSnapshot, MscResponse, ResyncResponse, SettingsResponse
 from picoforge.dashboard.monitor import DeviceMonitor
 from picoforge.dashboard.server import _board, create_app
 from flask import Flask
 from picoforge.hid.device import PicoForgeHid
-from picoforge.reports.models import ControlResult, WirelessTestResult
+from picoforge.reports.models import ControlResult, HardwareIdentity, InputReport, WirelessStatus, WirelessTestResult
 
 
 def check_command_types(client: PicoForgeHid, monitor: DeviceMonitor, console: ConsoleBridge) -> None:
@@ -38,6 +38,11 @@ def check_route_types(boards: DashboardBoards) -> None:
 
 
 def check_lifecycle_types(client: PicoForgeHid, monitor: DeviceMonitor, result: ControlResult) -> None:
+    _snapshot: DashboardSnapshot = monitor.snapshot()
+    _cleanup: bool = _snapshot["wireless_cleanup_required"]
+    _identity: HardwareIdentity = client.read_info()
+    _input: InputReport | None = client.read_input_report(timeout_ms=0)
+    _status: WirelessStatus = client.read_wireless()
     _command: tuple[int, int] | None = client.uncertain_command
     _wireless: tuple[str, int] | None = client.uncertain_wireless_operation
     _close_error: Exception | None = client._close_error
@@ -46,6 +51,10 @@ def check_lifecycle_types(client: PicoForgeHid, monitor: DeviceMonitor, result: 
     monitor._publish_control_result(result)
     client.require_completed(result)
     client.close()
+    client.read_input_report(timeout_ms="0")  # pyright: ignore[reportArgumentType]
+    client.close(True)  # pyright: ignore[reportCallIssue]
+    monitor.set_identity_ambiguous("yes")  # pyright: ignore[reportArgumentType]
+    _snapshot["wireless_cleanup_required"] = "yes"  # pyright: ignore[reportGeneralTypeIssues]
     _invalid: tuple[str, int] | None = client.uncertain_command  # pyright: ignore[reportAssignmentType]
     monitor._publish_control_result({"status": "completed"})  # pyright: ignore[reportArgumentType]
     client._close_error = "failed"  # pyright: ignore[reportAttributeAccessIssue]

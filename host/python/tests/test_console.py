@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
+from helpers import make_monitor
 from picoforge.dashboard.console import ConsoleBridge
 from picoforge.dashboard.server import create_app, run_server
 from picoforge.reports.common import BoardConflict
@@ -21,7 +22,7 @@ class Monitor:
         return self
 
     def snapshot(self):
-        return {"wireless": self.wireless}
+        return {"connected": True, "wireless": self.wireless}
 
     def read_wireless(self):
         raise AssertionError("console connection must use the monitor snapshot")
@@ -227,6 +228,41 @@ class ConsoleTests(unittest.TestCase):
         with self.client.get("/console?board=board-a") as page:
             self.assertEqual(page.status_code, 200)
             self.assertIn(b"/js/console.mjs", page.data)
+
+    def test_disconnected_failed_or_expired_wireless_cannot_authorize_console_connections(self):
+        wireless = self.monitor.wireless
+        for snapshot in (
+            {"connected": False, "wireless": wireless},
+            {"connected": True, "wireless_error": "Feature 12 failed", "wireless": wireless},
+            {"connected": True, "wireless": {**wireless, "stale": True}},
+            {"connected": True, "wireless_cleanup_required": True, "wireless": wireless},
+        ):
+            with self.subTest(snapshot=snapshot), patch.object(self.monitor, "snapshot", return_value=snapshot):
+                response = self.client.post("/api/console?board=board-a", json={})
+                self.assertEqual(response.status_code, 409)
+                self.assertTrue(response.json["error"])
+        self.connect.assert_not_called()
+
+    def test_receipt_age_gates_the_real_monitor_console_route_and_fresh_refresh_restores_it(self):
+        monitor = make_monitor(snapshot={"connected": True, "wireless": dict(self.monitor.wireless)}, fresh=False)
+        monitor._wireless_received_at = 100.0
+        boards = Mock()
+        boards.monitor.return_value = monitor
+        app = create_app(boards)
+        self.addCleanup(app.extensions["picoforge_console"].close_all)
+        http = app.test_client()
+        for now in (106.0, 1000.0):
+            with self.subTest(now=now), patch("picoforge.dashboard.monitor.time.monotonic", return_value=now):
+                response = http.get("/api/status?board=a")
+                self.assertTrue(response.json["wireless"]["stale"])
+                self.assertTrue(response.json["wireless_error"])
+                self.assertEqual(http.post("/api/console?board=a", json={}).status_code, 409)
+        self.connect.assert_not_called()
+        with patch("picoforge.dashboard.monitor.time.monotonic", return_value=1000.0):
+            monitor._publish_wireless(dict(self.monitor.wireless))
+            self.assertFalse(http.get("/api/status?board=a").json["wireless"].get("stale", False))
+            self.assertEqual(http.post("/api/console?board=a", json={}).status_code, 200)
+        self.connect.assert_called_once()
 
     def test_abandoned_session_expires_and_connection_errors_are_explicit(self):
         bridge = ConsoleBridge()
