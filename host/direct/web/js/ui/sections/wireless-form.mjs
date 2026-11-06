@@ -2,6 +2,8 @@ import { OP } from "../../protocol/constants.mjs";
 import { bytesToHex } from "../../protocol/codec.mjs";
 import { createTimerScope } from "../../timers.mjs";
 import { queryElement } from "../dom.mjs";
+import { describe } from "../messages.mjs";
+import { BoardError, REASON } from "../../state/errors.mjs";
 
 /**
  * @brief Pure form-operation state machine. One device operation runs at a time.
@@ -169,8 +171,8 @@ export function bindWirelessForm({
         await cancelTest(signal);
       } catch (error) {
         if (signal.aborted) return false;
-        dispatch({ type: "cancelFailed", error: error.message, needsReconnect: !ready() });
-        setStatus("direct-wifi-status", `Could not clear the temporary Wi-Fi test: ${error.message}`);
+        dispatch({ type: "cancelFailed", error: describe(error), needsReconnect: !ready() });
+        setStatus("direct-wifi-status", `Could not clear the temporary Wi-Fi test: ${describe(error)}`);
         refresh();
         changed();
         return false;
@@ -242,7 +244,7 @@ export function bindWirelessForm({
       renderNetworks(networks);
       setStatus("direct-wifi-status", networks.length ? `Found ${networks.length} networks.` : "No networks found.");
     } catch (error) {
-      if (!signal.aborted) setStatus("direct-wifi-status", error.message);
+      if (!signal.aborted) setStatus("direct-wifi-status", describe(error));
     } finally {
       if (!signal.aborted) {
         dispatch({ type: "done" });
@@ -289,12 +291,12 @@ export function bindWirelessForm({
       const rawSsid = selectedSsidHex === undefined ? {} : { ssid_hex: selectedSsidHex };
       const result = await test({ ssid, password, ...rawSsid }, next => {
         if (signal.aborted || !next || next === step) return;
-        step = next;
+        step = describe(next);
         progress();
       }, signal);
       if (signal.aborted) return;
       if (!Number.isInteger(result.remaining_seconds) || result.remaining_seconds < 1 ||
-          result.remaining_seconds > 600) throw new Error("Firmware returned an invalid staged-credential lifetime");
+          result.remaining_seconds > 600) throw new BoardError(REASON.LIFETIME_INVALID);
       wifiStage = { ssid, ...rawSsid, use_tested_wifi: true, tested_at: now(),
         remaining_seconds: result.remaining_seconds };
       timers.clearInterval(stagedTimer);
@@ -306,7 +308,7 @@ export function bindWirelessForm({
       wifiDialog.close();
       changed();
     } catch (error) {
-      if (!signal.aborted) setStatus("direct-wifi-status", error.message);
+      if (!signal.aborted) setStatus("direct-wifi-status", describe(error));
     } finally {
       if (!signal.aborted) {
         timers.clearInterval(testTimer);
@@ -343,7 +345,7 @@ export function bindWirelessForm({
       if (!clipboard) throw new Error("Clipboard is unavailable");
       await clipboard.writeText(el("direct-ble-secret").value);
       setStatus("direct-ble-status", "Key copied. Save&Reboot to apply it.");
-    } catch (error) { setStatus("direct-ble-status", `Could not copy key: ${error.message}`); }
+    } catch (error) { setStatus("direct-ble-status", `Could not copy key: ${describe(error)}`); }
   });
   el("direct-ble-cancel").addEventListener("click", () => bleDialog.close());
 
@@ -352,6 +354,7 @@ export function bindWirelessForm({
     operationBusy: () => form.phase !== "idle",
     canSave: () => !keyNeedsRegeneration && !clearing() && !testExpired(),
     request() {
+      if (!dirty()) return null;
       if (clearing()) {
         throw new Error("Clear the temporary Wi-Fi test before saving.");
       }

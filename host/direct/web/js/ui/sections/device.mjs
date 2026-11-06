@@ -1,5 +1,6 @@
 import { CAP } from "../../protocol/constants.mjs";
 import { queryElement, setText } from "../dom.mjs";
+import { unknown } from "../messages.mjs";
 import { deriveDashboardViewModel } from "./status-model.mjs";
 
 function uptimeLabel(milliseconds) {
@@ -49,7 +50,8 @@ export function deriveDeviceViewModel(state) {
     },
     text: {
       "product-name": hardware ? `${hardware.product_name} (${spi ? "SPI" : "SDIO"})` : "--",
-      "board-model": hardware ? `${hardware.board_name} (${hardware.mcu})` : "--",
+      "board-model": hardware ? `${hardware.board_name ?? unknown("board", hardware.board_model)} `
+        + `(${hardware.mcu ?? unknown("MCU", hardware.mcu_id)})` : "--",
       "firmware-version": hardware?.firmware_version ?? "Unknown",
       "identity-clock": runtime
         ? `${(runtime.system_clock_hz / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} MHz` : "--",

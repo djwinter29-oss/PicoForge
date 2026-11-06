@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canRun, deriveOperationEligibility } from "../web/js/state/selectors.mjs";
+import { describe } from "../web/js/ui/messages.mjs";
 
 const readyState = (changes = {}) => ({
   link: "usb",
@@ -78,7 +79,8 @@ test("canRun is the one gate and names the first failing precondition per operat
       "Wireless configuration requires fresh idle USB storage, with sharing disabled."],
   ];
   for (const [operation, changes, reason] of cases) {
-    assert.deepEqual(canRun({ ...ready, ...changes }, operation), { allowed: false, reason },
+    const result = canRun({ ...ready, ...changes }, operation);
+    assert.deepEqual({ ...result, reason: describe(result.reason) }, { allowed: false, reason },
       `${operation} ${JSON.stringify(changes)}`);
   }
 });

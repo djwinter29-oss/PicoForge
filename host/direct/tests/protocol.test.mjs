@@ -4,12 +4,15 @@ import { mscPending, selfTestPending } from "../web/js/state/selectors.mjs";
 import {
   decodeIdentityReport, decodeConfigReport, decodeTelemetryReport, decodeStorageReport,
   decodeSelfTestReport,
-  decodeControlResult, buildControlRequest, matchesPicoForge, encodeSettings, decodeSettings,
+  decodeControlResult, buildControlRequest, matchesPicoForge,
 } from "../web/js/protocol/codec.mjs";
+import { decodeSettings, encodeSettings } from "../web/js/protocol/opcodes.mjs";
 import { OP } from "../web/js/protocol/constants.mjs";
+import { describe } from "../web/js/ui/messages.mjs";
 import { BoardSession } from "../web/js/board/session.mjs";
 import { HidTransport } from "../web/js/transport/hid.mjs";
-import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit, attachDevice }
+import { identity, config, telemetry, storage, selfTest, result, fakeConnection, emit, attachDevice,
+  says }
   from "./support/fixtures.mjs";
 
 test("explicit connect always requests selection regardless of previously authorized devices", async () => {
@@ -47,18 +50,18 @@ test("USB TCP CLI proof is board-bound and serialized through Feature 20 opcode 
   assert.deepEqual(await client.authorizeConsole(nonce, uid), proof);
   assert.deepEqual(sent[0], [20, 1, 1, 13, 0, ...nonce, ...Array(48).fill(0)]);
   await assert.rejects(client.authorizeConsole(nonce, Uint8Array.from([8, 7, 6, 5, 4, 3, 2, 1])),
-    /different board/);
+    says(/different board/));
   assert.equal(sent.length, 1, "a mismatched challenge is rejected before contacting the board");
   await client.disconnect();
 });
 
 test("unavailable recovery storage fails closed and keeps its error visible across disconnect", () => {
-  const unavailable = new BoardSession(new HidTransport(null), () => {}, { pendingStore: null });
+  const unavailable = new BoardSession(new HidTransport(null), { pendingStore: null });
   assert.equal(unavailable.state.outcome_uncertain, true);
-  assert.match(unavailable.state.error, /session storage is unavailable/);
-  unavailable.clearConnection();
+  assert.match(describe(unavailable.state.error), /session storage is unavailable/);
+  unavailable.connection.clear();
   assert.equal(unavailable.state.outcome_uncertain, true);
-  assert.match(unavailable.state.error, /session storage is unavailable/);
+  assert.match(describe(unavailable.state.error), /session storage is unavailable/);
 });
 
 test("malformed saved operation records fail closed and cannot authorize a write", async () => {
@@ -67,11 +70,11 @@ test("malformed saved operation records fail closed and cannot authorize a write
     version: 1, kind: "control", uid: "0102030405060708",
     request: { transaction_id: 1, opcode: 1 }, password: "unexpected",
   }));
-  const client = new BoardSession(new HidTransport(hid), () => {}, { sleep: async () => {}, pendingStore });
-  assert.match(client.state.error, /invalid/);
+  const client = new BoardSession(new HidTransport(hid), { sleep: async () => {}, pendingStore });
+  assert.match(describe(client.state.error), /invalid/);
   await client.connect();
   emit(device, 3, telemetry());
-  await assert.rejects(client.setLed(true), /unavailable/);
+  await assert.rejects(client.setLed(true), says(/unavailable/));
   assert.equal(sent.length, 0);
 });
 
@@ -86,7 +89,7 @@ test("cancelled or denied selection never opens a previously authorized device",
     assert.equal(client.state.connected, false);
     assert.equal(client.state.busy, false);
     assert.equal(device.opened, false);
-    assert.equal(client.state.error, denied ? "Device permission denied" : null);
+    assert.equal(describe(client.state.error), denied ? "Unexpected error: Device permission denied" : null);
   }
 });
 
@@ -107,7 +110,7 @@ test("identity validates exact WebHID payload, product, layout, capabilities, bo
   const reserved = report.slice(); reserved[16] = 255;
   assert.equal(decodeIdentityReport(reserved).product_name, "PicoForge", "identity reserved byte is ignored");
   const unknown = report.slice(); unknown[14] = 99; unknown[15] = 99;
-  assert.equal(decodeIdentityReport(unknown).mcu, "Unknown MCU (99)");
+  assert.equal(decodeIdentityReport(unknown).mcu, null);
   assert.equal(decodeIdentityReport(unknown).board_model, 99);
   for (const [total, used] of [[0, 0], [100, 101]]) {
     const bad = report.slice(); const view = new DataView(bad.buffer);
@@ -214,7 +217,7 @@ test("self-test validates retained states, execution/request errors and unknown 
   failed[29] = 0;
   assert.throws(() => decodeSelfTestReport(failed));
   const unknown = selfTest(99);
-  assert.equal(decodeSelfTestReport(unknown).state, "Unknown state (99)");
+  assert.equal(decodeSelfTestReport(unknown).state, null);
   assert.equal(decodeSelfTestReport(unknown).valid_for_control, false);
   const unknownError = selfTest(7); unknownError[28] = 255;
   assert.equal(decodeSelfTestReport(unknownError).error, 255);
@@ -294,7 +297,7 @@ test("mandatory connection reads reject malformed identity/config failures and g
   old.device.receiveFeatureReport = async () => new DataView(new Uint8Array(42).buffer);
   await old.client.connect();
   assert.equal(old.client.state.connected, false);
-  assert.match(old.client.state.error, /exactly 26/);
+  assert.match(describe(old.client.state.error), /exactly 26/);
   const missing = fakeConnection();
   missing.device.receiveFeatureReport = async id => {
     if (id === 1) return identity();
@@ -302,7 +305,7 @@ test("mandatory connection reads reject malformed identity/config failures and g
   };
   await missing.client.connect();
   assert.equal(missing.client.state.connected, false);
-  assert.match(missing.client.state.error, /missing config/);
+  assert.match(describe(missing.client.state.error), /missing config/);
 });
 
 test("freshness is independent, exact at deadlines, and clears caches on disconnect/reconnect", async () => {
@@ -311,7 +314,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   await client.connect();
   assert.equal(client.state.freshness[3], "unavailable");
   emit(device, 3, telemetry()); emit(device, 10, storage()); emit(device, 11, selfTest());
-  assert.ok(client.receipts.timer, "fresh reports schedule the next expiry instead of polling");
+  assert.ok(client.polling.receipts.timer, "fresh reports schedule the next expiry instead of polling");
   now = 749; client.expireReports();
   assert.ok(client.state.runtime);
   now = 750; client.expireReports();
@@ -332,7 +335,7 @@ test("freshness is independent, exact at deadlines, and clears caches on disconn
   emit(device, 3, telemetry()); client.expireReports(true);
   assert.equal(client.state.runtime, null);
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
-  assert.equal(client.receipts.timer, null);
+  assert.equal(client.polling.receipts.timer, null);
   for (const field of ["hardware", "settings", "runtime", "memory", "msc", "self_test"]) {
     assert.equal(client.state[field], null, field);
   }
@@ -355,9 +358,9 @@ test("transactions serialize, match ID and opcode, poll Pending, wrap IDs, and d
     if (calls === 2) return result(255, opcode);
     return result(transaction, opcode, calls === 3 ? 1 : 2);
   };
-  client.transaction = 255;
+  client.commands.transaction = 255;
   const pending = client.setLed(true);
-  await assert.rejects(client.setLed(true), /unavailable/);
+  await assert.rejects(client.setLed(true), says(/unavailable/));
   await pending;
   assert.deepEqual(sent[0], [20, 1, 1, 1, 0, 1, ...Array(63).fill(0)]);
   assert.equal(calls, 4);
@@ -369,21 +372,21 @@ test("SET failure never polls; terminal rejection permits a new transaction; tim
   const { client, device, reads } = fakeConnection();
   await client.connect(); emit(device, 3, telemetry());
   device.sendFeatureReport = async () => { throw new Error("SET rejected"); };
-  await assert.rejects(client.setLed(true), /SET rejected/);
+  await assert.rejects(client.setLed(true), says(/SET rejected/));
   assert.deepEqual(reads, [1, 2]);
   assert.equal(client.state.outcome_uncertain, false);
   let request;
   device.sendFeatureReport = async (id, payload) => { request = payload; };
   device.receiveFeatureReport = async () => result(request[1], request[2], 6, 6);
-  await assert.rejects(client.setLed(true), /status 6, error 6/);
+  await assert.rejects(client.setLed(true), says(/status 6, error 6/));
   assert.equal(client.state.outcome_uncertain, false);
   device.receiveFeatureReport = async () => result(request[1], request[2]);
   await assert.doesNotReject(client.setLed(true));
   const timeout = fakeConnection({ sleep: async () => {}, timeout: 10000 });
   await timeout.client.connect(); emit(timeout.device, 3, telemetry());
   timeout.device.receiveFeatureReport = async () => result(0, 0, 0);
-  await assert.rejects(timeout.client.setLed(true), /uncertain/);
-  await assert.rejects(timeout.client.setLed(true), /uncertain/);
+  await assert.rejects(timeout.client.setLed(true), says(/uncertain/));
+  await assert.rejects(timeout.client.setLed(true), says(/uncertain/));
   assert.equal(timeout.sent.length, 1);
   await timeout.client.disconnect();
   await client.disconnect();
@@ -409,12 +412,12 @@ test("stale/capability gates stop command writes, including self-test and confir
   const { client, device, sent } = fakeConnection({ now: () => now, capabilities: 16 | 1 });
   await client.connect();
   emit(device, 3, telemetry()); emit(device, 10, storage());
-  await assert.rejects(client.reboot(true), /capability/);
-  await assert.rejects(client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), /capability/);
-  await assert.rejects(client.setSelfTest("start", 32), /self-test/);
+  await assert.rejects(client.reboot(true), says(/capability/));
+  await assert.rejects(client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }), says(/capability/));
+  await assert.rejects(client.setSelfTest("start", 32), says(/self-test/));
   now = 1500;
-  await assert.rejects(client.setLed(true), /Fresh LED/);
-  await assert.rejects(client.setMsc(true), /Fresh idle/);
+  await assert.rejects(client.setLed(true), says(/Fresh LED/));
+  await assert.rejects(client.setMsc(true), says(/Fresh idle/));
   assert.equal(sent.length, 0);
   await client.disconnect();
 });
@@ -424,9 +427,9 @@ test("hanging SET/GET requests time out as uncertain and never replay", async ()
     const { client, device, sent } = fakeConnection({ timeout: 10 });
     await client.connect(); emit(device, 3, telemetry());
     device[operation] = () => new Promise(() => {});
-    await assert.rejects(client.setLed(true), /timeout/);
+    await assert.rejects(client.setLed(true), says(/timeout/));
     assert.equal(client.state.outcome_uncertain, true);
-    await assert.rejects(client.setLed(true), /uncertain/);
+    await assert.rejects(client.setLed(true), says(/uncertain/));
     assert.equal(sent.length, operation === "sendFeatureReport" ? 0 : 1);
     await client.disconnect();
   }
@@ -450,7 +453,7 @@ test("disconnect during GET clears caches and reconnect resolves only the origin
   assert.equal(client.state.runtime, null);
   assert.equal(client.state.outcome_uncertain, false);
   release(result(sent[0][2], 1));
-  await assert.rejects(command, /disconnect/);
+  await assert.rejects(command, says(/disconnect/));
   assert.equal(client.state.error, null, "old request must not overwrite the reconnected state");
   assert.equal(sent.length, 1);
   await client.disconnect();
@@ -469,16 +472,16 @@ test("pending control transactions survive a page reload and reconcile without r
     }
     return receive(id);
   };
-  await assert.rejects(client.setLed(true), /disconnect/);
+  await assert.rejects(client.setLed(true), says(/disconnect/));
   const saved = JSON.parse(pendingStore.getItem("picoforge.direct.pending-operation"));
   assert.equal(saved.kind, "control");
-  assert.equal(saved.uid, client.reconnectUid);
+  assert.equal(saved.uid, client.connection.reconnectUid);
 
   device.receiveFeatureReport = receive;
-  const restored = new BoardSession(new HidTransport(hid), () => {}, { sleep: async () => {}, pendingStore });
+  const restored = new BoardSession(new HidTransport(hid), { sleep: async () => {}, pendingStore });
   await attachDevice(restored, device);
   assert.equal(restored.state.outcome_uncertain, false);
-  assert.match(restored.state.recovery_message, /confirmed after reconnect/);
+  assert.match(describe(restored.state.recovery_message), /confirmed after reconnect/);
   assert.equal(restored.state.recovered_opcode, OP.LED, "the form keys recovery on the opcode, not the text");
   assert.equal(pendingStore.getItem("picoforge.direct.pending-operation"), null);
   assert.equal(sent.length, 1, "recovery reads the result and never resends the command");
@@ -522,10 +525,10 @@ test("settings completion remains serialized and verifies saved values without a
   const saving = client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(client.state.busy, true);
-  await assert.rejects(client.setLed(true), /unavailable/);
+  await assert.rejects(client.setLed(true), says(/unavailable/));
   const incorrect = result(1, 5); incorrect[5] = 150; incorrect[7] = 1;
   release(incorrect);
-  await assert.rejects(saving, /did not confirm/);
+  await assert.rejects(saving, says(/did not confirm/));
   assert.equal(sent.length, 1);
   assert.equal(client.state.settings.system_clock_mhz, 200);
   await client.disconnect();
@@ -552,17 +555,17 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   await client.disconnect();
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
-  await assert.rejects(client.reboot(false), /confirmation/);
+  await assert.rejects(client.reboot(false), says(/confirmation/));
   await client.reboot(true);
   assert.deepEqual(sent[1].slice(0, 5), [20, 1, 2, 2, 1]);
-  await assert.rejects(client.setSelfTest("start", 32), /unavailable/);
+  await assert.rejects(client.setSelfTest("start", 32), says(/unavailable/));
   await client.disconnect();
   await client.connect();
   emit(device, 10, storage()); emit(device, 11, selfTest());
   await client.setSelfTest("start", 32);
   assert.deepEqual(sent[2], [20, 1, 3, 4, 0, 1, 32, 0, 0, 0, ...Array(59).fill(0)]);
   assert.equal(client.state.self_test.state, "idle", "acceptance doesn't invent progress");
-  await assert.rejects(client.setMsc(true), /Fresh idle/);
+  await assert.rejects(client.setMsc(true), says(/Fresh idle/));
   const completed = selfTest(6); completed[1] = 1;
   emit(device, 11, completed);
   await client.setMsc(true);
@@ -570,7 +573,7 @@ test("MSC/self-test acceptance waits for fresh status and settings save queues f
   assert.equal(mscPending(client.state), true);
   const host = new Uint8Array(34); host[0] = 1; host[2] = 1; host[31] = 1;
   emit(device, 10, host);
-  await assert.rejects(client.reboot(true), /firmware-owned/);
+  await assert.rejects(client.reboot(true), says(/firmware-owned/));
   await client.setMsc(false, true);
   assert.deepEqual(sent.at(-1).slice(0, 6), [20, 1, 5, 3, 1, 2]);
   await client.disconnect();
@@ -598,13 +601,13 @@ test("confirmed forced settings save reconnects to the original result without r
       return response;
     };
     const saving = client.saveSettings({ system_clock_mhz: 200, sdcard_profile: 1 }, true);
-    if (incorrect) await assert.rejects(saving, /did not confirm/);
+    if (incorrect) await assert.rejects(saving, says(/did not confirm/));
     else await saving;
     assert.deepEqual(sent, [[20, 1, 1, 5, 1, 200, 0, 1, 0, ...Array(60).fill(0)]]);
     assert.equal(client.state.outcome_uncertain, incorrect);
     assert.equal(Boolean(client.state.reboot_pending), !incorrect);
     if (incorrect) {
-      await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
+      await assert.rejects(client.command(1, { args: [1] }), says(/uncertain/));
     }
     await client.disconnect();
   }
@@ -658,7 +661,7 @@ test("rejected USB sharing releases pending state without inventing ownership", 
     const receive = device.receiveFeatureReport;
     if (commandRejected) device.receiveFeatureReport = id =>
       id === 20 ? result(1, 3, 5, 5) : receive(id);
-    if (commandRejected) await assert.rejects(client.setMsc(true), /status 5/);
+    if (commandRejected) await assert.rejects(client.setMsc(true), says(/status 5/));
     else {
       await client.setMsc(true);
       const rejected = storage(); rejected[33] = 1;
@@ -686,12 +689,12 @@ test("self-test acceptance keeps controls pending until a newer report, includin
   idle[1] = 255;
   emit(device, 11, idle);
   assert.equal(client.state.busy, true, "new telemetry cannot release controls during delivery");
-  await assert.rejects(client.setSelfTest("start", 32), /unavailable/);
+  await assert.rejects(client.setSelfTest("start", 32), says(/unavailable/));
   release();
   await starting;
   emit(device, 11, idle);
   assert.equal(selfTestPending(client.state), true);
-  await assert.rejects(client.setSelfTest("start", 32), /Fresh|unavailable/);
+  await assert.rejects(client.setSelfTest("start", 32), says(/Fresh|unavailable/));
   const running = selfTest(1); running[1] = 0;
   emit(device, 11, running);
   assert.equal(selfTestPending(client.state), false);
@@ -709,9 +712,9 @@ test("normal and forced saves keep writes blocked when returned settings differ 
       if (id === 20) response[5] = 150;
       return response;
     };
-    await assert.rejects(client.command(5, { flags, args: [200, 0, 1] }), /did not confirm/);
+    await assert.rejects(client.command(5, { flags, args: [200, 0, 1] }), says(/did not confirm/));
     assert.equal(client.state.outcome_uncertain, true);
-    await assert.rejects(client.command(1, { args: [1] }), /uncertain/);
+    await assert.rejects(client.command(1, { args: [1] }), says(/uncertain/));
     assert.equal(sent.length, 1);
     await client.disconnect();
   }
@@ -737,10 +740,10 @@ test("a disposed client ignores HID events and stops its expiry timer", async ()
   const { client, device, hid } = fakeConnection();
   await client.connect();
   emit(device, 3, telemetry());
-  const receipt = client.receipts.get(3);
+  const receipt = client.polling.receipts.get(3);
   client.dispose();
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
   emit(device, 3, telemetry());
   assert.equal(client.state.connected, true, "a replaced client must not react to the shared navigator.hid");
-  assert.equal(client.receipts.get(3), receipt, "input reports no longer reach a disposed client");
+  assert.equal(client.polling.receipts.get(3), receipt, "input reports no longer reach a disposed client");
 });

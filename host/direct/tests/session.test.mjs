@@ -2,8 +2,36 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { commandPending } from "../web/js/state/selectors.mjs";
 import { BoardSession } from "../web/js/board/session.mjs";
+import { Operations } from "../web/js/board/operations.mjs";
 import { OP } from "../web/js/protocol/constants.mjs";
-import { config, fakeConnection, identity, result, telemetry } from "./support/fixtures.mjs";
+import { config, fakeConnection, identity, result, says, telemetry } from "./support/fixtures.mjs";
+
+test("configuration save selects the wireless workflow from the board link and intent", async () => {
+  const calls = [];
+  const session = {
+    state: { link: "usb" },
+    async saveWireless(intent) { calls.push(["wireless", intent]); return { ssid: intent.ssid }; },
+    async saveSettings(...args) { calls.push(["settings", ...args]); },
+  };
+  const operations = new Operations(session);
+  const settings = { radios: 3 };
+  const wireless = { ssid: "PicoForge" };
+
+  assert.deepEqual(await operations.saveConfiguration({ settings, force: true, wireless }),
+    { ssid: "PicoForge" });
+  assert.deepEqual(calls, [["wireless", { ...wireless, wifi_enabled: true, ble_enabled: true, board: settings }]]);
+
+  calls.length = 0;
+  session.state.link = "ble";
+  assert.deepEqual(await operations.saveConfiguration({ settings, force: false, tcpCliEnabled: false, wireless }),
+    { tcp_cli_enabled: false });
+  assert.deepEqual(calls, [["settings", settings, false, false]]);
+
+  calls.length = 0;
+  session.state.link = "usb";
+  await operations.saveConfiguration({ settings, force: false, wireless: null });
+  assert.deepEqual(calls, [["settings", settings, false, undefined]]);
+});
 
 test("the same board session consumes either peer transport without HID-shaped device APIs", async () => {
   for (const kind of ["usb", "ble"]) {
@@ -21,7 +49,7 @@ test("the same board session consumes either peer transport without HID-shaped d
         return result(sent.at(-1)[1][1], sent.at(-1)[1][2]);
       },
     });
-    const session = new BoardSession(transport, () => {},
+    const session = new BoardSession(transport,
       { pendingStore: fakeConnection().pendingStore, wirelessPolling: false });
     await session.connect();
     transport.dispatchEvent(Object.assign(new Event("report"), { reportId: 3, data: telemetry() }));
@@ -49,7 +77,7 @@ test("cancelling an in-flight write preserves uncertainty and its recovery journ
   controller.abort();
   await assert.rejects(command, { name: "AbortError" });
   assert.equal(client.state.outcome_uncertain, true);
-  assert.ok(client.outstanding);
+  assert.ok(client.state.pending_request);
   assert.ok(pendingStore.getItem("picoforge.direct.pending-operation"));
   release();
   await new Promise(resolve => setImmediate(resolve));
@@ -70,7 +98,7 @@ test("an aborted initialization cannot close or overwrite a newer same-board con
   assert.equal(typeof release, "function");
   hid.dispatchEvent(Object.assign(new Event("disconnect"), { device }));
   device.opened = false;
-  client.reconnectUid = "0102030405060708";
+  client.connection.reconnectUid = "0102030405060708";
   device.receiveFeatureReport = receive;
   hid.dispatchEvent(Object.assign(new Event("connect"), { device }));
   await new Promise(resolve => setImmediate(resolve));

@@ -1,5 +1,6 @@
 import { DEVICE_FILTER, PRODUCT_IDS } from "../protocol/constants.mjs";
 import { matchesPicoForge, requireValid } from "../protocol/codec.mjs";
+import { BoardError, REASON } from "../state/errors.mjs";
 
 /** @typedef {import("./transport.mjs").Transport} Transport */
 /** @implements {Transport} */
@@ -10,7 +11,7 @@ export class HidTransport extends EventTarget {
     this.kind = "usb";
     this.api = hid;
     this.available = Boolean(hid);
-    this.unavailableMessage = "WebHID is unavailable; use a supported browser on localhost or HTTPS";
+    this.unavailableReason = REASON.WEBHID_UNAVAILABLE;
     this.autoReconnect = true;
     this.pollInterval = null;
     this.device = null;
@@ -40,13 +41,13 @@ export class HidTransport extends EventTarget {
 
   async connect(_options, signal) {
     signal.throwIfAborted();
-    if (!this.api) throw new Error(this.unavailableMessage);
+    if (!this.api) throw new BoardError(this.unavailableReason);
     const devices = await this.api.requestDevice({
       filters: PRODUCT_IDS.map(productId => ({ ...DEVICE_FILTER, productId })),
     });
     signal.throwIfAborted();
     if (!devices.length) return false;
-    requireValid(devices.length === 1 && matchesPicoForge(devices[0]), "device selection");
+    requireValid(devices.length === 1 && matchesPicoForge(devices[0]), "device-selection");
     await this.openDevice(devices[0], signal);
     return true;
   }
@@ -74,20 +75,26 @@ export class HidTransport extends EventTarget {
   async readReport(id, signal) {
     signal.throwIfAborted();
     const device = this.device;
-    if (!device) throw new Error("USB device disconnected");
+    if (!device) throw new BoardError(REASON.USB_DISCONNECTED);
     const value = await device.receiveFeatureReport(id);
     signal.throwIfAborted();
-    if (device !== this.device) throw new Error("USB connection changed");
+    if (device !== this.device) throw new BoardError(REASON.USB_CHANGED);
     return value;
   }
 
   async writeReport(id, data, signal) {
     signal.throwIfAborted();
     const device = this.device;
-    if (!device) throw new Error("USB device disconnected");
+    if (!device) throw new BoardError(REASON.USB_DISCONNECTED);
     await device.sendFeatureReport(id, data);
     signal.throwIfAborted();
-    if (device !== this.device) throw new Error("USB connection changed");
+    if (device !== this.device) throw new BoardError(REASON.USB_CHANGED);
+  }
+
+  /** @brief USB console proofs use the serialized board command queue rather than a transport-owned key. */
+  async createConsoleProof(_nonce, _uid, signal) {
+    signal.throwIfAborted();
+    return null;
   }
 
   detach() {

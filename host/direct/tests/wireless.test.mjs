@@ -2,17 +2,16 @@ import assert from "node:assert/strict";
 import { createHmac, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ReportReceipts } from "../web/js/board/reports.mjs";
-import { lifecycleOutcome } from "../web/js/board/wireless-status.mjs";
+import { lifecycleOutcome, ReportReceipts, wirelessPollInterval } from "../web/js/board/polling.mjs";
 import { OP } from "../web/js/protocol/constants.mjs";
+import { describe } from "../web/js/ui/messages.mjs";
 import { BleTransport, BLE_SERVICE } from "../web/js/transport/ble.mjs";
 import { HidTransport } from "../web/js/transport/hid.mjs";
 import { BoardSession } from "../web/js/board/session.mjs";
 import { buildControlRequest, decodeControlResult } from "../web/js/protocol/codec.mjs";
-import { cancelWireless, saveWireless, scanWireless, testWireless } from "../web/js/board/workflows/wireless.mjs";
-import { wirelessPollInterval } from "../web/js/board/wireless-status.mjs";
 import { decodeWireless, displaySsid, ssidBytes } from "../web/js/protocol/codec.mjs";
-import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result, attachDevice }
+import { fakeConnection, emit, storage, selfTest, identity, config, telemetry, result, attachDevice, patchState,
+  says }
   from "./support/fixtures.mjs";
 
 const BOARD = { system_clock_mhz: 200, sdcard_profile: 1, radios: 0 };
@@ -161,9 +160,9 @@ test("strict result validation enforces details, scan padding, commit masks and 
 test("scan lifecycle reads generation-indexed entries, keeps raw SSIDs and serializes the whole workflow", async () => {
   const setup = await connected();
   radio(setup, { scanEntries: [Uint8Array.from([0, 255, 65]), new TextEncoder().encode("normal")] });
-  const pending = scanWireless(setup.client);
-  await assert.rejects(setup.client.tcpCliAuthProof(new Uint8Array(16),
-    Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8])), /unavailable/);
+  const pending = setup.client.scanWireless();
+  await assert.rejects(setup.client.operations.tcpCliAuthProof(new Uint8Array(16),
+    Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8])), says(/unavailable/));
   const entries = await pending;
   assert.equal(entries[0].ssid_hex, "00ff41");
   assert.equal(entries[0].ssid, "\\x00\\xFFA");
@@ -171,7 +170,7 @@ test("scan lifecycle reads generation-indexed entries, keeps raw SSIDs and seria
   assert.deepEqual(setup.sent.map(bytes => bytes[3]), [11, 12, 12]);
   assert.deepEqual(setup.sent[1].slice(5, 8), [0, 1, 0]);
   assert.deepEqual(setup.sent[2].slice(5, 8), [1, 1, 0]);
-  assert.equal(setup.client.pendingWirelessCommand, null);
+  assert.equal(setup.client.state.pending_wireless, null);
   await setup.client.disconnect();
 });
 
@@ -180,11 +179,11 @@ test("tested pair saves without restaging, key staging retains test, "
   const setup = await connected();
   const raw = Uint8Array.from([65, 0, 255]);
   radio(setup);
-  const tested = await testWireless(setup.client, { ssid: "display only", ssid_hex: "4100FF", password: "password" });
+  const tested = await setup.client.testWireless({ ssid: "display only", ssid_hex: "4100FF", password: "password" });
   assert.ok(tested.remaining_seconds > 0 && tested.remaining_seconds <= 600);
   assert.deepEqual(setup.sent.map(bytes => bytes[3]), [6, 7, 9]);
   assert.deepEqual(setup.sent[0].slice(5, 9), [3, ...raw]);
-  const saved = await saveWireless(setup.client, { ssid: tested.ssid, ssid_hex: tested.ssid_hex,
+  const saved = await setup.client.saveWireless({ ssid: tested.ssid, ssid_hex: tested.ssid_hex,
     use_tested_wifi: true, wifi_enabled: true, ble_enabled: true, tcp_cli_enabled: true,
     ble_key: "ab".repeat(32), board: { ...BOARD, radios: 3 } });
   assert.deepEqual(setup.sent.map(bytes => bytes[3]), [6, 7, 9, 8, 5]);
@@ -201,27 +200,27 @@ test("password omission is safe only for the saved raw SSID; "
   + "explicit open/forget and cancel are supported", async () => {
   const setup = await connected();
   radio(setup);
-  await assert.rejects(testWireless(setup.client, { ssid: "different" }), /explicit password/);
+  await assert.rejects(setup.client.testWireless({ ssid: "different" }), says(/explicit password/));
   assert.equal(setup.sent.length, 0);
-  await testWireless(setup.client, { ssid: "home" });
+  await setup.client.testWireless({ ssid: "home" });
   assert.deepEqual(setup.sent.map(bytes => bytes[3]), [6, 9]);
-  await cancelWireless(setup.client);
+  await setup.client.cancelWireless();
   assert.equal(setup.sent.at(-1)[3], 10);
   assert.equal(setup.client.state.wireless.staged_mask, 0);
-  await testWireless(setup.client, { ssid: "open", password: "" });
+  await setup.client.testWireless({ ssid: "open", password: "" });
   assert.deepEqual(setup.sent.at(-2).slice(3, 7), [7, 0, 0, 0]);
-  await cancelWireless(setup.client);
-  await saveWireless(setup.client, { ssid: "", password: "", wifi_enabled: false, ble_enabled: false, board: BOARD });
+  await setup.client.cancelWireless();
+  await setup.client.saveWireless({ ssid: "", password: "", wifi_enabled: false, ble_enabled: false, board: BOARD });
   assert.deepEqual(setup.sent.slice(-2).map(bytes => bytes[3]), [6, 5], "empty SSID implicitly clears password");
   await setup.client.disconnect();
 });
 
 test("failed tests leave discardable staging but do not claim a tested pair", async () => {
   const setup = await connected(); radio(setup, { testFailure: true });
-  await assert.rejects(testWireless(setup.client, { ssid: "home", password: "password" }), /Password rejected/);
+  await assert.rejects(setup.client.testWireless({ ssid: "home", password: "password" }), says(/Password rejected/));
   assert.equal(setup.client.state.outcome_uncertain, false);
-  assert.equal(setup.client.pendingWirelessCommand, null);
-  await cancelWireless(setup.client);
+  assert.equal(setup.client.state.pending_wireless, null);
+  await setup.client.cancelWireless();
   await setup.client.disconnect();
 });
 
@@ -233,15 +232,15 @@ test("uncertain command recovery stores no secrets, reads same UID+tx+opcode and
     if (id === 20 && fail) throw new Error("USB disconnected");
     return read(id);
   };
-  await assert.rejects(testWireless(setup.client, { ssid: "secret-network", password: "secret-password" }),
-    /disconnected/);
+  await assert.rejects(setup.client.testWireless({ ssid: "secret-network", password: "secret-password" }),
+    says(/disconnected/));
   const raw = setup.pendingStore.getItem("picoforge.direct.pending-operation");
   assert.ok(raw);
   assert.equal(raw.includes("secret"), false);
   const record = JSON.parse(raw);
   assert.deepEqual(record.request, { transaction_id: 1, opcode: 6 });
   fail = false;
-  const restored = new BoardSession(new HidTransport(setup.hid), () => {},
+  const restored = new BoardSession(new HidTransport(setup.hid),
     { pendingStore: setup.pendingStore, wirelessPolling: false });
   await attachDevice(restored, setup.device);
   assert.equal(restored.state.outcome_uncertain, false);
@@ -260,12 +259,12 @@ test("accepted test lifecycle survives reload, enforces generation and never sto
       if (id === 12 && wrongGeneration) bytes[46] = 2;
       return bytes;
     };
-    await assert.rejects(testWireless(setup.client, { ssid: "home", password: "password" }), /Link lost/);
+    await assert.rejects(setup.client.testWireless({ ssid: "home", password: "password" }), says(/Link lost/));
     const raw = setup.pendingStore.getItem("picoforge.direct.pending-operation");
     assert.equal(raw.includes("password"), false);
     assert.equal(JSON.parse(raw).kind, "wireless-lifecycle");
     interrupt = false;
-    const restored = new BoardSession(new HidTransport(setup.hid), () => {},
+    const restored = new BoardSession(new HidTransport(setup.hid),
       { pendingStore: setup.pendingStore, wirelessPolling: false });
       await attachDevice(restored, setup.device);
     assert.equal(restored.state.outcome_uncertain, wrongGeneration);
@@ -282,10 +281,10 @@ test("save commit-mask mismatch is uncertain even after firmware clears staged s
     if (id === 20 && bytes[2] === 5) bytes[9] = 0;
     return bytes;
   };
-  await assert.rejects(saveWireless(setup.client, { ssid: "", password: "", wifi_enabled: false,
-    ble_enabled: false, board: BOARD }), /did not confirm/);
+  await assert.rejects(setup.client.saveWireless({ ssid: "", password: "", wifi_enabled: false,
+    ble_enabled: false, board: BOARD }), says(/did not confirm/));
   assert.equal(setup.client.state.outcome_uncertain, true);
-  await assert.rejects(setup.client.command(1), /uncertain/);
+  await assert.rejects(setup.client.command(1), says(/uncertain/));
   assert.equal(JSON.parse(setup.pendingStore.getItem("picoforge.direct.pending-operation")).request.commit_mask, 3);
   await setup.client.disconnect();
 });
@@ -299,7 +298,7 @@ test("scan result index/generation mismatch keeps the original query persisted a
     if (id === 20 && bytes[2] === 12) bytes[5] = 2;
     return bytes;
   };
-  await assert.rejects(scanWireless(setup.client), /generation and index/);
+  await assert.rejects(setup.client.scanWireless(), says(/generation and index/));
   assert.equal(setup.client.state.outcome_uncertain, true);
   const request = JSON.parse(setup.pendingStore.getItem("picoforge.direct.pending-operation")).request;
   assert.equal(request.scan_generation, 1); assert.equal(request.scan_index, 0);
@@ -375,7 +374,7 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
   const client = new BoardSession(new BleTransport({ requestDevice: async options => {
     requestedServices.push(...options.optionalServices);
     return ble;
-  } }), () => {},
+  } }),
     { pendingStore: setup.pendingStore, wirelessPolling: false });
   try {
     await client.connect(new Uint8Array(32).fill(0xab));
@@ -400,14 +399,14 @@ test("BLE maps normalized68byte control to restricted9byte wire form and HMACs t
     await client.command(2, { flags: 1 });
     assert.deepEqual(writes[1], [20, [1, 2, 2, 1, 0, 0, 0, 0, 0]]);
     assert.deepEqual(writes[0], [257, sign(writes[1][1])]);
-    client.update({ reboot_pending: false });
+    patchState(client, { reboot_pending: false });
     writes.length = 0;
     await client.command(5, { args: [200, 0, 1, 4] });
     assert.deepEqual(writes[1], [20, [1, 3, 5, 0, 200, 0, 1, 4, 0]]);
     assert.deepEqual(writes[0], [257, sign(writes[1][1])]);
-    client.update({ reboot_pending: false });
+    patchState(client, { reboot_pending: false });
     for (const opcode of [3, 4, 6, 7, 8, 9, 10, 11, 12, 13]) {
-      await assert.rejects(client.command(opcode), /requires USB/);
+      await assert.rejects(client.command(opcode), says(/requires USB/));
     }
     await client.readWireless();
     assert.equal(client.state.wireless.ssid_hex, "");
@@ -449,7 +448,7 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
     disconnect() { this.connected = false; ble.dispatchEvent(new Event("gattserverdisconnected")); },
   };
   const client = new BoardSession(new BleTransport({ requestDevice: async () => { prompts++; return ble; } },
-    { sleep: async () => {} }), () => {},
+    { sleep: async () => {} }),
     { pendingStore: fakeConnection().pendingStore, sleep: async () => {}, wirelessPolling: false });
   await client.connect(new Uint8Array(32).fill(0xab));
   assert.equal(client.state.connected, true);
@@ -459,7 +458,7 @@ test("BLE discovery retries only read-only setup on the chosen board and retains
   await client.connect(new Uint8Array(32).fill(0xab));
   assert.equal(client.state.connected, false);
   assert.equal(connects, 3);
-  assert.match(client.state.error, /No matching service/);
+  assert.match(describe(client.state.error), /No matching service/);
   assert.equal(client.transport.bleKey, null);
 });
 
@@ -469,7 +468,7 @@ test("malformed save settings and credentials reject before the first SET", asyn
   for (const change of [{ board: { ...base.board, system_clock_mhz: undefined } },
     { board: { ...base.board, sdcard_profile: 2 } }, { use_tested_wifi: 1 }, { tcp_cli_enabled: 1 },
     { ble_key: "0".repeat(63) }, { password: "short" }, { password: "é".repeat(8) }, { ssid_hex: "not hex" }]) {
-    await assert.rejects(saveWireless(setup.client, { ...base, ...change }));
+    await assert.rejects(setup.client.saveWireless({ ...base, ...change }));
     assert.equal(setup.sent.length, 0);
   }
   await setup.client.disconnect();
@@ -479,7 +478,7 @@ test("all-zero32byte keys remain configured; only empty keys clear", async () =>
   for (const key of ["0".repeat(64), ""]) {
     const setup = await connected(); radio(setup);
     try {
-      const saved = await saveWireless(setup.client, { ssid: "home", wifi_enabled: true, ble_enabled: true,
+      const saved = await setup.client.saveWireless({ ssid: "home", wifi_enabled: true, ble_enabled: true,
         ble_key: key, board: { ...BOARD, radios: 3 } });
       assert.equal(saved.ble_key_configured, key !== "");
       assert.deepEqual(setup.sent.map(bytes => bytes[3]), [8, 5]);
@@ -494,7 +493,7 @@ test("all-zero32byte keys remain configured; only empty keys clear", async () =>
   assert.deepEqual(Buffer.from(await crypto.subtle.sign("HMAC", client.bleKey, message)),
     createHmac("sha256", Buffer.alloc(32)).update(message).digest());
   const short = new Uint8Array(31).fill(1);
-  await assert.rejects(client.setControlKey(short), /32 bytes/);
+  await assert.rejects(client.setControlKey(short), says(/32 bytes/));
   assert.ok(short.every(byte => byte === 0), "the transport wipes the caller's key bytes");
 });
 
@@ -502,14 +501,13 @@ test("lifecycleOutcome reads one Feature 12 snapshot against the accepted genera
   const scan = { operation: OP.SCAN, generation: 4 };
   assert.equal(lifecycleOutcome({ scan_generation: 4, scan_state: 1 }, scan), null);
   assert.equal(lifecycleOutcome({ scan_generation: 4, scan_state: 2 }, scan).kind, "completed");
-  assert.deepEqual(lifecycleOutcome({ scan_generation: 4, scan_state: 3 }, scan),
-    { kind: "failed", message: "Wireless scan failed" });
-  assert.throws(() => lifecycleOutcome({ scan_generation: 5, scan_state: 2 }, scan), /generation changed/);
+  const failed = lifecycleOutcome({ scan_generation: 4, scan_state: 3 }, scan);
+  assert.deepEqual([failed.kind, describe(failed.error)], ["failed", "Wireless scan failed"]);
+  assert.throws(() => lifecycleOutcome({ scan_generation: 5, scan_state: 2 }, scan), says(/generation changed/));
   const wifiTest = { operation: OP.TEST_WIFI, generation: 2 };
   assert.equal(lifecycleOutcome({ test_generation: 2, state: 5, pair_tested: true }, wifiTest).result
     .remaining_seconds, 599);
-  assert.equal(lifecycleOutcome({ test_generation: 2, state: 6, phase: "Auth failed" }, wifiTest).message,
-    "Auth failed");
+  assert.ok(says(/^Password rejected$/)(lifecycleOutcome({ test_generation: 2, state: 6, detail: 3 }, wifiTest).error));
 });
 
 test("report receipts expire each snapshot after its own lifetime and on suspend", () => {

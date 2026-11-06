@@ -1,5 +1,6 @@
 import { deriveOperationEligibility } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
+import { unknown } from "../messages.mjs";
 
 export function deriveSelfTestViewModel(state, sizeMiB) {
   const status = state.self_test;
@@ -12,7 +13,7 @@ export function deriveSelfTestViewModel(state, sizeMiB) {
     "Cleanup failed", "Filesystem not mounted"];
   const notices = [];
   if (status?.error) {
-    notices.push(`${errors[status.error] ?? `Unknown error (${status.error})`} (FatFs ${status.filesystem_result}).`);
+    notices.push(`${errors[status.error] ?? unknown("error", status.error)} (FatFs ${status.filesystem_result}).`);
   }
   if (status && !status.valid_for_control) notices.push("Unknown status values; controls disabled.");
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
@@ -28,7 +29,8 @@ export function deriveSelfTestViewModel(state, sizeMiB) {
     sizeDisabled: !ready || Boolean(status?.active),
     text: {
       "self-test-state": status
-        ? `${labels[status.state] ?? status.state} · ${Math.floor(status.progress_percent ?? 0)}%` : "Unavailable",
+        ? `${labels[status.state] ?? unknown("state", status.state_id)} · ${Math.floor(status.progress_percent ?? 0)}%`
+        : "Unavailable",
       "self-test-write-speed": speed(status?.write_bytes_per_second),
       "self-test-read-speed": speed(status?.read_bytes_per_second),
       "self-test-written": status ? `${count(status.written_bytes)} / ${count(status.target_bytes)}` : "--",

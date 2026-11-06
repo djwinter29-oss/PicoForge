@@ -12,8 +12,9 @@
   "files": [
     "protocol/constants.mjs", "protocol/codec.mjs", "state/reducer.mjs", "state/selectors.mjs", "state/store.mjs",
     "timers.mjs", "transport/transport.mjs", "transport/hid.mjs", "transport/ble.mjs",
-    "protocol/commands.mjs", "board/reports.mjs", "board/wireless-status.mjs",
-    "board/workflows/wireless.mjs", "ui/dashboard.mjs", "ui/sections/controls.mjs", "ui/sections/wireless-form.mjs",
+    "protocol/opcodes.mjs", "protocol/console-messages.mjs", "state/errors.mjs", "board/connection.mjs",
+    "board/commands.mjs", "board/recovery.mjs", "board/polling.mjs", "board/operations.mjs", "board/session.mjs",
+    "ui/messages.mjs", "ui/dashboard.mjs", "ui/sections/controls.mjs", "ui/sections/wireless-form.mjs",
     "ui/dom.mjs", "ui/sections/status-model.mjs"
   ]
 }

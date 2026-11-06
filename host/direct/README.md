@@ -45,43 +45,53 @@ host/direct/
     css/
       direct.css, console.css
     js/
-      app.mjs                       composition, page lifetime, the only reader of browser globals
+      app.mjs                       composition root for index.html; the only reader of browser globals
+      console-app.mjs               composition root for console.html
       protocol/
         constants.mjs               named firmware values
-        codec.mjs                   pure validation, encoding and decoding
-        commands.mjs                capability and link policy per opcode
+        opcodes.mjs                 one descriptor per opcode: capability, link policy, request/result rules
+        codec.mjs                   pure encode/decode, driven by the opcode descriptors
+        console-messages.mjs        cross-window console authorization messages
       transport/
         transport.mjs               common Transport contract
         hid.mjs, ble.mjs            byte pipes: browser I/O, framing and link authentication
       board/
-        session.mjs                 single domain writer: command queue, polling and recovery
-        reports.mjs                 report receipts and freshness expiry
-        wireless-status.mjs         pure Feature 12 interpretation
-        journal.mjs                 allowlisted same-tab recovery records
-        workflows/wireless.mjs      Wi-Fi staging, scan, test, cancellation and save
+        session.mjs                 thin facade wiring the modules below; the dashboard's only board API
+        connection.mjs              explicit connection lifecycle state machine
+        commands.mjs                single-flight queue, recovery journal and result matching
+        recovery.mjs                reconnect recovery, including a forced save, without replay
+        polling.mjs                 report receipts, freshness expiry and wireless status polling
+        operations.mjs              use cases: LED, MSC, self-test, settings/configuration save, Wi-Fi workflows
       state/
-        store.mjs, reducer.mjs      allowlisted domain and UI stores with subscriptions
-        selectors.mjs               `canRun`: the one readiness gate for sessions and views
+        store.mjs, reducer.mjs      domain store (named events only) and allowlisted UI store
+        selectors.mjs               `canRun`: the one readiness gate, returning a reason code
+        errors.mjs                  `REASON` codes and `BoardError {code, detail, uncertain, retryable}`
       ui/
-        dashboard.mjs               event wiring, UI store and coalesced rendering without I/O
+        messages.mjs                reason code to English text: the only source of board-related UI text
+        dashboard.mjs               subscribes to the stores, sends user intents, coalesced rendering
         dashboard-view.mjs          section composition
         sections/*.mjs              pure view models followed by thin DOM updates
         dom.mjs                     required element lookup cached per document
-        console*.mjs, cli-screen.mjs Direct console and popup authentication
+        console.mjs, cli-screen.mjs Direct console
       timers.mjs                    abortable waits and page-owned timer scopes
 ```
 
 Protocol and state modules do not access the DOM or browser device APIs; `app.mjs` injects browser facts (secure
 context, WebHID/Web Bluetooth availability, clock, clipboard) into the UI. HID and BLE are peer byte pipes, each
-implementing the same `AbortSignal`-aware contract; link policy lives in `protocol/commands.mjs`, not the transport.
-The session is the only writer of domain state and owns commands, freshness, status polling and recovery for either
-link. Pending commands are recorded once in state, persisted before the write. Its single-flight queue rejects
-concurrent submissions instead of buffering writes against potentially changing board state, and never replays an
-uncertain command. Session methods and UI gating share `canRun`, so a button and its write cannot disagree.
-Workflows receive a narrow context from the session instead of reaching into it. UI-only state (dirty forms, busy
-dialogs, action errors) lives in a separate allowlisted UI store; rendering never triggers device I/O. Display-only
-storage retention belongs to each mounted view, not module-global state. The architecture contract test checks
-these boundaries.
+implementing the same `AbortSignal`-aware contract; link policy lives in `protocol/opcodes.mjs`, not the transport.
+Board modules are the only writers of domain state, and only through named events (`command/started`, `report/received`,
+...) that may each change a declared set of keys; only `connection.mjs` changes the connection phase, and only along
+declared transitions. Pending commands are recorded once in state, persisted before the write. The single-flight queue
+rejects concurrent submissions instead of buffering writes against potentially changing board state, and never replays
+an uncertain command. Use cases and UI gating share `canRun`, so a button and its write cannot disagree. Domain state,
+errors and progress carry reason codes, never English: protocol, transport, board and timers throw `BoardError` codes
+(or `DOMException`s whose message is a code), decoders return firmware numbers and identifiers, and `ui/messages.mjs` is
+the only place they become text. `state/errors.mjs` imports nothing, so it is the one module every layer may import.
+Uncoded browser errors render as `UNEXPECTED` with the raw message kept as detail. Dashboard-level UI state
+(settings dirtiness, busy state, action errors) lives in a separate allowlisted UI store; wireless provisioning draft
+and phase state stays local to its form controller and never enters domain state. Rendering never triggers device I/O.
+Display-only storage retention belongs to each mounted view, not module-global state. The architecture contract test
+checks these boundaries, the opcode table and the connection transitions.
 
 WebHID supplies payload bytes without the report ID. Exact lengths are required; the transport does not guess framing
 from byte values or discard padding. Telemetry expires at 750 ms, storage and self-test at 1500 ms.

@@ -1,3 +1,4 @@
+import { REASON } from "./state/errors.mjs";
 // @ts-check
 /**
  * @file Page-owned timer scopes so connection replacement and page teardown cancel scheduled work.
@@ -60,7 +61,7 @@ export function createTimerScope(parent = null) {
 export function wait(milliseconds, signal, timers = globalThis) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException("Operation cancelled", "AbortError"));
+      reject(signal.reason ?? new DOMException(REASON.OPERATION_CANCELLED, "AbortError"));
       return;
     }
     const timer = timers.setTimeout(finish, milliseconds);
@@ -71,7 +72,7 @@ export function wait(milliseconds, signal, timers = globalThis) {
     function abort() {
       timers.clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
-      reject(signal.reason ?? new DOMException("Operation cancelled", "AbortError"));
+      reject(signal.reason ?? new DOMException(REASON.OPERATION_CANCELLED, "AbortError"));
     }
     signal?.addEventListener("abort", abort, { once: true });
   });
@@ -87,9 +88,9 @@ export function withTimeout(operation, milliseconds, signal, timers = globalThis
       signal?.removeEventListener("abort", abort);
       callback(value);
     };
-    const abort = () => finish(reject, signal.reason ?? new DOMException("Operation cancelled", "AbortError"));
+    const abort = () => finish(reject, signal.reason ?? new DOMException(REASON.OPERATION_CANCELLED, "AbortError"));
     const timer = timers.setTimeout(() => finish(reject,
-      new DOMException("Board I/O timeout; command outcome uncertain", "TimeoutError")), milliseconds);
+      new DOMException(REASON.IO_TIMEOUT, "TimeoutError")), milliseconds);
     if (signal?.aborted) abort();
     else signal?.addEventListener("abort", abort, { once: true });
     Promise.resolve(operation).then(value => finish(resolve, value), error => finish(reject, error));

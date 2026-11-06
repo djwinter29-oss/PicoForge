@@ -1,6 +1,7 @@
 import { CAP } from "../../protocol/constants.mjs";
 import { canRun, mscPending, selfTestPending } from "../../state/selectors.mjs";
 import { queryElement, setText } from "../dom.mjs";
+import { describe } from "../messages.mjs";
 
 const element = id => queryElement(`#${id}`);
 
@@ -44,7 +45,8 @@ export function deriveControlsViewModel(state, ui, environment) {
   const bluetooth = state.link === "ble";
   const { eligibility } = ui;
   const { storageReady } = eligibility;
-  const reason = operation => ui.formBusy ? "Finish the wireless operation first." : canRun(state, operation).reason;
+  const reason = operation => ui.formBusy ? "Finish the wireless operation first."
+    : describe(canRun(state, operation).reason);
   const reasons = { "led-control": reason("led"), "msc-control": reason("msc"), "settings-reboot": reason("reboot"),
     "settings-save": reason("settings") };
   const bleLinked = bluetooth && (state.connected || state.reconnecting);

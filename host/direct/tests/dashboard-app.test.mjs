@@ -4,7 +4,7 @@ import test from "node:test";
 import { BoardSession } from "../web/js/board/session.mjs";
 import { BleTransport } from "../web/js/transport/ble.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../web/js/protocol/codec.mjs";
-import { identity, config, selfTest } from "./support/fixtures.mjs";
+import { identity, config, selfTest, patchState } from "./support/fixtures.mjs";
 
 const memorySessionStorage = () => {
   const saved = new Map();
@@ -33,7 +33,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   };
   let client;
   /** Apply a client change and flush the dashboard's coalesced refresh. */
-  const sync = async changes => { client.update(changes); await null; };
+  const sync = async changes => { patchState(client, changes); await null; };
   const commands = [];
   globalThis.document = { querySelector: el, createElement: () => ({ children: [],
     append(...children) { this.children.push(...children); } }) };
@@ -44,7 +44,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   BoardSession.prototype.connect = async function () {
     client = this;
     const hardware = decodeIdentityReport(identity());
-    this.update({ connected: true, hardware, settings: decodeConfigReport(config(), hardware),
+    patchState(this, { connected: true, hardware, settings: decodeConfigReport(config(), hardware),
       settings_supported: true, freshness: { 3: "fresh", 10: "fresh", 11: "fresh" },
       msc: { enabled: false, transition_pending: false }, self_test: decodeSelfTestReport(selfTest()),
       memory: { sample_valid: true, initialized: true } });
@@ -53,7 +53,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
   BoardSession.prototype.saveSettings = async function (settings, force = false) {
     commands.push(["save", settings]);
     this.testForceSave = force;
-    this.update({ settings: { ...this.state.settings, ...settings } });
+    patchState(this, { settings: { ...this.state.settings, ...settings } });
     return true;
   };
   BoardSession.prototype.reboot = async confirmed => { commands.push(["reboot", confirmed]); };
@@ -69,7 +69,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     let renders = 0;
     Object.defineProperty(label, "textContent", { configurable: true, get: () => labelText,
       set: value => { renders++; labelText = value; } });
-    for (const error of ["first", "second", null]) client.update({ error });
+    for (const error of ["first", "second", null]) patchState(client, { error });
     assert.equal(renders, 0, "client changes render asynchronously");
     await null;
     assert.equal(renders, 1, "a burst of client changes renders once");
@@ -190,7 +190,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     client.transport.device = device;
     await sync({ settings: { ...client.state.settings, radios: 1 },
       hardware: { ...client.state.hardware, capabilities: client.state.hardware.capabilities | 128 } });
-    client.wirelessPolling = true;
+    client.polling.enabled = true;
     client.pollWireless();
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(el("#direct-wifi-state").textContent, "HomeDev (192.168.1.9)");
@@ -217,7 +217,7 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     delayed = new Promise(resolve => { finishRead = resolve; });
     now += 2000;
     client.pollWireless();
-    client.clearConnection();
+    client.connection.clear();
     finishRead(new Uint8Array(48));
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(client.state.wireless, null, "a late report must not repopulate a disconnected board");
@@ -247,7 +247,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   };
   const prototypes = new Map(["connect", "disconnect", "saveSettings", "reboot"].map(name =>
     [name, BoardSession.prototype[name]]));
-  const authorizeConsole = BleTransport.prototype.authorizeConsole;
+  const createConsoleProof = BleTransport.prototype.createConsoleProof;
   const elements = new Map();
   const windowHandlers = new Map();
   let consolePopup;
@@ -275,7 +275,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memorySessionStorage() });
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: webcrypto });
   let client;
-  const sync = async changes => { client.update(changes); await null; };
+  const sync = async changes => { patchState(client, changes); await null; };
   let scans = 0;
   let failure = false;
   let finishScan;
@@ -284,7 +284,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   const settingsCommands = [];
   BoardSession.prototype.saveSettings = async function (settings, force, tcpCliEnabled) {
     settingsCommands.push(["save", settings, force, tcpCliEnabled]);
-    this.update({ settings: { ...this.state.settings, ...settings,
+    patchState(this, { settings: { ...this.state.settings, ...settings,
       ...(tcpCliEnabled === undefined ? {} : { tcp_cli_enabled: tcpCliEnabled }) },
     reboot_pending: true });
     return true;
@@ -294,10 +294,10 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     client = this;
     scans++;
     usedKey = Buffer.from(key).toString("hex");
-    this.update({ busy: true, error: null });
+    patchState(this, { busy: true, error: null });
     await new Promise(resolve => { finishScan = resolve; });
     if (failure) {
-      this.update({ busy: false, error: "The board rejected the control key." });
+      patchState(this, { busy: false, error: "The board rejected the control key." });
       return;
     }
     this.transport.bleKey = {};
@@ -308,7 +308,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     const wirelessReport = new Uint8Array(53);
     wirelessReport[0] = 1;
     this.transport.readReport = async () => wirelessReport;
-    this.update({ connected: true, busy: false, hardware,
+    patchState(this, { connected: true, busy: false, hardware,
       settings: decodeConfigReport(config(), hardware), settings_supported: true,
       runtime: { led_available: true, led_on: false },
       freshness: { 3: "fresh", 10: "fresh", 11: "fresh" },
@@ -320,9 +320,9 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   BoardSession.prototype.disconnect = async function () {
     this.transport.bleKey = null;
     this.transport.device = null;
-    this.clearConnection();
+    this.connection.clear();
   };
-  BleTransport.prototype.authorizeConsole = async function (nonce, uid) {
+  BleTransport.prototype.createConsoleProof = async function (nonce, uid) {
     authCalls.push([Array.from(nonce), Array.from(uid)]);
     return Uint8Array.from({ length: 16 }, (_, index) => index);
   };
@@ -441,7 +441,7 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
     assert.equal(el("#usb-connect").disabled, true);
   } finally {
     for (const [name, method] of prototypes) BoardSession.prototype[name] = method;
-    BleTransport.prototype.authorizeConsole = authorizeConsole;
+    BleTransport.prototype.createConsoleProof = createConsoleProof;
     globalThis.document = saved.document;
     globalThis.window = saved.window;
     if (saved.location === undefined) delete globalThis.location;

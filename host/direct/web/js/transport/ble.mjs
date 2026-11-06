@@ -1,6 +1,7 @@
-import { BLE_PROOF_EXEMPT_OPCODES } from "../protocol/constants.mjs";
+import { OPCODES } from "../protocol/opcodes.mjs";
 import { decodeIdentityReport, hexToBytes } from "../protocol/codec.mjs";
 import { wait } from "../timers.mjs";
+import { BoardError, REASON } from "../state/errors.mjs";
 
 export const BLE_SERVICE = "50fc0000-7c91-4d70-8b32-6e856443f502";
 const characteristic = id => `50fc${id.toString(16).padStart(4, "0")}-7c91-4d70-8b32-6e856443f502`;
@@ -16,7 +17,7 @@ export class BleTransport extends EventTarget {
     this.kind = "ble";
     this.api = bluetooth;
     this.available = Boolean(bluetooth);
-    this.unavailableMessage = "Web Bluetooth is unavailable in this browser.";
+    this.unavailableReason = REASON.BLUETOOTH_UNAVAILABLE;
     this.autoReconnect = false;
     this.pollInterval = 250;
     this.device = null;
@@ -44,7 +45,7 @@ export class BleTransport extends EventTarget {
    */
   async setControlKey(bytes) {
     try {
-      if (!(bytes instanceof Uint8Array) || bytes.length !== 32) throw new Error("Control key must be 32 bytes");
+      if (!(bytes instanceof Uint8Array) || bytes.length !== 32) throw new BoardError(REASON.BLE_KEY_LENGTH);
       this.bleKey = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     } finally { if (bytes instanceof Uint8Array) bytes.fill(0); }
   }
@@ -55,8 +56,7 @@ export class BleTransport extends EventTarget {
     signal.throwIfAborted();
     const nonce = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     if (nonce.length !== 16) {
-      throw Object.assign(new Error("The board did not provide a fresh BLE challenge; reconnect and retry."),
-        { final: true });
+      throw Object.assign(new BoardError(REASON.BLE_CHALLENGE), { final: true });
     }
     const message = new Uint8Array([...nonce, ...uid, ...new TextEncoder().encode("PFBLECTL1"), ...request]);
     const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));
@@ -72,13 +72,12 @@ export class BleTransport extends EventTarget {
     try { await this.prove(hexToBytes(this.uid), new TextEncoder().encode("SESSION01"), signal); }
     catch (error) {
       if (signal.aborted || error.final || !this.device?.gatt.connected) throw error;
-      throw Object.assign(new Error("The board rejected the unlock proof. Check the Control key or wait 2 s."),
-        { final: true });
+      throw Object.assign(new BoardError(REASON.BLE_UNLOCK_REJECTED), { final: true });
     }
   }
 
   async connect(key, signal) {
-    if (!this.api) throw new Error(this.unavailableMessage);
+    if (!this.api) throw new BoardError(this.unavailableReason);
     signal.throwIfAborted();
     this.connecting = true;
     try {
@@ -131,7 +130,7 @@ export class BleTransport extends EventTarget {
     const value = await this.characteristics.get(id).readValue();
     signal.throwIfAborted();
     if (id !== 20) return value;
-    if (value.byteLength !== 9) throw new Error("Expected exactly 9 BLE result bytes");
+    if (value.byteLength !== 9) throw new BoardError(REASON.BLE_RESULT_LENGTH);
     const report = new Uint8Array(68);
     report.set(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
     return report;
@@ -141,24 +140,24 @@ export class BleTransport extends EventTarget {
     signal.throwIfAborted();
     // Framing only: the BLE request is the 9-byte prefix; link policy is enforced by the session before writing.
     if (id !== 20 || report.length !== 68 || report.subarray(9).some(Boolean)) {
-      throw new Error("Request does not fit the 9-byte BLE control frame");
+      throw new BoardError(REASON.BLE_FRAME);
     }
     const request = report.slice(0, 9);
     try {
-      if (!BLE_PROOF_EXEMPT_OPCODES.includes(report[2])) await this.prove(hexToBytes(this.uid), request, signal);
+      if (OPCODES[report[2]]?.ble?.proof !== false) await this.prove(hexToBytes(this.uid), request, signal);
       signal.throwIfAborted();
       await this.characteristics.get(20).writeValueWithResponse(request);
       signal.throwIfAborted();
     } catch (error) {
       if (signal.aborted || error.final || !this.device?.gatt.connected) throw error;
-      throw new Error("The board rejected or rate-limited the proof. Check the Control key or wait 2 s.");
+      throw new BoardError(REASON.BLE_PROOF_REJECTED);
     }
   }
 
-  async authorizeConsole(nonce, uid, signal) {
+  async createConsoleProof(nonce, uid, signal) {
     signal.throwIfAborted();
     if (!this.bleKey || !this.device?.gatt.connected) {
-      throw new Error("Connect the matching PicoForge board over Bluetooth to authorize its Wi-Fi console");
+      throw new BoardError(REASON.CONSOLE_BLUETOOTH);
     }
     const message = new Uint8Array([...nonce, ...uid, ...new TextEncoder().encode("PFTCPCLI1TCPCLI001")]);
     const mac = new Uint8Array(await crypto.subtle.sign("HMAC", this.bleKey, message));

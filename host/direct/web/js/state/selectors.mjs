@@ -3,9 +3,9 @@
  * so buttons and device writes cannot disagree.
  */
 import { CAP } from "../protocol/constants.mjs";
+import { REASON } from "./errors.mjs";
 
-const BLOCKED = "Command unavailable or previous outcome uncertain";
-const USB_ONLY = "This operation requires USB.";
+const { COMMAND_BLOCKED: BLOCKED, USB_ONLY, CAPABILITY_UNAVAILABLE: NO_CAPABILITY } = REASON;
 
 /** @brief True while a control request or an accepted wireless lifecycle has no known outcome. */
 export const commandPending = state => Boolean(state.pending_request || state.pending_wireless);
@@ -51,31 +51,30 @@ export function deriveOperationEligibility(state) {
 }
 
 /**
- * @brief Per-operation precondition: return the first failing reason, or null. Operation-specific arguments
- * (LED level, MSC direction, self-test action, forced save) are checked by the session method itself.
+ * @brief Per-operation precondition: return the first failing reason code (state/errors.mjs), or null.
+ * Operation-specific arguments (LED level, MSC direction, self-test action, forced save) are checked by the use case.
  */
 const RULES = {
-  led: (state, e, caps) => !state.runtime?.led_available ? "Fresh LED telemetry unavailable"
-    : !(caps & CAP.LED) ? "Unavailable capability" : e.blocked ? BLOCKED : null,
-  reboot: (state, e, caps) => !e.storageReady || state.msc.enabled ? "Fresh idle firmware-owned storage required"
-    : !(caps & CAP.REBOOT) ? "Unavailable capability" : e.blocked ? BLOCKED : null,
-  msc: (state, e) => !e.storageReady ? "Fresh idle storage status required"
+  led: (state, e, caps) => !state.runtime?.led_available ? REASON.LED_TELEMETRY
+    : !(caps & CAP.LED) ? NO_CAPABILITY : e.blocked ? BLOCKED : null,
+  reboot: (state, e, caps) => !e.storageReady || state.msc.enabled ? REASON.REBOOT_STORAGE
+    : !(caps & CAP.REBOOT) ? NO_CAPABILITY : e.blocked ? BLOCKED : null,
+  msc: (state, e) => !e.storageReady ? REASON.STORAGE_IDLE
     : state.link === "ble" ? USB_ONLY : e.blocked ? BLOCKED : null,
   selfTest: (state, e, caps) => !e.storageFresh || state.msc.enabled || !state.self_test?.valid_for_control
-    ? "Fresh self-test and firmware-owned storage required" : !(caps & CAP.SELF_TEST) ? "Unavailable capability"
+    ? REASON.SELF_TEST_STORAGE : !(caps & CAP.SELF_TEST) ? NO_CAPABILITY
       : state.link === "ble" ? USB_ONLY : e.blocked ? BLOCKED : null,
-  settings: (state, e, caps) => !e.storageReady ? "Fresh idle firmware-owned storage required before saving."
-    : !(caps & CAP.SETTINGS) ? "Unavailable capability"
+  settings: (state, e, caps) => !e.storageReady ? REASON.SETTINGS_STORAGE
+    : !(caps & CAP.SETTINGS) ? NO_CAPABILITY
       : !e.settingsReady ? e.blocked ? BLOCKED : USB_ONLY : null,
-  wireless: (state, e) => e.wirelessReady ? null
-    : "Wireless configuration requires fresh idle USB storage, with sharing disabled.",
+  wireless: (state, e) => e.wirelessReady ? null : REASON.WIRELESS_STORAGE,
 };
 
 /**
  * @brief The one readiness gate for user operations, shared by BoardSession methods and UI disabling.
  * @param state Domain state snapshot.
  * @param {"led" | "reboot" | "msc" | "selfTest" | "settings" | "wireless"} operation
- * @return {{allowed: boolean, reason: string | null}}
+ * @return {{allowed: boolean, reason: string | null}} `reason` is a REASON code; ui/messages.mjs has its text.
  */
 export function canRun(state, operation) {
   const reason = RULES[operation](state, deriveOperationEligibility(state), state.hardware?.capabilities ?? 0);

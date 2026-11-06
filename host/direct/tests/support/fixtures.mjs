@@ -1,3 +1,4 @@
+import { describe } from "../../web/js/ui/messages.mjs";
 import { BoardSession } from "../../web/js/board/session.mjs";
 import { HidTransport } from "../../web/js/transport/hid.mjs";
 
@@ -71,12 +72,23 @@ export function fakeConnection({ capabilities, ...options } = {}) {
     } });
   const hid = new EventTarget(); hid.getDevices = async () => [device];
   hid.requestDevice = async () => [device];
-  const client = new BoardSession(new HidTransport(hid), () => {},
+  const client = new BoardSession(new HidTransport(hid),
     { sleep: async () => {}, pendingStore, wirelessPolling: false, ...options });
   return { client, device, hid, reads, sent, pendingStore };
 }
 
 export async function attachDevice(client, device) {
   await client.transport.openDevice(device, client.connectionSignal);
-  await client.initializeConnection();
+  await client.connection.initialize();
+}
+
+/** @brief Test-only state override: replace the domain snapshot with `changes` merged in (bypasses named events). */
+/** @brief `assert.rejects` validator: the rejection's user-visible text (via `describe`) matches `pattern`. */
+export const says = pattern => error => {
+  if (!pattern.test(describe(error))) throw new Error(`"${describe(error)}" does not match ${pattern}`);
+  return true;
+};
+
+export function patchState(client, changes) {
+  client.store.dispatch({ type: "replace", state: { ...client.state, ...changes } });
 }

@@ -1,6 +1,7 @@
 import {
   bytesToHex, CONSOLE_AUTH_ERROR, CONSOLE_AUTH_REQUEST, CONSOLE_AUTH_RESPONSE, parseHexBytes,
-} from "../console-auth.mjs";
+} from "../../protocol/console-messages.mjs";
+import { describe } from "../messages.mjs";
 
 /**
  * @brief Open the Wi-Fi console and answer its proof requests for the current session.
@@ -18,8 +19,8 @@ export function bindConsoleLink(getSession, reportError) {
     windows.delete(popup);
     const response = { request_id: request.request_id };
     try {
-      const nonce = parseHexBytes(request.nonce, 16, "TCP CLI nonce");
-      const uid = parseHexBytes(request.uid, 8, "TCP CLI board identity");
+      const nonce = parseHexBytes(request.nonce, 16, "console-nonce");
+      const uid = parseHexBytes(request.uid, 8, "console-uid");
       const session = getSession();
       if (!session.state.connected || !session.state.hardware) {
         throw new Error("Connect this board to the Direct dashboard over USB or Bluetooth first");
@@ -35,7 +36,7 @@ export function bindConsoleLink(getSession, reportError) {
         uid: request.uid.toLowerCase(), proof: bytesToHex(proof) }, event.origin);
     } catch (error) {
       popup.postMessage({ ...response, type: CONSOLE_AUTH_ERROR,
-        error: error instanceof Error ? error.message : "Could not authorize the Wi-Fi console" }, event.origin);
+        error: error instanceof Error ? describe(error) : "Could not authorize the Wi-Fi console" }, event.origin);
     }
   }
   const onMessage = event => { void provideProof(event); };

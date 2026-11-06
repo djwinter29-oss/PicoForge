@@ -7,13 +7,12 @@ import { mountDashboard } from "./ui/dashboard.mjs";
 
 const timers = createTimerScope();
 const store = createDashboardStore({});
-let dashboard;
 
 function createSession(kind) {
   const transport = kind === "ble"
     ? new BleTransport(globalThis.isSecureContext ? navigator.bluetooth : undefined)
     : new HidTransport(globalThis.isSecureContext ? navigator.hid : undefined);
-  return new BoardSession(transport, () => dashboard?.refresh(), { timerScope: timers, store });
+  return new BoardSession(transport, { timerScope: timers, store });
 }
 
 /** Browser facts injected into the UI, read live so they match `createSession`; app.mjs is the only global reader. */
@@ -26,7 +25,7 @@ const environment = {
 };
 
 let session = createSession("usb");
-dashboard = mountDashboard({
+const dashboard = mountDashboard({
   session, timers, environment,
   selectTransport(kind) {
     session.dispose();

@@ -70,3 +70,4 @@ obj/
 obj/**
 bin/
 bin/**
+.vscode/mcp.json
