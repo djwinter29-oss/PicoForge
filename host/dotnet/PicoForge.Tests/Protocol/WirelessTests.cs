@@ -380,6 +380,7 @@ public sealed class WirelessTests
         Assert.Equal(nonce, request[5..21]);
         Assert.All(request[21..], value => Assert.Equal(0, value));
         Assert.Equal(1, wire.Reopens);
+        Assert.Empty(wire.Hid.LastCommandResult!.ResultData);
     }
 
     [Fact]

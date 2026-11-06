@@ -9,7 +9,6 @@ public sealed record HidBoard(string DevicePath, string? SerialNumber, string Pr
 
 internal sealed class PicoForgeHid : IHidClient
 {
-    private HidDevice device = null!;
     private HidStream stream = null!;
     private readonly Func<byte, int, byte[]> readFeature;
     private readonly Action<byte[]> writeFeature;
@@ -28,6 +27,8 @@ internal sealed class PicoForgeHid : IHidClient
     public bool CommandOutcomeUncertain { get; private set; }
     public ControlCommandReference? UncertainCommand { get; private set; }
     public WirelessOperationReference? UncertainWirelessOperation { get; private set; }
+    /// <summary>Latest final command metadata; result payloads, including authentication proofs, are not retained.</summary>
+    public ControlResult? LastCommandResult { get; private set; }
 
     public PicoForgeHid(string? serialNumber = null, string? devicePath = null)
         : this(SelectDevice(serialNumber, devicePath), MatchingDevices) { }
@@ -51,22 +52,25 @@ internal sealed class PicoForgeHid : IHidClient
 
     internal PicoForgeHid(HidDevice device, Func<IEnumerable<HidDevice>> matchingDevices)
     {
-        this.device = device;
         this.matchingDevices = matchingDevices;
         stream = device.Open();
-        stream.ReadTimeout = 250;
-        stream.WriteTimeout = 1000;
-        inputReport = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
-        featureReport = new byte[Math.Max(
-            HidProtocol.ControlFeatureSize, device.GetMaxFeatureReportLength())];
-        readFeature = GetFeatureReport;
-        writeFeature = report => { RequireOpen(); stream.SetFeature(report); };
-        reopen = ReopenSameBoard;
-        time = TimeProvider.System;
-        try { identity = ReadHardwareInfo(); }
-        catch
+        try
         {
-            Dispose();
+            stream.ReadTimeout = 250;
+            stream.WriteTimeout = 1000;
+            inputReport = new byte[Math.Max(HidProtocol.SelfTestPayloadSize + 1, device.GetMaxInputReportLength())];
+            featureReport = new byte[Math.Max(
+                HidProtocol.ControlFeatureSize, device.GetMaxFeatureReportLength())];
+            readFeature = GetFeatureReport;
+            writeFeature = report => { RequireOpen(); stream.SetFeature(report); };
+            reopen = ReopenSameBoard;
+            time = TimeProvider.System;
+            identity = ReadHardwareInfo();
+        }
+        catch (Exception initializationError)
+        {
+            try { Dispose(); }
+            catch (Exception closeError) { throw new HidOpenCleanupException(this, initializationError, closeError); }
             throw;
         }
     }
@@ -438,6 +442,7 @@ internal sealed class PicoForgeHid : IHidClient
         var forcedSave = opcode == Opcode.SaveSettings && (flags & HidProtocol.SaveForceMsc) != 0;
         CommandOutcomeUncertain = true;
         UncertainCommand = new(transactionId, opcode);
+        LastCommandResult = null;
         var disconnected = false;
         try { writeFeature(request); }
         catch (Exception error) when (forcedSave && error is IOException or TimeoutException)
@@ -474,6 +479,7 @@ internal sealed class PicoForgeHid : IHidClient
             {
                 CommandOutcomeUncertain = false;
                 UncertainCommand = null;
+                LastCommandResult = result with { ResultData = [] };
                 HidProtocol.RequireCompleted(result, transactionId, opcode);
                 return result;
             }
@@ -505,7 +511,6 @@ internal sealed class PicoForgeHid : IHidClient
                     HidProtocol.SelfTestPayloadSize + 1, candidate.GetMaxInputReportLength())];
                 featureReport = new byte[Math.Max(
                     HidProtocol.ControlFeatureSize, candidate.GetMaxFeatureReportLength())];
-                device = candidate;
                 adopted = true;
                 return;
             }
@@ -545,3 +550,11 @@ internal sealed class PicoForgeHid : IHidClient
 
 /// <summary>A Wi-Fi test stopped by a cancel request; the cancel command completed, so the outcome is known.</summary>
 internal sealed class WirelessTestCancelledException() : InvalidOperationException("Wi-Fi test cancelled");
+
+/// <summary>Retains an initially opened handle whose failed cleanup forbids another connection attempt.</summary>
+internal sealed class HidOpenCleanupException(IHidClient client, Exception initializationError, Exception closeError)
+    : IOException("Initial HID cleanup failed; restart the dashboard",
+        new AggregateException(initializationError, closeError))
+{
+    public IHidClient Client { get; } = client;
+}

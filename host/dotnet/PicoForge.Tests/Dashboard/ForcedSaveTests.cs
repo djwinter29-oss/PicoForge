@@ -341,16 +341,37 @@ public sealed class ForcedSaveTests
     {
         var time = new ManualTime();
         var runtime = new RuntimeStatusResponse(1, 1, 200_000_000, true, false, false, null, true, false);
-        using var monitor = Attached(new Commands(), Ready() with { Runtime = runtime, TelemetryStale = false }, time);
+        using var monitor = Attached(new Commands(), Ready() with
+        {
+            Runtime = runtime,
+            SelfTest = new(1, "idle", 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+            Wireless = new(),
+            TelemetryStale = false
+        }, time);
         Assert.NotNull(monitor.Snapshot.Runtime);
-        time.Advance(TimeSpan.FromMilliseconds(800));
+        time.Advance(TimeSpan.FromMilliseconds(749));
+        Assert.False(monitor.Snapshot.TelemetryStale);
+        Assert.NotNull(monitor.Snapshot.Runtime);
+        time.Advance(TimeSpan.FromMilliseconds(1));
         var aged = monitor.Snapshot;
         Assert.Null(aged.Runtime);
         Assert.True(aged.TelemetryStale);
         Assert.NotNull(aged.Memory?.Msc);
-        time.Advance(TimeSpan.FromMilliseconds(800));
+        time.Advance(TimeSpan.FromMilliseconds(749));
+        Assert.False(monitor.Snapshot.StorageStale);
+        Assert.False(monitor.Snapshot.SelfTestStale);
+        Assert.NotNull(monitor.Snapshot.Memory);
+        Assert.NotNull(monitor.Snapshot.SelfTest);
+        time.Advance(TimeSpan.FromMilliseconds(1));
         Assert.Null(monitor.Snapshot.Memory);
+        Assert.Null(monitor.Snapshot.SelfTest);
         Assert.True(monitor.Snapshot.StorageStale);
+        Assert.True(monitor.Snapshot.SelfTestStale);
+        time.Advance(TimeSpan.FromMilliseconds(3499));
+        Assert.Null(monitor.Snapshot.WirelessError);
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal("Wireless status is stale; wait for a fresh report", monitor.Snapshot.WirelessError);
+        Assert.NotNull(monitor.Snapshot.Wireless);
     }
 
     [Theory]
@@ -523,6 +544,7 @@ public sealed class ForcedSaveTests
         public bool CommandOutcomeUncertain => Failure is not null || CancelUncertain;
         public ControlCommandReference? UncertainCommand => null;
         public WirelessOperationReference? UncertainWirelessOperation => null;
+        public ControlResult? LastCommandResult { get; private set; }
         public CommandResyncResult? ReconcileOutcome(ControlCommandReference? command,
             WirelessOperationReference? wirelessOperation) => null;
         public InputReport? ReadInputReport(int timeoutMilliseconds = 250) =>
@@ -534,9 +556,14 @@ public sealed class ForcedSaveTests
         {
             Forces.Add(force);
             if (Failure is not null) throw Failure;
+            LastCommandResult = new(1, Opcode.SaveSettings, ControlStatus.Completed, ControlError.None, []);
             return settings;
         }
-        public void Reboot() => Reboots++;
+        public void Reboot()
+        {
+            Reboots++;
+            LastCommandResult = new(1, Opcode.Reboot, ControlStatus.Completed, ControlError.None, []);
+        }
         public void SetSelfTest(string action, uint sizeMib)
         {
             if (Failure is not null) throw Failure;
@@ -561,6 +588,7 @@ public sealed class ForcedSaveTests
         {
             if (CancelFailure is not null) throw CancelFailure;
             Cancels++;
+            LastCommandResult = new(1, Opcode.WifiCancel, ControlStatus.Completed, ControlError.None, []);
         }
     }
 }

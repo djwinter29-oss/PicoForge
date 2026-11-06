@@ -1,5 +1,8 @@
 # PicoForge Copilot Instructions
 
+- Always try CodeGraph first for repository exploration, symbol lookup, references, and call relationships.
+  Discover and query its tools before falling back to other search methods. If CodeGraph is unavailable or returns
+  no useful results, state that briefly and continue with available code intelligence or targeted file searches.
 - Keep changes small, focused, and consistent with the existing project structure.
 - Do not repeat the README; use it as the project overview and documentation index.
 - Target RP2040 and RP2350 through Pico SDK-supported interfaces. Avoid assuming a specific board when the SDK or board-support layer can provide the information.

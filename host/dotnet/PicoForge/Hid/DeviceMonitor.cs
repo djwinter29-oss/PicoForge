@@ -39,6 +39,7 @@ internal interface IHidCommands
     bool CommandOutcomeUncertain { get; }
     ControlCommandReference? UncertainCommand { get; }
     WirelessOperationReference? UncertainWirelessOperation { get; }
+    ControlResult? LastCommandResult { get; }
     InputReport? ReadInputReport(int timeoutMilliseconds = 250);
     void SetLed(bool on);
     void SetMsc(bool enabled, bool force = false);
@@ -68,6 +69,13 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private const string UncertainMessage = "A prior HID command outcome is uncertain; further writes are blocked";
     // An API command waits this long for the board, then gets a 409; Wi-Fi scan and test hold it up to 15 s and 35 s.
     private static readonly TimeSpan BusyWait = TimeSpan.FromSeconds(2);
+    private const int InputPollIntervalMs = 100;
+    private const int ActiveWirelessPollIntervalMs = 500;
+    private const int IdleWirelessPollIntervalMs = 2000;
+    private const int TelemetryMaximumAgeMs = 750;
+    private const int StorageMaximumAgeMs = 1500;
+    private const int SelfTestMaximumAgeMs = 1500;
+    private const int WirelessMaximumAgeMs = 5000;
     private readonly Func<IHidClient> createClient;
     private readonly ILogger<DeviceMonitor> logger;
     private readonly TimeProvider time;
@@ -77,6 +85,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private int stopping;
     private int quarantined;
     private Exception? cleanupError;
+    private IHidClient? failedClient; // Retain native ownership after an unrecoverable close failure.
     // Handle operations always acquire deviceGate before the snapshot gate. Not reentrant.
     private readonly SemaphoreSlim deviceGate = new(1, 1);
     private IHidCommands? activeClient;
@@ -120,7 +129,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         if (!deviceGate.Wait(0)) return false;
         try
         {
-            if (Snapshot.CommandOutcomeUncertain) return false;
+            if (Snapshot is { CommandOutcomeUncertain: true } or { WirelessCleanupRequired: true }) return false;
             Interlocked.Exchange(ref stopping, 1);
             return true;
         }
@@ -174,7 +183,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     /// <summary>
     /// API commands wait at most <see cref="BusyWait"/>; a busy board is a 409 because nothing was sent.
     /// </summary>
-    private DeviceLease Device(CancellationToken cancel, bool readOnly = false)
+    private DeviceLease Device(CancellationToken cancel, bool readOnly = false, bool cleanup = false)
     {
         if (!deviceGate.Wait(BusyWait, cancel)) throw new BoardBusyException();
         if (Volatile.Read(ref stopping) != 0)
@@ -186,6 +195,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             deviceGate.Release();
             throw new BoardStateException("Board identity is ambiguous; rescan after removing duplicate identities");
+        }
+        if (!readOnly && !cleanup && Snapshot.WirelessCleanupRequired)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Clear the Wi-Fi test before sending other commands");
         }
         return new(deviceGate);
     }
@@ -235,13 +249,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 snapshot = snapshot with
                 {
                     CommandOutcomeUncertain = false,
-                    RebootPending = snapshot.RebootPending ||
-                        result.ControlResult is { Status: ControlStatus.Completed,
-                            Opcode: Opcode.Reboot or Opcode.SaveSettings },
                     Error = null,
                     Wireless = result.Wireless ?? snapshot.Wireless,
                     WirelessError = result.Wireless is null ? snapshot.WirelessError : null
                 };
+                PublishCommandResult(result.ControlResult);
             }
             var control = result.ControlResult is { } controlResult
                 ? new ControlResultResponse(HidProtocol.ReportVersion, controlResult.TransactionId,
@@ -319,7 +331,6 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 snapshot = snapshot with
                 {
                     BoardConfiguration = snapshot.BoardConfiguration! with { NextBoot = saved },
-                    RebootPending = true,
                     Memory = force && snapshot.Memory is { Msc: { } msc } memory
                         ? memory with { Msc = msc with { Enabled = false } } : snapshot.Memory
                 };
@@ -349,7 +360,6 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 {
                     BoardConfiguration = snapshot.BoardConfiguration is { } configuration
                         ? configuration with { NextBoot = settings.Board } : null,
-                    RebootPending = true,
                     Wireless = saved
                 };
             }
@@ -374,24 +384,19 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var client = RequireWirelessIdle();
             using var stop = new CancellationTokenSource();
             lock (gate) wirelessTestCancel = stop;
-            var cancelSent = false;
             try
             {
                 return ExecuteCommand(client, () => client.TestWireless(ssid, password, () => PollInputs(client),
                     SetWirelessPhase, ssidHex, stop.Token));
             }
-            catch (WirelessTestCancelledException)
-            {
-                cancelSent = true;
-                throw;
-            }
             finally
             {
                 lock (gate) wirelessTestCancel = null;
                 SetWirelessPhase(null);
-                // A cancel that arrived after the client's last check must still clear the test credentials.
-                if (stop.IsCancellationRequested && !cancelSent && !Snapshot.CommandOutcomeUncertain)
-                    ExecuteCommand(client, client.CancelWirelessTest);
+                // Honor a late cancel, but never replay one that already has a final result (including failure).
+                if (stop.IsCancellationRequested &&
+                    client.LastCommandResult?.Opcode != Opcode.WifiCancel && !Snapshot.CommandOutcomeUncertain)
+                    ClearWirelessTest(client);
             }
         }
     }
@@ -402,15 +407,22 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         lock (gate)
             if (wirelessTestCancel is { } running)
             {
+                snapshot = snapshot with { WirelessCleanupRequired = true };
                 running.Cancel();
                 return;
             }
-        using (Device(cancel))
+        using (Device(cancel, cleanup: true))
         {
             var client = RequireWirelessIdle();
-            ExecuteCommand(client, client.CancelWirelessTest);
+            ClearWirelessTest(client);
         }
     }
+
+    private void ClearWirelessTest(IHidCommands client) => ExecuteCommand(client, () =>
+    {
+        lock (gate) snapshot = snapshot with { WirelessCleanupRequired = true };
+        client.CancelWirelessTest();
+    });
 
     public void Reboot(CancellationToken cancel = default)
     {
@@ -419,7 +431,6 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var client = Client();
             RequireIdleStorage(Snapshot, "rebooting");
             ExecuteCommand(client, client.Reboot);
-            lock (gate) snapshot = snapshot with { RebootPending = true };
         }
     }
 
@@ -499,6 +510,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     var uncertain = snapshot.CommandOutcomeUncertain;
                     snapshot = new(true, uncertain ? UncertainMessage : null, hardware,
                         BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain,
+                        WirelessCleanupRequired: snapshot.WirelessCleanupRequired,
                         SettingsMessage: settingsMessage,
                         WirelessError: hardware.WirelessSupported ? settingsMessage : null);
                 }
@@ -514,12 +526,17 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                             wirelessPollAt = PollWireless(client);
                     }
                     // ponytail: 100 ms stays below the 250 ms telemetry cadence and halves idle wakeups.
-                    await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
+                    await Task.Delay(InputPollIntervalMs, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception error)
             {
+                if (error is HidOpenCleanupException failedOpen)
+                {
+                    client = failedOpen.Client;
+                    cleanupError = failedOpen;
+                }
                 // Any fault, including a code bug, must leave a visible error and a retrying monitor.
                 if (!IsDeviceError(error)) logger.LogError(error, "PicoForge HID monitor failed; retrying");
                 HandleDisconnect(error);
@@ -535,11 +552,13 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     try { client?.Dispose(); }
                     catch (Exception error)
                     {
-                        logger.LogError(error, "HID cleanup failed; stopping monitor to prevent overlapping handles");
-                        cleanupError = error;
+                        cleanupError ??= error;
+                        logger.LogError(cleanupError, "HID cleanup failed; stopping monitor to prevent overlapping handles");
+                        failedClient = client;
                         Interlocked.Exchange(ref stopping, 1);
                         lock (gate) snapshot = new(false, "HID cleanup failed; restart the dashboard",
-                            CommandOutcomeUncertain: snapshot.CommandOutcomeUncertain);
+                            CommandOutcomeUncertain: snapshot.CommandOutcomeUncertain,
+                            WirelessCleanupRequired: snapshot.WirelessCleanupRequired);
                     }
                 }
             }
@@ -576,7 +595,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         {
             lock (gate) snapshot = snapshot with { WirelessError = error.Message };
         }
-        return time.GetTimestamp() + time.TimestampFrequency * (active ? 1 : 4) / 2;
+        var intervalMs = active ? ActiveWirelessPollIntervalMs : IdleWirelessPollIntervalMs;
+        return time.GetTimestamp() + time.TimestampFrequency * intervalMs / 1000;
     }
 
     private void PollInputs(IHidCommands client)
@@ -618,9 +638,9 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private StatusResponse Fresh()
     {
         if (!snapshot.Connected) return snapshot;
-        var telemetryStale = IsStale(telemetryReceipt, 750);
-        var storageStale = IsStale(storageReceipt, 1500);
-        var selfTestStale = IsStale(selfTestReceipt, 1500);
+        var telemetryStale = IsStale(telemetryReceipt, TelemetryMaximumAgeMs);
+        var storageStale = IsStale(storageReceipt, StorageMaximumAgeMs);
+        var selfTestStale = IsStale(selfTestReceipt, SelfTestMaximumAgeMs);
         return snapshot with
         {
             Runtime = telemetryStale ? null : snapshot.Runtime,
@@ -630,7 +650,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             StorageStale = storageStale,
             SelfTestStale = selfTestStale,
             WirelessError = snapshot.WirelessError ??
-                (snapshot.Wireless is not null && IsStale(wirelessReceipt, 5000)
+                (snapshot.Wireless is not null && IsStale(wirelessReceipt, WirelessMaximumAgeMs)
                     ? "Wireless status is stale; wait for a fresh report" : null)
         };
     }
@@ -651,7 +671,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             snapshot = new(false, uncertain ? UncertainMessage
                     : reconnecting ? null
                     : IsDeviceError(error) ? error.Message : $"Internal monitor error: {error.Message}",
-                CommandOutcomeUncertain: uncertain, Reconnecting: reconnecting);
+                CommandOutcomeUncertain: uncertain, Reconnecting: reconnecting,
+                WirelessCleanupRequired: snapshot.WirelessCleanupRequired);
         }
     }
 
@@ -673,6 +694,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     {
         if (Snapshot.CommandOutcomeUncertain) throw new BoardStateException(UncertainMessage);
         if (Snapshot.RebootPending) throw new BoardStateException("Board reboot is pending; wait for reconnection");
+        var previousResult = client.LastCommandResult;
         try
         {
             return command();
@@ -687,5 +709,22 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             }
             throw;
         }
+        finally
+        {
+            if (!ReferenceEquals(previousResult, client.LastCommandResult))
+                PublishCommandResult(client.LastCommandResult);
+        }
+    }
+
+    /// <summary>Applies confirmed lifecycle transitions, even if a later read or validation failed.</summary>
+    private void PublishCommandResult(ControlResult? result)
+    {
+        if (result is not { Status: ControlStatus.Completed }) return;
+        lock (gate)
+            snapshot = snapshot with
+            {
+                RebootPending = snapshot.RebootPending || result.Opcode is Opcode.Reboot or Opcode.SaveSettings,
+                WirelessCleanupRequired = snapshot.WirelessCleanupRequired && result.Opcode != Opcode.WifiCancel
+            };
     }
 }

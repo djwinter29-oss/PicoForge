@@ -55,7 +55,7 @@ before retrying. USB-shared storage blocks wireless Save and explains how to ret
 Re-sync locks board selection and discards continuations from a previous board generation. Cancellation delivery
 timeouts and network failures retain uncertain outcomes; known refusals remain retryable after explicit cleanup.
 Disconnected polling clears drafts once per lifecycle transition, not on every status render.
-When the Python host reports `wireless_cleanup_required`, unrelated writes remain blocked and the status action offers
+When either host reports `wireless_cleanup_required`, unrelated writes remain blocked and the status action offers
 **Clear Wi-Fi test**. Known cleanup failures permit only an explicit cleanup retry. Unknown cancellation delivery
 requires **Re-sync** first; a confirmed completed cancel clears local recovery state without resending it.
 
@@ -181,7 +181,10 @@ source-built host with representative RP2040 and RP2350 boards:
    and confirm fresh mounted status. Exercise forced-save recovery only with no valuable data and after reviewing the
    [forced-save policy](../reference/settings.md#forced-save-and-reboot).
 4. On a W board with a test access point, scan, test a temporary connection, cancel it, and verify credentials clear
-   and the UI recovers after completion or timeout. Do not use production credentials.
+   and the UI recovers after completion or timeout. Cancel both during joining and as the test completes; verify
+   cancellation is not automatically resent. If cancellation fails, confirm unrelated writes and console creation
+   stay blocked across reconnection until explicit cleanup succeeds. Unknown delivery requires read-only Re-sync
+   before cleanup can be retried. Do not use production credentials.
 5. Measure first `/api/status` response latency and time from the first request to connected status with current
    telemetry. Record worst observed report/UI update delay, host CPU during idle and multi-board operation, command
    response latency, detach/reconnect results, and errors. To compare polling intervals, use otherwise equivalent host
@@ -404,7 +407,9 @@ Shutdown joins all cleanup tasks, including earlier retirements; one failure doe
 
 Native cleanup failure is logged and published as a disconnected cleanup error, stops the worker, and is reported
 again at disposal without retrying close. The failed owner is retained; restart the dashboard before reconnecting.
-Forced-save reconnect candidates become owned before timeout configuration or identity validation. Rejected candidates
+Initial opens and forced-save reconnect candidates become owned before timeout configuration, report-size queries,
+or identity validation. Failed initialization closes the opened stream; a failed initial close retains both causes
+and the failed owner and stops the monitor without opening again. Rejected reconnect candidates
 are closed before another is opened; a failed close is terminal, keeps the candidate owned, and stops reconnect retries.
 Native HID calls must return before shutdown can finish; cancelling a request does not interrupt an accepted command.
 
@@ -416,15 +421,32 @@ retried every poll; unexpected parser bugs still produce a disconnected internal
 
 Confirmed settings/wireless saves and reboot commands set `reboot_pending`. All subsequent writes, including LED
 and console authentication, are rejected until reconnection; telemetry and read-only Re-sync remain available.
-A Re-sync that confirms a completed save or reboot also sets the pending gate, without resending the command.
+Normal execution and Re-sync use one final-result publication path. It applies confirmed reboot effects even if a
+later confirmation check fails; failed or uncertain commands do not invent completion. Result metadata retained for
+publication excludes payload bytes, including TCP authentication proofs.
+
+Temporary Wi-Fi cleanup has a separate `wireless_cleanup_required` snapshot flag. Known cancellation failure does not
+invent delivery uncertainty: unrelated writes and console creation stay blocked, but explicit cleanup can be retried.
+Unknown cancellation delivery retains the exact cancel transaction, not the cancelled test generation, and requires
+read-only Re-sync first. A completed cancel clears cleanup ownership; a failed cancel leaves it required. Neither path
+automatically resends cancellation. Cleanup ownership survives disconnect/reconnect and prevents monitor retirement.
 
 The executable and integration tests use the same `DashboardApplication` composition. Tests exercise actual headers,
 binding, body limits, error mapping, templates and static routes. Release smoke tests run the extracted executable,
 compare the entire uncompressed dashboard payload against shared source, fetch assets, and verify hardware-free API
 responses. These checks do not replace the [physical qualification procedure](#qualify-the-net-host-with-hardware).
+The status OpenAPI contract includes HTTP 409 with the standard error body for registry conflicts such as quarantine,
+retirement or exhausted monitor capacity.
+
+Monitor polling and freshness limits are named constants, not runtime tuning options: input polling is 100 ms,
+wireless polling is 500 ms while active and 2 s otherwise. Telemetry expires at 750 ms, storage and self-test at
+1500 ms, and wireless at 5 s; polling intervals remain below their associated expiry limits. Wireless lifecycle tests
+that attach snapshots use the manual clock, including cleanup HTTP tests, so startup cannot expire their fixtures.
+Boundary tests check each report just before and exactly at expiry.
 
 Wireless snapshots retain the last successful report for diagnostics, but a failed poll or a report at least five
-seconds old sets `wireless_error`. Console creation requires a connected board with an error-free wireless snapshot;
+seconds old sets `wireless_error`. Console creation requires a connected board with an error-free wireless snapshot
+and no pending wireless cleanup;
 an already-open page or direct API caller cannot bypass that policy. A successful poll clears the error and refreshes
 the receipt time.
 
@@ -436,8 +458,11 @@ A synchronous native proof must return before its budget can be checked; late pr
 
 Host regressions exercise duplicate discovery during accepted commands, retained-reference write gates, failed/stale
 wireless console requests through the production HTTP composition, and challenge continuations queued across shutdown.
-Native reconnect tests use controlled HidSharp devices and streams, including compound validation/close failures and
-terminal cleanup propagation through the real monitor. They do not replace physical board qualification.
+Native reconnect tests use controlled HidSharp devices and streams, including initial setup failures, compound
+validation/close failures and terminal cleanup propagation through the real monitor. Wireless lifecycle regressions
+run the real HID client, monitor and HTTP composition over fake native transport: active/late cancellation, final
+failure versus unknown delivery, exact read-only Re-sync, explicit retries, reconnect retention, every write gate and
+console refusal before dialing. They do not replace physical board qualification.
 
 ## Shared Frontend and Protocol Boundaries
 

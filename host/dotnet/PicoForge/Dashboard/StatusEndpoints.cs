@@ -126,7 +126,7 @@ internal static class StatusEndpoints
             .WithDescription("Returns the selected board's connection state and latest hardware/runtime reports. " +
                 "Pass its ID from /api/boards as the board query.")
             .Produces<StatusResponse>(StatusCodes.Status200OK)
-            .Errors(404);
+            .Errors(404, 409);
         endpoints.MapPost("/api/led", SetLed)
             .WithName("SetBoardLed")
             .WithSummary("Set the onboard board LED")

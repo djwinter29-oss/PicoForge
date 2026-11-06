@@ -13,6 +13,38 @@ namespace PicoForge.Tests;
 
 public sealed class MonitorLifecycleTests
 {
+    [Fact]
+    public async Task ProductionStatusContractIncludesRegistryConflicts()
+    {
+        HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
+        using var monitor = new TestMonitor { Snapshot = new(true, null, CommandOutcomeUncertain: true) };
+        using var boards = new DashboardBoards(null, null, () => attached, (_, _) => monitor);
+        var id = boards.Boards().Boards[0].Id;
+        boards.Monitor(id);
+        attached = [new("/hid/a", "board-A", "PicoForge"), new("/hid/b", "board-A", "PicoForge")];
+        Assert.Empty(boards.Boards().Boards);
+
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton<IDashboardBoards>(boards);
+        await using var app = await DashboardApplication.BuildAsync(builder);
+        await app.StartAsync();
+        using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var conflict = await http.GetAsync($"/api/status?board={id}");
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        Assert.Contains("ambiguous", (await conflict.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString());
+        var document = await http.GetFromJsonAsync<JsonElement>("/openapi/v1.json");
+        var responses = document.GetProperty("paths").GetProperty("/api/status")
+            .GetProperty("get").GetProperty("responses");
+        Assert.True(responses.TryGetProperty("200", out _));
+        foreach (var code in new[] { "404", "409" })
+            Assert.Contains("ApiError", responses.GetProperty(code).GetProperty("content")
+                .GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString());
+        await app.StopAsync();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -563,6 +595,7 @@ public sealed class MonitorLifecycleTests
         public bool CommandOutcomeUncertain { get; set; }
         public ControlCommandReference? UncertainCommand => new(1, Opcode.Led);
         public WirelessOperationReference? UncertainWirelessOperation => null;
+        public ControlResult? LastCommandResult { get; private set; }
         public HardwareInfoResponse ReadInfo() => new("PicoForge", "RP2350", 2, "0001020304050607",
             Capabilities: Capabilities);
         public BoardConfigurationResponse ReadConfiguration() =>
@@ -587,9 +620,14 @@ public sealed class MonitorLifecycleTests
         public BootSettingsResponse SetSettings(BootSettingsResponse settings, bool force = false)
         {
             Interlocked.Increment(ref Writes);
+            LastCommandResult = new(1, Opcode.SaveSettings, ControlStatus.Completed, ControlError.None, []);
             return settings;
         }
-        public void Reboot() => Interlocked.Increment(ref Writes);
+        public void Reboot()
+        {
+            Interlocked.Increment(ref Writes);
+            LastCommandResult = new(1, Opcode.Reboot, ControlStatus.Completed, ControlError.None, []);
+        }
         public void SetSelfTest(string action, uint sizeMib) => throw new NotSupportedException();
         public WirelessStatusResponse ReadWireless() => Wireless?.Invoke() ?? throw new NotSupportedException();
         public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)

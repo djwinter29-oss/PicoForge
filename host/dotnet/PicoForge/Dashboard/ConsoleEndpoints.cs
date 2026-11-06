@@ -22,6 +22,8 @@ internal static class ConsoleEndpoints
                 throw new ApiInputException("Expected an empty object; TCP authentication uses the connected board");
             var monitor = dashboard.Monitor(board);
             var status = monitor.Snapshot;
+            if (status.WirelessCleanupRequired)
+                throw new BoardStateException("Clear the Wi-Fi test before opening the console");
             if (!status.Connected || status.WirelessError is not null)
                 throw new BoardStateException(status.WirelessError ?? "The board is disconnected");
             var wireless = status.Wireless ??
