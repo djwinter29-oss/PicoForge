@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from picoforge.dashboard.console import ConsoleBridge
 from picoforge.dashboard.server import create_app, run_server
+from picoforge.reports.common import BoardConflict
 
 
 class Monitor:
@@ -122,6 +123,92 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         connection.close.assert_called_once_with()
         self.assertIsNone(bridge._socket)
+
+    def test_shutdown_during_proof_closes_opening_socket_and_never_sends_authentication(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                connection, peer = socket.socketpair()
+                self.addCleanup(connection.close)
+                self.addCleanup(peer.close)
+                peer.settimeout(1)
+                peer.sendall(b"PicoForge AUTH " + b"00" * 16 + b" " + b"00" * 8 + b"\r\n")
+                bridge = ConsoleBridge()
+                entered, release = threading.Event(), threading.Event()
+                errors = []
+
+                def proof(*_args):
+                    entered.set()
+                    if not release.wait(2):
+                        raise AssertionError("proof release timed out")
+                    if fail:
+                        raise ValueError("proof programmer bug")
+                    return bytes(16)
+
+                def opening():
+                    try:
+                        bridge.open({**self.monitor.wireless, "ble_key_configured": True}, proof)
+                    except Exception as error:
+                        errors.append(error)
+
+                with patch("picoforge.dashboard.console.socket.create_connection", return_value=connection):
+                    worker = threading.Thread(target=opening)
+                    worker.start()
+                    try:
+                        self.assertTrue(entered.wait(1))
+                        bridge.close_all()
+                        self.assertEqual(connection.fileno(), -1)
+                        release.set()
+                        worker.join(2)
+                        self.assertFalse(worker.is_alive())
+                        self.assertEqual(peer.recv(128), b"")
+                        self.assertIsNone(bridge._socket)
+                        self.assertIsNone(bridge._opening)
+                        self.assertEqual(len(errors), 1)
+                        self.assertIsInstance(errors[0], ValueError if fail else BoardConflict)
+                    finally:
+                        release.set()
+                        worker.join(2)
+                        bridge.close_all()
+
+    def test_shutdown_during_challenge_prevents_usb_proof_and_session_publication(self):
+        entered, release = threading.Event(), threading.Event()
+        connection = Mock()
+        bridge = ConsoleBridge()
+        sign = Mock(return_value=bytes(16))
+        errors = []
+
+        def receive(_size):
+            entered.set()
+            if not release.wait(2):
+                raise AssertionError("challenge release timed out")
+            raise OSError("closed while reading challenge")
+
+        def opening():
+            try:
+                bridge.open({**self.monitor.wireless, "ble_key_configured": True}, sign)
+            except Exception as error:
+                errors.append(error)
+
+        connection.recv.side_effect = receive
+        with patch("picoforge.dashboard.console.socket.create_connection", return_value=connection):
+            worker = threading.Thread(target=opening)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                bridge.close_all()
+                connection.close.assert_called_once()
+                release.set()
+                worker.join(2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], BoardConflict)
+                sign.assert_not_called()
+                connection.sendall.assert_not_called()
+                connection.close.assert_called_once()
+            finally:
+                release.set()
+                worker.join(2)
+                bridge.close_all()
 
     def test_input_limits_origins_and_explicit_disconnect(self):
         endpoint = self.open()

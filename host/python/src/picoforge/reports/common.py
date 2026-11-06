@@ -290,6 +290,10 @@ def _input_payload(report: bytes | bytearray | list[int], report_id: int, size: 
 def _unknown_name(value: int, names: dict[int, str]) -> str:
     return names.get(value, f"unknown ({value})")
 
+class BoardConflict(RuntimeError):
+    """A known board state or lifecycle conflict; wait or change state before retrying."""
+
+
 class InvalidRequest(ValueError):
     """User-supplied command input was rejected before any HID write."""
 

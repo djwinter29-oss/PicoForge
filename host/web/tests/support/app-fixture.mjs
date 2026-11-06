@@ -14,7 +14,7 @@ function serverShape({ msc = null, filesystem_format = null, settings = null, me
 /** A fresh mounted app, board state, and API fault controls for each behavior scenario. */
 export async function appFixture(context) {
   const state = {
-    statusFails: false, statusUnknownBoard: false, boardScanFails: false,
+    statusFails: false, statusUnknownBoard: false, boardScanFails: false, boardWarnings: [],
     ledGate: Promise.resolve(), ledTimeout: false, ledResponseError: false,
     mscGate: Promise.resolve(), mscTimeout: false, mscSucceeds: false,
     saveFails: false, settingsFailure: "save", settingsOutcomeConflict: false, settingsTimeout: false,
@@ -22,6 +22,8 @@ export async function appFixture(context) {
     selfTestResponseError: false, selfTestSucceeds: false,
     wirelessFailure: 0, wirelessError: "Storage busy", wirelessTestGate: null, wirelessTestError: null,
     wirelessState: "connected", wirelessReadFails: false, now: Date.now(),
+    responses: new Map(), resyncGate: null, resyncError: null,
+    resyncResult: { uncertain: false, control_result: null, wireless: null },
   };
   const fixture = domFixture();
   const { handlers, elements, el: element } = fixture;
@@ -68,9 +70,20 @@ export async function appFixture(context) {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(elements.get("#board-select").value, id, `board ${id} is selectable after the prior request settles`);
   };
+  const reconnect = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    connected.connected = false;
+    await state.tick();
+    connected.connected = true;
+    connected.reboot_pending = false;
+    await state.tick();
+    await new Promise(resolve => setImmediate(resolve));
+  };
   globalThis.fetch = async (url, options = {}) => {
     requestedUrls.push(url);
     assert.ok(options.signal instanceof AbortSignal, "dashboard API requests have a deadline");
+    const response = state.responses.get(url.split("?")[0]);
+    if (response) return response(options);
     if (url === "/api/boards") {
       if (state.boardScanFails) throw new Error("scan down");
       return { ok: true, json: async () => ({
@@ -79,16 +92,19 @@ export async function appFixture(context) {
           { id: "board-b", product_name: "PicoForge HID", serial_number: null, device_path: "/hid/b" },
         ],
         default_board_id: "board-a",
+        warnings: state.boardWarnings,
       }) };
     }
     if (url.startsWith("/api/control/resync?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm: true });
-      connected.command_outcome_uncertain = false;
-      return { ok: true, json: async () => ({ uncertain: false, control_result: null, wireless: null }) };
+      await state.resyncGate;
+      if (state.resyncError) throw state.resyncError;
+      if (state.resyncResult.uncertain === false) connected.command_outcome_uncertain = false;
+      return { ok: true, json: async () => state.resyncResult };
     }
     if (url.startsWith("/api/status?board=")) {
       if (state.statusFails) throw new Error("status down");
-      if (state.statusUnknownBoard) return { ok: false, status: 409,
+      if (state.statusUnknownBoard) return { ok: false, status: 404,
         json: async () => ({ error: "unknown board; rescan and select a listed board" }) };
       const wireless = connected.hardware.capabilities & 128 ? {
         wireless: state.wirelessReadFails ? null : savedWireless(),
@@ -134,8 +150,9 @@ export async function appFixture(context) {
       assert.deepEqual(JSON.parse(options.body), { confirm: true });
       return { ok: !state.rebootFails && !state.rebootResponseError,
         status: state.rebootResponseError ? 409 : state.rebootFails ? 503 : 200,
-        json: async () => ({ error: state.rebootResponseError
-          ? "Reboot outcome is uncertain; command was not resent" : "Reboot delivery failed" }) };
+        json: async () => state.rebootFails || state.rebootResponseError
+          ? { error: state.rebootResponseError
+            ? "Reboot outcome is uncertain; command was not resent" : "Reboot delivery failed" } : {} };
     }
     if (url.startsWith("/api/led?board=")) {
       await state.ledGate;
@@ -144,7 +161,7 @@ export async function appFixture(context) {
       if (state.ledResponseError) return { ok: false, status: 409, json: async () => ({
         error: "LED outcome is uncertain; command was not resent",
       }) };
-      return { ok: true, json: async () => ({ control_result: { status: "completed" } }) };
+      return { ok: true, json: async () => ({ control_result: { status: "completed", opcode: 1 } }) };
     }
     if (url.startsWith("/api/msc/force-return?board=")) {
       assert.deepEqual(JSON.parse(options.body), { confirm_data_loss: true });
@@ -158,7 +175,7 @@ export async function appFixture(context) {
       }) };
       if (state.selfTestSucceeds) {
         await state.gate;
-        return { ok: true, status: 202 };
+        return { ok: true, status: 202, json: async () => ({}) };
       }
     }
     if (url.startsWith("/api/msc?") && state.mscSucceeds) {
@@ -177,5 +194,6 @@ export async function appFixture(context) {
   return {
     state, connected, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
     testedWireless, requestTimeouts, ledRequestedStates, saveAndConfirm, switchBoard,
+    reconnect,
   };
 }

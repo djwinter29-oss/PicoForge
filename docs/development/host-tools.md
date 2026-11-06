@@ -56,9 +56,20 @@ Re-sync locks board selection and discards continuations from a previous board g
 timeouts and network failures retain uncertain outcomes; known refusals remain retryable after explicit cleanup.
 Disconnected polling clears drafts once per lifecycle transition, not on every status render.
 
-Shared frontend regressions use independent mounted scenarios and an additive-listener DOM fixture. Console API and
-terminal modules have strict JavaScript type checks, with typed operation snapshots for incremental editor assistance;
-the remaining application and view modules are not yet strictly checked.
+The pure operation policy combines reported facts and local activity for command admission and rendering. Benchmark
+size edits use the complete view projection, never a raw status render that could discard local gates. Local delivery,
+uncertainty, and reboot lifecycle state remain separate from server-reported pending flags and credential drafts.
+Acknowledged saves and reboots immediately block subsequent writes; old connected snapshots cannot clear this
+per-board gate. It releases after an observed reboot-pending cycle or disconnect/reconnect, including when Re-sync
+confirms completion. Successful save readback mismatches retain both the uncertainty and the confirmed reboot effect.
+Unknown-board HTTP 404 responses trigger a board rescan at most once every five seconds.
+
+Shared frontend regressions use independent mounted scenarios, production-shaped replies, and an additive-listener DOM
+fixture. The console API, terminal, dashboard response boundary, and pure operation policy have strict JavaScript type
+checks and negative type contracts; the remaining application and view modules are not yet strictly checked.
+Mutation success bodies are validated against the operation's Python/.NET contract. Invalid JSON, malformed
+acknowledgements, and contradictory readback are unresolved outcomes, not permission to replay. Explicit known HTTP
+refusals remain distinguishable from unknown delivery.
 
 ```sh
 node host/web/tests/run-tests.mjs
@@ -70,16 +81,18 @@ python3 host/web/tests/browser/run.py
 
 The browser runner requires the Python host dependencies and .NET 10 SDK. It builds the .NET host and serves the actual
 Python/.NET templates and assets with their production response headers; API replies are mocked, so no hardware
-requests are made. Both hosts run the same focus, narrow-layout, network-selection, cancellation, and clipboard checks.
+requests are made. Both hosts run the same reboot and uncertainty gates, save-readback mismatch, 404 recovery, focus,
+narrow-layout, network-selection, cancellation, and clipboard checks.
 For a static-only manual check, serve `host/web` locally and open `/tests/browser/index.html`.
 
 Console success bodies are validated by operation; malformed acknowledgements close the session without replaying
 input. Output is coalesced into one pending animation frame; input is sent immediately, disconnect flushes final
 output, and page navigation cancels pending output.
 The runner measures parsing, text construction, DOM replacement, and layout using the actual console module and styles
-at 1,000 lines of 150 columns, over 30 six-chunk bursts. Local Chromium measurements reduced renders per burst from
-six to one and median layout time from roughly 108–122 ms to 25–27 ms. Timings are environment-dependent, not a
-performance guarantee; the runner enforces one render per burst rather than a machine-specific millisecond threshold.
+at 1,000 lines of the full 512-column bound, over 30 six-chunk bursts. Local Chromium measurements through both hosts
+kept one render per burst, with text-construction p95 about 6–7 ms and layout p95 about 20–24 ms. Timings are
+environment-dependent, not a performance guarantee; the runner enforces one render per burst rather than a
+machine-specific millisecond threshold.
 These checks do not establish physical board qualification.
 
 ## Run a Host Application
@@ -131,9 +144,16 @@ packaged or source-installed Python host with representative RP2040 and RP2350 b
    force-return only when the data-loss warning is understood and the card contains no valuable data.
 4. On a W board with a test access point, scan, test a temporary connection, cancel/clear the test credentials, and
    verify the UI and telemetry recover after completion or timeout. Do not use production credentials.
-5. Shut down the host while idle and during a wireless test. Confirm shutdown completes after any in-flight HID
-   operation and the next launch can reconnect normally.
-6. Record worst observed UI/report update delay, monitor process CPU, reconnect result, and any errors. Treat a failed
+5. After a confirmed settings save or explicit reboot, verify the host reports `reboot_pending` and refuses further
+   commands until reconnection. Repeat after Re-sync confirms an uncertain save/reboot; Re-sync must not resend it.
+   Verify refused or failed saves do not leave the reboot gate set. Use only disposable settings and card data.
+6. Shut down the host while idle, during a wireless test, and while a TCP console connection is authenticating.
+   Confirm the opening socket closes, no AUTH response or session is published after shutdown, and the next launch
+   reconnects normally. An already accepted HID operation may finish.
+7. If duplicate-serial boards are available, rescan while both are connected. Verify the ambiguous identity disappears
+   from the selector with a warning and previously obtained references cannot send commands; an unrelated board stays
+   usable. Remove the duplicate and verify the original monitor is reused without replaying an unresolved command.
+8. Record worst observed UI/report update delay, monitor process CPU, reconnect result, and any errors. Treat a failed
    step as a qualification gap; do not infer reliability from host unit tests.
 
 Keep dated, configuration-specific observations in the [validation records](../validation/records/README.md), and
@@ -176,7 +196,7 @@ python3 -m pip install --editable host/python -r host/python/tests/requirements.
 tools/validation/test-host.sh
 ```
 
-The wrapper checks the Python dependency lock and strict console types, then runs Python `unittest`, separate Direct
+The wrapper checks the Python dependency lock and focused strict types, then runs Python `unittest`, separate Direct
 and Python/.NET frontend Node tests, and .NET tests.
 They can also be run individually:
 
@@ -220,25 +240,48 @@ The HID client owns one handle, serializes Feature 20 transactions and wireless 
 references without replaying uncertain writes. The monitor owns reconnects and snapshots, preserving unresolved command
 references across client replacement. Routes validate HTTP requests and serialize public responses without modifying
 internal snapshots. CLI module execution and the installed console script both delegate to the same entry point.
+The worker installs the active client and initial connected snapshot under the same command ownership; it removes the
+client before publishing a disconnected snapshot under that ownership. Requests cannot use a partially installed
+connection or have an accepted transition overwritten by startup publication.
+One result-publication path applies `reboot_pending` for completed settings saves and explicit reboots, including when
+subsequent saved-value or credential-commit validation fails. Those mismatches still return an error and do not publish
+the requested settings as confirmed. Re-sync uses the same path without replaying the command. Refused, failed and
+uncertain results do not claim completion. One shared gate refuses every subsequent command until reconnection resets
+the snapshot; read-only status and Re-sync remain available.
 
 Discovery runs outside the board registry lock; scans are serialized and publish only complete results, never after
-shutdown. Absent serial-numbered boards expire after 30 seconds, path-only boards after 5 seconds. Uncertain commands
+shutdown. A duplicate identity is omitted from the selector and reported through optional discovery `warnings`; other
+boards remain selectable. Its retained monitor rejects new commands, including through previously obtained references,
+but does not interrupt accepted commands or discard uncertain outcomes. A complete unique rescan clears quarantine and
+reuses the monitor; a failed enumeration cannot clear it.
+Absent serial-numbered boards expire after 30 seconds, path-only boards after 5 seconds. Uncertain commands
 retain their monitors until confirmed re-sync or shutdown. At most 16 monitors may be active or retiring. Each expired
 monitor must first claim idle command ownership without waiting: active commands postpone expiry, unresolved outcomes
 prevent it, and a successful claim refuses subsequent commands. Each claimed monitor has one retirement thread;
 shutdown joins that thread instead of issuing overlapping cleanup. Failed retirement
 is logged, retains the board's capacity slot, refuses reconnection, and is reported at shutdown without automatic retry.
 If native HID close fails, the monitor stops, retains the failed client, publishes a cleanup error, and reports failure
-from `close()`; it cannot open a replacement handle. Restart is required after unresolved cleanup failures.
+from `close()`; it cannot open a replacement handle. Forced-save recovery transfers ownership of each candidate to the
+HID client before opening or validating it, so even a failed candidate close stays owned. A native close failure is
+terminal: subsequent commands and cleanup report it without retrying close or opening another handle. Restart is
+required after unresolved cleanup failures.
 
-Console state and methods are strictly type-checked; compile-only negative contracts verify HID serialization and
-monitor command callbacks preserve argument and return types. The rest of the Python host remains incrementally typed.
+Console, registry, monitor and snapshot models are strictly type-checked; compile-only negative contracts verify HID
+serialization, command references, cleanup state, monitor command callbacks and route composition preserve argument and
+return types. The HID client exposes the existing completed-result check as `require_completed`; its private spelling
+remains an alias for compatibility. Route signatures are explicit; HID and route bodies remain incrementally typed.
 Runtime checks remain at peer boundaries
 even when an annotation promises valid data. Console sessions own one cancellable idle-expiry timer, which is cancelled
 on disconnect or shutdown. Reading a TCP challenge has one 3-second deadline, not a per-byte timeout; authentication
 including USB proof and sending the response shares an 8-second budget. Native HID calls must return for their software
 deadlines to be enforceable. TCP connection setup has a separate 3-second timeout. Genuine console polling errors close
 the session and return 503; a concurrent close is a 409, and an ordinary idle poll is successful with no output.
+Shutdown also owns and closes an opening socket, including while USB proof is in flight. Authentication checks terminal
+shutdown before proof and AUTH transmission; a completed proof cannot publish a session after shutdown.
+
+Expected configuration-read I/O, protocol and board-state failures preserve identity and input diagnostics with a
+`settings_message`. Configuration-dependent commands are blocked; LED control and read-only Re-sync remain available.
+Unexpected `ValueError` or `RuntimeError` faults are logged as internal monitor errors, not degraded connected success.
 
 Python request bodies are capped at 4 KiB, or 2 KiB for the console, with a JSON 413 error before board operations.
 Settings, self-test and Wi-Fi test requests reuse the pure report validators before looking up or opening a board,
@@ -248,6 +291,10 @@ Keep pinned runtime dependencies and `uv.lock` synchronized with `python3 -m uv 
 Pinned contributor validators live in `host/python/tests/requirements.txt`, outside the shipped package.
 Tests cover independent imports and module launching in fresh processes, retirement/shutdown races, native cleanup
 failure, authentication deadlines, timer ownership, non-UTF-8 HID paths, body limits, and dependency-lock consistency.
+Cross-operation tests combine the real monitor, HID client and HTTP routes over a fake native transport to verify reboot
+gates, reconciliation, reconnection and identity quarantine. Event-controlled publication tests verify command ownership
+without timing sleeps; compound-failure tests cover candidate validation followed by native cleanup failure and terminal
+monitor shutdown. The documented benchmark is also run as a subprocess.
 These are hardware-free checks; polling, snapshot copying, and wireless lifecycle boundaries should change only after
 measurement and physical qualification.
 
@@ -274,11 +321,22 @@ read-only; stop any running dashboard first because it holds the HID interface:
 host/python/.venv/bin/python tools/validation/bench-python-dashboard.py [--board [--serial SERIAL]]
 ```
 
-| Path | Rate | Baseline (2026-11-05, x86-64 Linux) | Revisit when |
+The hardware-free workload decodes representative identity, configuration, runtime, storage, self-test and wireless
+reports. Receipt timestamps are refreshed so freshness filtering cannot silently remove measured sections. The snapshot
+measurement includes that refresh; the Flask test-client measurement includes request/serialization work, not network
+transport. The CPU sample requires a live, connected, error-free worker that has actually polled the mocked device.
+Without browser status requests the worker starts in its 500 ms idle cadence; this does not measure active 50 ms polling.
+Board mode closes the monitor before separately measuring wireless reads with one exclusive HID handle.
+
+| Path | Rate | Baseline (2026-11-06, x86-64 Linux, hardware-free) | Revisit when |
 |---|---|---|---|
-| `snapshot()` deep copy | Each `GET /api/status` | 50-95 us | One status request exceeds 1 ms |
-| `GET /api/status` through Flask | 1/s per visible tab | ~0.6 ms | Many tabs or noticeable status latency |
-| 50 ms input poll loop | 20 wakes/s per board | 2.4-5.5 ms CPU/s with mocked HID; ~1 ms CPU/s for a running dashboard with a real board | Idle CPU exceeds ~1% per board |
+| `snapshot()` deep copy plus receipt refresh | Each `GET /api/status` | ~40 us | One status request exceeds 1 ms |
+| `GET /api/status` through Flask test client | 1/s per visible tab | ~0.5 ms | Many tabs or noticeable status latency |
+| 500 ms idle input poll loop | 2 wakes/s per board | ~0.5 ms CPU/s with mocked HID | Idle CPU exceeds ~1% per board |
+
+These are local observations, not regression ceilings or hardware qualification. Real active/idle timing, report
+freshness, multi-board CPU and USB/storage handoff remain subject to the
+[hardware procedure](#qualify-the-python-host-with-hardware).
 
 Save, scan and connection-test commands hold the device lock across several USB round trips (see
 [command ownership](#command-ownership-and-cancellation)); time them by hand on hardware before splitting that lock, and
@@ -287,7 +345,9 @@ split it only where the write-safety rules still hold.
 ### .NET dashboard performance baseline
 
 `PerformanceTests` times the status hot paths with a mocked board, including wireless state, using production JSON
-options and application composition. It fails only past generous regression ceilings.
+options and application composition. Its injected clock stays fixed so telemetry cannot expire during measurement;
+payload-shape assertions bracket the phases, including real HTTP responses. It fails only past generous regression
+ceilings.
 It is in the `Performance` category, which the default host suite skips; run it on its own:
 
 ```sh
@@ -296,9 +356,9 @@ dotnet test host/dotnet/PicoForge.sln -c Release --filter Category=Performance -
 
 | Path | Rate | Baseline (2026-11-06, x86-64 Linux, Release) | Revisit when |
 |---|---|---|---|
-| `DeviceMonitor.Snapshot` (freshness applied on read) | Each `GET /api/status` | 0.33 us | One read exceeds 50 us |
-| Status JSON serialization | Each `GET /api/status` | 24.5 us | One status exceeds 0.5 ms |
-| `GET /api/status` through Kestrel | 1/s per visible tab | 0.33 ms | Many tabs or noticeable status latency |
+| `DeviceMonitor.Snapshot` (freshness applied on read) | Each `GET /api/status` | 0.29 us | One read exceeds 50 us |
+| Status JSON serialization | Each `GET /api/status` | 19.0 us | One status exceeds 0.5 ms |
+| `GET /api/status` through Kestrel | 1/s per visible tab | 0.26 ms | Many tabs or noticeable status latency |
 
 HID commands block one thread-pool thread under the device lock, up to 35 s for a connection test. That is acceptable
 for a localhost dashboard; move HID I/O to a dedicated thread only if concurrent requests start queueing.
@@ -307,13 +367,19 @@ for a localhost dashboard; move HID I/O to a dedicated thread only if concurrent
 
 The board registry explicitly owns each dynamically started monitor's asynchronous disposal. Retirement must claim
 idle command ownership without waiting, both for expired boards and ambiguous identities. Active commands postpone
-retirement; unresolved results pin the monitor. A successful claim rejects subsequent commands, including calls through
+retirement; unresolved results pin the monitor. Duplicate identities are quarantined immediately, independently of
+retirement: registry lookup and new writes through retained references are refused while an accepted command may finish.
+Only a successful scan finding a unique identity clears quarantine; absence or failed discovery does not. Retained
+references can still perform read-only Re-sync without clearing the quarantine gate.
+A successful retirement claim rejects subsequent commands, including calls through
 previously obtained references. Retiring entries keep their identity and capacity slot until cleanup completes, and
 reconnection cannot open another handle meanwhile. At most 16 active, retiring or cleanup-failed entries are retained.
 Shutdown joins all cleanup tasks, including earlier retirements; one failure does not skip the remaining boards.
 
 Native cleanup failure is logged and published as a disconnected cleanup error, stops the worker, and is reported
 again at disposal without retrying close. The failed owner is retained; restart the dashboard before reconnecting.
+Forced-save reconnect candidates become owned before timeout configuration or identity validation. Rejected candidates
+are closed before another is opened; a failed close is terminal, keeps the candidate owned, and stops reconnect retries.
 Native HID calls must return before shutdown can finish; cancelling a request does not interrupt an accepted command.
 
 After valid identity, an expected Feature 2 read failure preserves connected identity and input-report diagnostics.
@@ -331,10 +397,21 @@ binding, body limits, error mapping, templates and static routes. Release smoke 
 compare the entire uncompressed dashboard payload against shared source, fetch assets, and verify hardware-free API
 responses. These checks do not replace the [physical qualification procedure](#qualify-the-net-host-with-hardware).
 
-Console shutdown is terminal: it closes both pending and active sockets and prevents an authentication continuation
-from publishing a session. Only one active or opening session is allowed. Connection setup has a 3-second timeout;
-authentication has an 8-second total budget including the 3-second challenge limit, USB proof and response sending.
+Wireless snapshots retain the last successful report for diagnostics, but a failed poll or a report at least five
+seconds old sets `wireless_error`. Console creation requires a connected board with an error-free wireless snapshot;
+an already-open page or direct API caller cannot bypass that policy. A successful poll clears the error and refreshes
+the receipt time.
+
+Console shutdown is terminal: it cancels opening authentication, closes both pending and active sockets, and prevents
+a queued challenge continuation from starting USB proof or publishing a session. Proof already admitted before shutdown
+may finish, but its result is not sent. Only one active or opening session is allowed. Connection setup has a 3-second
+timeout; authentication has an 8-second total budget including the 3-second challenge limit, USB proof and response sending.
 A synchronous native proof must return before its budget can be checked; late proofs are not sent.
+
+Host regressions exercise duplicate discovery during accepted commands, retained-reference write gates, failed/stale
+wireless console requests through the production HTTP composition, and challenge continuations queued across shutdown.
+Native reconnect tests use controlled HidSharp devices and streams, including compound validation/close failures and
+terminal cleanup propagation through the real monitor. They do not replace physical board qualification.
 
 ## Shared Frontend and Protocol Boundaries
 
@@ -359,16 +436,16 @@ the snapshot is read, so a silent board ages out without a new report. Both serv
 `wireless` and `wireless_error`; the server polls it every 0.5 s during a scan or connection test and every 2 s
 otherwise.
 
-Every `/api` error body is `{"error": "<message>"}`, and both servers map failures the same way:
+Every `/api` error body includes `{"error": "<message>"}`, and both servers map failures the same way:
 
 | Status | Meaning | Python | .NET |
 |---|---|---|---|
 | 400 | Rejected input, before any HID write | `InvalidRequest` | `ApiInputException`, `JsonException`, bad binding |
 | 404 | Unknown `board` ID | `LookupError` | `BoardNotFoundException` |
-| 409 | Board state conflict or firmware refusal; retry after the state changes | `RuntimeError`, `BoardConflict`, known Wi-Fi cancellation | `BoardStateException`, `BoardBusyException`, `WirelessTestCancelledException` |
+| 409 | Board state conflict or firmware refusal; retry after the state changes | `BoardConflict`, `WirelessTestCancelled` | `BoardStateException`, `BoardBusyException`, `WirelessTestCancelledException` |
 | 413 | Body exceeds the request limit | Request size check | Kestrel or endpoint request size check |
 | 503 | HID or TCP I/O, timeout, disconnect or malformed board data | `OSError`, `ProtocolError` | `IOException`, `TimeoutException`, `InvalidDataException`, `UnauthorizedAccessException`, `SocketException`, `OperationCanceledException` |
-| 500 | Server fault; logged, and the message is not exposed | anything else | anything else |
+| 500 | Server fault; logged, and the message is not exposed | anything else, including ordinary `RuntimeError` | anything else |
 
 Wi-Fi endpoints replace 503 transport detail with a fixed per-endpoint message, for example "Wireless provisioning
 outcome is uncertain; command was not resent". Console connect reports "TCP console connection failed: <detail>" and

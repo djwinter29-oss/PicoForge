@@ -33,6 +33,7 @@ internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboar
     private readonly Dictionary<string, DashboardBoard> known = new();
     private readonly Dictionary<string, DateTimeOffset> lastSeen = new();
     private readonly Dictionary<string, MonitorEntry> monitors = new();
+    private readonly HashSet<string> quarantined = new();
     private bool closed;
     private Task? disposal;
 
@@ -78,6 +79,10 @@ internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboar
             lock (gate)
             {
                 ObjectDisposedException.ThrowIf(closed, this);
+                quarantined.UnionWith(duplicateIds);
+                quarantined.ExceptWith(boards.Select(board => board.Id));
+                foreach (var (id, entry) in monitors)
+                    entry.SetQuarantined(quarantined.Contains(id));
                 foreach (var id in monitors.Where(pair => pair.Value.RetirementCompleted)
                     .Select(pair => pair.Key).ToArray())
                     monitors.Remove(id);
@@ -98,6 +103,7 @@ internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboar
                     if (monitors.TryGetValue(id, out var monitor) && !monitor.TryRetire()) continue;
                     known.Remove(id);
                     lastSeen.Remove(id);
+                    quarantined.Remove(id);
                 }
                 var preferred = boards.FirstOrDefault(board =>
                     (serialNumber is not null && board.SerialNumber == serialNumber)
@@ -121,6 +127,8 @@ internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboar
             ObjectDisposedException.ThrowIf(closed, this);
             if (boardId is null || !known.TryGetValue(boardId, out var board))
                 throw new BoardNotFoundException("unknown board; rescan and select a listed board");
+            if (quarantined.Contains(boardId))
+                throw new BoardStateException("Board identity is ambiguous; rescan after removing duplicate identities");
             if (!monitors.TryGetValue(boardId, out var current))
             {
                 if (monitors.Count >= MaximumMonitors)
@@ -153,6 +161,8 @@ internal sealed class DashboardBoards : IDisposable, IAsyncDisposable, IDashboar
         private Task? retirement;
 
         public bool RetirementCompleted => Volatile.Read(ref retirement)?.IsCompletedSuccessfully == true;
+
+        public void SetQuarantined(bool value) => monitor.SetQuarantined(value);
 
         public IDeviceMonitor GetStarted()
         {

@@ -10,8 +10,11 @@
     "lib": ["ES2022", "DOM"]
   },
   "files": [
+    "src/js/dashboard-api.mjs",
+    "src/js/operation-state.mjs",
     "src/js/console-api.mjs",
     "src/js/console-terminal.mjs",
-    "tests/types/console-types.mjs"
+    "tests/types/console-types.mjs",
+    "tests/types/dashboard-types.mjs"
   ]
 }

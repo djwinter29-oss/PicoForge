@@ -18,11 +18,11 @@ from ..reports.models import (
     InputReport,
     MscStatus,
     WirelessNetwork,
-    WirelessSaveResult,
     WirelessStatus,
     WirelessTestResult,
 )
 from ..reports import ProtocolError
+from ..reports.common import BoardConflict as BoardConflict, ControlOpcode
 from .models import (
     ControlResponse,
     DashboardSnapshot,
@@ -51,10 +51,6 @@ _REPORTS = {
 
 class CommandOutcomeUncertain(RuntimeError):
     """A control command was delivered but its final outcome was not confirmed."""
-
-
-class BoardConflict(RuntimeError):
-    """An expected board lifecycle conflict; the caller must wait or change board state."""
 
 
 def _empty_snapshot() -> DashboardSnapshot:
@@ -119,6 +115,7 @@ class DeviceMonitor:
         self._msc_reconnect_deadline = 0.0
         self._msc_reconnect_enabled: bool | None = None
         self._wireless_test_cancel: threading.Event | None = None
+        self._identity_ambiguous = False
         self._thread = threading.Thread(target=self._run, name="picoforge-hid-monitor", daemon=True)
         if autostart:
             self._thread.start()
@@ -127,15 +124,15 @@ class DeviceMonitor:
         # ponytail: a deep copy (~50 us for a full snapshot) keeps route code off shared state; copy only changed
         # sections if one status request exceeds 1 ms or more than ~10 tabs poll at once.
         with self._lock:
-            result = cast(DashboardSnapshot, deepcopy(self._snapshot))
+            result = deepcopy(self._snapshot)
             received_at = self._input_received_at.copy()
             result["command_outcome_uncertain"] = self._command_outcome_uncertain
         now = time.monotonic()
         for kind, (max_age, flag) in _REPORTS.items():
             stale = kind not in received_at or now - received_at[kind] >= max_age
-            result[flag] = stale  # type: ignore[literal-required]
+            result[flag] = stale
             if stale:
-                result[kind] = None  # type: ignore[literal-required]
+                result[kind] = None
         return result
 
     def status_snapshot(self) -> DashboardSnapshot:
@@ -169,11 +166,20 @@ class DeviceMonitor:
         finally:
             self._device_lock.release()
 
-    def _client(self) -> PicoForgeHid:
+    def set_identity_ambiguous(self, ambiguous: bool) -> None:
+        """Quarantine new commands without waiting for or interrupting an accepted command."""
+        with self._lock:
+            self._identity_ambiguous = ambiguous
+
+    def _client(self, *, require_configuration: bool = True) -> PicoForgeHid:
         if self._stop.is_set():
             raise BoardConflict("device monitor is shutting down")
         if self._active_client is None:
             raise ConnectionError("PicoForge HID is not connected")
+        with self._lock:
+            if require_configuration and self._snapshot["settings_message"] is not None \
+                    and self._snapshot["board_configuration"] is None:
+                raise BoardConflict("Board configuration is unavailable; reconnect before sending commands")
         return self._active_client
 
     @contextmanager
@@ -186,6 +192,9 @@ class DeviceMonitor:
         try:
             if self._stop.is_set():
                 raise BoardConflict("device monitor is shutting down")
+            with self._lock:
+                if self._identity_ambiguous:
+                    raise BoardConflict("Duplicate PicoForge board identity; disconnect boards with duplicate serials")
             yield
         finally:
             self._device_lock.release()
@@ -193,7 +202,10 @@ class DeviceMonitor:
     def _send_control(self, method: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
         """Delegate transaction state to HID; preserve unresolved references across client replacement."""
         if self._command_outcome_uncertain:
-            raise RuntimeError("a prior command outcome is uncertain; no further writes are allowed")
+            raise BoardConflict("a prior command outcome is uncertain; no further writes are allowed")
+        with self._lock:
+            if self._snapshot["reboot_pending"]:
+                raise BoardConflict("Board reboot is pending; wait for reconnection")
         client = self._active_client
         previous_result = client.last_command_result if client is not None else None
         try:
@@ -210,18 +222,10 @@ class DeviceMonitor:
         return result
 
     def _record_uncertain_command(self, client: PicoForgeHid) -> None:
-        command = getattr(client, "uncertain_command", None)
-        operation = getattr(client, "uncertain_wireless_operation", None)
         with self._lock:
             self._command_outcome_uncertain = True
-            self._uncertain_command = command if (
-                isinstance(command, tuple) and len(command) == 2
-                and all(type(value) is int for value in command)
-            ) else None
-            self._uncertain_wireless_operation = operation if (
-                isinstance(operation, tuple) and len(operation) == 2
-                and isinstance(operation[0], str) and type(operation[1]) is int
-            ) else None
+            self._uncertain_command = client.uncertain_command
+            self._uncertain_wireless_operation = client.uncertain_wireless_operation
 
     def _publish_command_result(
         self, client: PicoForgeHid | None, previous: object, returned: object = None,
@@ -230,18 +234,25 @@ class DeviceMonitor:
         result = current if current is not previous else returned
         if not isinstance(result, dict) or "status" not in result:
             return
+        self._publish_control_result(cast(ControlResult, result))
+
+    def _publish_control_result(self, result: ControlResult) -> None:
+        """Publish confirmed lifecycle effects even if subsequent response validation fails."""
         with self._lock:
+            if (result["status"] == "completed"
+                    and result.get("opcode") in (ControlOpcode.REBOOT, ControlOpcode.SAVE_SETTINGS)):
+                self._snapshot["reboot_pending"] = True
             if self._snapshot.get("connected"):
-                self._snapshot["control_result"] = cast(ControlResult, result)
+                self._snapshot["control_result"] = result
 
     def set_led(self, on: bool) -> ControlResponse:
         with self._device():
-            client = self._client()
+            client = self._client(require_configuration=False)
             hardware = self.snapshot().get("hardware")
             if not isinstance(hardware, dict) or hardware.get("led_available") is not True:
-                raise RuntimeError("The board LED is unavailable")
+                raise BoardConflict("The board LED is unavailable")
             result = self._send_control(client.set_led, on)
-            PicoForgeHid._require_completed(result, "LED")
+            PicoForgeHid.require_completed(result, "LED")
         with self._lock:
             runtime = self._snapshot.get("runtime")
             if isinstance(runtime, dict):
@@ -250,17 +261,17 @@ class DeviceMonitor:
 
     def set_msc(self, enable: bool, *, force: bool = False) -> MscResponse:
         if force and enable:
-            raise RuntimeError("Force return requires disabling MSC")
+            raise BoardConflict("Force return requires disabling MSC")
         with self._device():
             client = self._client()
             msc = _msc(self.snapshot()) or {}
             if force and (not msc.get("enabled") or msc.get("transition_pending")):
-                raise RuntimeError("Force return requires enabled MSC")
+                raise BoardConflict("Force return requires enabled MSC")
             result = self._send_control(client.set_msc, enable, force=force)
-            PicoForgeHid._require_completed(result, "MSC")
+            PicoForgeHid.require_completed(result, "MSC")
             with self._lock:
                 memory = self._snapshot.get("memory")
-                previous = _msc(cast(DashboardSnapshot, self._snapshot)) or {}
+                previous = _msc(self._snapshot) or {}
                 status: MscStatus = {"enabled": previous.get("enabled", False),
                                      "transition_pending": True, "request_rejected": False}
                 if isinstance(memory, dict):
@@ -275,13 +286,13 @@ class DeviceMonitor:
     def reboot(self) -> ControlResponse:
         with self._device():
             result = self._send_control(self._client().reboot)
-            PicoForgeHid._require_completed(result, "reboot")
+            PicoForgeHid.require_completed(result, "reboot")
             return {"control_result": result}
 
     def set_self_test(self, action: str, size_mib: int | None = None) -> ControlResponse:
         with self._device():
             result = self._send_control(self._client().set_self_test, action, size_mib)
-            PicoForgeHid._require_completed(result, "self-test")
+            PicoForgeHid.require_completed(result, "self-test")
             return {"control_result": result}
 
     def set_settings(self, settings: dict[str, object], *, force: bool = False) -> SettingsResponse:
@@ -289,19 +300,19 @@ class DeviceMonitor:
             snapshot = self.snapshot()
             client = self._client()
             if snapshot.get("settings_supported") is not True:
-                raise RuntimeError("Boot settings are unavailable on this firmware")
+                raise BoardConflict("Boot settings are unavailable on this firmware")
             if not isinstance(snapshot.get("hardware"), dict):
-                raise RuntimeError("Waiting for device identity")
+                raise BoardConflict("Waiting for device identity")
             msc = _msc(snapshot)
             if not isinstance(msc, dict):
-                raise RuntimeError("Waiting for storage ownership status")
+                raise BoardConflict("Waiting for storage ownership status")
             if force and not msc.get("enabled"):
-                raise RuntimeError("Forced save requires USB ownership")
+                raise BoardConflict("Forced save requires USB ownership")
             if msc.get("transition_pending") or (msc.get("enabled") and not force):
-                raise RuntimeError("Disable the USB drive before saving boot settings")
+                raise BoardConflict("Disable the USB drive before saving boot settings")
             self_test = snapshot.get("self_test")
             if isinstance(self_test, dict) and self_test.get("active"):
-                raise RuntimeError("Wait for the storage self-test to finish before saving boot settings")
+                raise BoardConflict("Wait for the storage self-test to finish before saving boot settings")
             saved = self._send_control(client.set_settings, settings, force=force)
             self._publish_saved_settings(saved)
             return {"settings": saved, "control_result": client.last_command_result}
@@ -316,7 +327,6 @@ class DeviceMonitor:
                     BoardConfiguration, {**configuration, **saved},
                 )
             self._snapshot["settings_message"] = "Settings saved. Waiting for the board to reboot."
-            self._snapshot["reboot_pending"] = True
 
     def tcp_cli_auth_proof(self, nonce: bytes, uid: bytes) -> bytes:
         with self._device():
@@ -327,7 +337,7 @@ class DeviceMonitor:
         with self._device():
             if not self._command_outcome_uncertain:
                 return {"uncertain": False, "control_result": None, "wireless": None}
-            client = self._client()
+            client = self._client(require_configuration=False)
             try:
                 outcome = client.reconcile_outcome(
                     self._uncertain_command, self._uncertain_wireless_operation,
@@ -345,9 +355,9 @@ class DeviceMonitor:
                 self._command_outcome_uncertain = False
                 self._uncertain_command = None
                 self._uncertain_wireless_operation = None
+                if control_result is not None:
+                    self._publish_control_result(control_result)
                 if self._snapshot.get("connected"):
-                    if control_result is not None:
-                        self._snapshot["control_result"] = control_result
                     if wireless is not None:
                         self._snapshot["wireless"] = wireless
                         self._snapshot["wireless_error"] = None
@@ -360,9 +370,9 @@ class DeviceMonitor:
         hardware = snapshot.get("hardware")
         if (not snapshot.get("connected")
                 or not isinstance(hardware, dict) or not hardware.get("wireless_supported")):
-            raise RuntimeError("Wireless provisioning is unavailable on this firmware")
+            raise BoardConflict("Wireless provisioning is unavailable on this firmware")
         if snapshot.get("command_outcome_uncertain"):
-            raise RuntimeError("A prior command outcome is uncertain; no further writes are allowed")
+            raise BoardConflict("A prior command outcome is uncertain; no further writes are allowed")
         msc = _msc(snapshot)
         self_test = snapshot.get("self_test")
         # The device lock serializes host commands and firmware answers "busy" itself; a stored busy result is history.
@@ -371,7 +381,7 @@ class DeviceMonitor:
                 or snapshot.get("reboot_pending")
                 or hardware.get("self_test_supported") and snapshot.get("self_test_stale") is not False
                 or isinstance(self_test, dict) and self_test.get("active")):
-            raise RuntimeError("Wireless scan and connection test require idle firmware-owned storage")
+            raise BoardConflict("Wireless scan and connection test require idle firmware-owned storage")
         return client
 
     def scan_wireless(self) -> dict[str, list[WirelessNetwork]]:
@@ -401,7 +411,7 @@ class DeviceMonitor:
                 if stop.is_set() and not cancel_sent and not self._command_outcome_uncertain:
                     try:
                         self._send_control(client.cancel_wireless_test)
-                    except (OSError, RuntimeError, ValueError) as error:
+                    except (OSError, BoardConflict, ProtocolError) as error:
                         _LOGGER.exception("Late Wi-Fi test cancellation failed; board command state is uncertain")
                         self._record_uncertain_command(client)
                         raise CommandOutcomeUncertain(
@@ -459,7 +469,7 @@ class DeviceMonitor:
     def set_wireless(self, settings: dict[str, object]) -> WirelessSaveResponse:
         with self._device():
             client = self._require_wireless_idle()
-            result = cast(WirelessSaveResult, self._send_control(client.set_wireless, settings))
+            result = self._send_control(client.set_wireless, settings)
             saved = result["settings"]
             self._publish_saved_settings(saved)
             wireless = cast(WirelessStatus, {key: value for key, value in result.items() if key != "settings"})
@@ -478,16 +488,19 @@ class DeviceMonitor:
                 try:
                     configuration = client.read_configuration()
                     settings_message = None
-                except (OSError, RuntimeError, ValueError) as error:
+                except (OSError, ProtocolError, BoardConflict) as error:
+                    _LOGGER.warning("Boot settings unavailable; retaining input diagnostics: %s", error)
                     configuration = None
                     settings_message = f"Boot settings unavailable: {error}"
                 with self._device_lock:
+                    if self._stop.is_set():
+                        continue
                     self._active_client = client
-                self._reset_snapshot(
-                    connected=True, hardware=hardware, board_configuration=configuration,
-                    settings_supported=hardware["settings_supported"] and configuration is not None,
-                    settings_message=settings_message,
-                )
+                    self._reset_snapshot(
+                        connected=True, hardware=hardware, board_configuration=configuration,
+                        settings_supported=hardware["settings_supported"] and configuration is not None,
+                        settings_message=settings_message,
+                    )
                 wireless_poll_at = 0.0
                 viewer_active_last = False
                 while not self._stop.is_set():
@@ -512,7 +525,7 @@ class DeviceMonitor:
                             wireless_error: str | None
                             try:
                                 wireless, wireless_error = client.read_wireless(), None
-                            except (OSError, ValueError) as error:
+                            except (OSError, ProtocolError, BoardConflict) as error:
                                 wireless, wireless_error = None, str(error)
                             with self._lock:
                                 self._snapshot["wireless_error"] = wireless_error
@@ -525,19 +538,21 @@ class DeviceMonitor:
                     self._stop.wait(poll_interval)
             except Exception as error:
                 message = str(error)
-                if not isinstance(error, (OSError, RuntimeError, ValueError)):
+                if not isinstance(error, (OSError, ProtocolError, BoardConflict)):
                     # A malformed report or code bug must not silently end the thread behind a "connected" snapshot.
                     _LOGGER.exception("HID monitor failed unexpectedly")
                     message = f"Internal monitor error: {error!r}"
-                with self._lock:
-                    reconnecting = (
-                        not self._command_outcome_uncertain
-                        and time.monotonic() < self._msc_reconnect_deadline
-                        and isinstance(error, OSError)
-                    )
-                    if reconnecting:
-                        _LOGGER.info("USB-drive mode change: waiting for HID reconnection: %s", error)
-                    self._reset_snapshot(reconnecting=reconnecting, error=None if reconnecting else message)
+                with self._device_lock:
+                    self._active_client = None
+                    with self._lock:
+                        reconnecting = (
+                            not self._command_outcome_uncertain
+                            and time.monotonic() < self._msc_reconnect_deadline
+                            and isinstance(error, OSError)
+                        )
+                        if reconnecting:
+                            _LOGGER.info("USB-drive mode change: waiting for HID reconnection: %s", error)
+                        self._reset_snapshot(reconnecting=reconnecting, error=None if reconnecting else message)
             finally:
                 if client is not None:
                     with self._device_lock:

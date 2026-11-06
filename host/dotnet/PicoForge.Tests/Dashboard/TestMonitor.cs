@@ -7,6 +7,7 @@ internal class TestMonitor : IDeviceMonitor
     public bool Disposed { get; private set; }
     public virtual void Start() { }
     public virtual bool TryRetire() => !Snapshot.CommandOutcomeUncertain;
+    public virtual void SetQuarantined(bool value) { }
     public virtual CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default) =>
         confirm ? new(false) : throw new ApiInputException("Explicit confirm: true is required");
     public virtual void Dispose() => Disposed = true;

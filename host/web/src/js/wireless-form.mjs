@@ -252,7 +252,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     });
   }
   el("wifi-scan").addEventListener("click", async () => {
-    if (busy || wifiCanceling || wifiCancelError) return;
+    if (!ready() || busy || wifiCanceling || wifiCancelError) return;
     const current = generation;
     busy = true;
     setStatus("wifi-status", "Scanning for nearby networks…");
@@ -289,7 +289,7 @@ export function bindWirelessForm({ load, scan, test, cancelTest, ready, supporte
     changed();
   });
   el("wifi-connect").addEventListener("click", async () => {
-    if (busy || wifiCanceling || wifiCancelError) return;
+    if (!ready() || busy || wifiCanceling || wifiCancelError) return;
     const ssid = el("wifi-ssid").value;
     const password = el("wifi-password").value;
     if (!ssid) return;

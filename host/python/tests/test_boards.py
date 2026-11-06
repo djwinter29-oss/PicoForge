@@ -138,15 +138,18 @@ class DashboardBoardsTests(unittest.TestCase):
         boards.close()
         self.assertTrue(all(monitor.closed for monitor in created))
 
-    def test_unknown_board_and_duplicate_identity_are_rejected(self):
+    def test_unknown_board_is_rejected_and_duplicate_identity_is_quarantined(self):
         attached = [{"serial_number": "duplicate", "device_path": "/hid/a"}]
         boards = DashboardBoards(discover=lambda: attached, monitor_factory=lambda *_: Mock())
         with self.assertRaisesRegex(LookupError, "unknown board"):
             boards.monitor("unknown").snapshot()
         boards.boards()
         attached.append({"serial_number": "duplicate", "device_path": "/hid/b"})
-        with self.assertRaisesRegex(RuntimeError, "duplicate"):
-            boards.boards()
+        listing = boards.boards()
+        self.assertEqual(listing["boards"], [])
+        self.assertIn("Duplicate", listing["warnings"][0])
+        with self.assertRaisesRegex(BoardConflict, "Duplicate"):
+            boards.monitor(list(boards._ambiguous)[0])
         boards.close()
 
     def test_removed_serial_board_monitor_expires_after_reconnect_grace_period(self):

@@ -1,4 +1,5 @@
 import { renderWirelessStatus } from "./wireless-form.mjs?v=19";
+import { operationState } from "./operation-state.mjs";
 
 function uptimeLabel(milliseconds) {
   if (!Number.isFinite(milliseconds)) return "--";
@@ -356,14 +357,9 @@ export function renderSelfTest(snapshot) {
   if (status?.file_remains) notices.push("PFTEST.BIN remains on the card.");
   if (status?.mismatch_count) notices.push(`${status.mismatch_count} mismatched bytes.`);
   set("#self-test-message", notices.join(" "));
-  const pending = Boolean(snapshot.self_test_command_pending);
-  const mounted = ["fat12", "fat16", "fat32", "exfat"].includes(snapshot.filesystem_format);
-  const ready = snapshot.connected && snapshot.memory?.initialized && mounted && status && !snapshot.msc?.enabled;
   const size = document.querySelector("#self-test-size");
-  const validSize = Number.isInteger(size.valueAsNumber) && size.valueAsNumber >= 1 && size.valueAsNumber <= 1024;
-  document.querySelector("#self-test-start").disabled = !ready || status.active || pending || Boolean(snapshot.busy)
-    || !validSize || Boolean(snapshot.msc?.transition_pending) || Boolean(snapshot.msc_command_pending);
-  document.querySelector("#self-test-cancel").disabled = !snapshot.connected || !status?.active || status.state === "cleanup"
-    || pending || Boolean(snapshot.busy) || Boolean(snapshot.msc_command_pending);
-  size.disabled = !snapshot.connected || Boolean(status?.active) || pending || Boolean(snapshot.msc_command_pending);
+  const operations = operationState(snapshot, {}, size.valueAsNumber);
+  document.querySelector("#self-test-start").disabled = !(snapshot.can_start_self_test ?? operations.canStartSelfTest);
+  document.querySelector("#self-test-cancel").disabled = !(snapshot.can_cancel_self_test ?? operations.canCancelSelfTest);
+  size.disabled = !(snapshot.can_edit_self_test ?? operations.canEditSelfTest);
 }

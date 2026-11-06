@@ -12,6 +12,8 @@ internal interface IDeviceMonitor : IDisposable, IAsyncDisposable
     void Start();
     /// <summary>Claims idle, resolved command ownership without waiting; refuses all subsequent commands.</summary>
     bool TryRetire();
+    /// <summary>Blocks new writes without interrupting an accepted command or losing its result.</summary>
+    void SetQuarantined(bool value);
     CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default);
     void SetLed(bool on, CancellationToken cancel = default);
     MscStatusResponse SetMsc(bool enabled, bool force = false, CancellationToken cancel = default);
@@ -73,6 +75,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private readonly object lifecycleGate = new();
     private Task? disposal;
     private int stopping;
+    private int quarantined;
     private Exception? cleanupError;
     // Handle operations always acquire deviceGate before the snapshot gate. Not reentrant.
     private readonly SemaphoreSlim deviceGate = new(1, 1);
@@ -81,6 +84,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private long telemetryReceipt;
     private long storageReceipt;
     private long selfTestReceipt;
+    private long wirelessReceipt;
     private ControlCommandReference? uncertainCommand;
     private WirelessOperationReference? uncertainWirelessOperation;
     private long mscReconnectDeadline;
@@ -122,6 +126,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
         }
         finally { deviceGate.Release(); }
     }
+
+    public void SetQuarantined(bool value) => Volatile.Write(ref quarantined, value ? 1 : 0);
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
@@ -168,13 +174,18 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     /// <summary>
     /// API commands wait at most <see cref="BusyWait"/>; a busy board is a 409 because nothing was sent.
     /// </summary>
-    private DeviceLease Device(CancellationToken cancel)
+    private DeviceLease Device(CancellationToken cancel, bool readOnly = false)
     {
         if (!deviceGate.Wait(BusyWait, cancel)) throw new BoardBusyException();
         if (Volatile.Read(ref stopping) != 0)
         {
             deviceGate.Release();
             throw new BoardStateException("Board monitor is shutting down");
+        }
+        if (!readOnly && Volatile.Read(ref quarantined) != 0)
+        {
+            deviceGate.Release();
+            throw new BoardStateException("Board identity is ambiguous; rescan after removing duplicate identities");
         }
         return new(deviceGate);
     }
@@ -201,7 +212,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     public CommandResyncResponse ResyncCommand(bool confirm, CancellationToken cancel = default)
     {
         if (!confirm) throw new ApiInputException("Explicit confirm: true is required");
-        using (Device(cancel))
+        using (Device(cancel, readOnly: true))
         {
             if (!Snapshot.CommandOutcomeUncertain) return new(false);
             var client = Client(requireConfiguration: false);
@@ -220,6 +231,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             {
                 uncertainCommand = null;
                 uncertainWirelessOperation = null;
+                if (result.Wireless is not null) wirelessReceipt = time.GetTimestamp();
                 snapshot = snapshot with
                 {
                     CommandOutcomeUncertain = false,
@@ -254,6 +266,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             uncertainCommand = null;
             uncertainWirelessOperation = null;
             telemetryReceipt = storageReceipt = selfTestReceipt = time.GetTimestamp();
+            wirelessReceipt = status.Wireless is null ? 0 : time.GetTimestamp();
         }
     }
 
@@ -330,6 +343,8 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var client = RequireWirelessIdle();
             var saved = ExecuteCommand(client, () => client.SetWireless(settings));
             lock (gate)
+            {
+                wirelessReceipt = time.GetTimestamp();
                 snapshot = snapshot with
                 {
                     BoardConfiguration = snapshot.BoardConfiguration is { } configuration
@@ -337,6 +352,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                     RebootPending = true,
                     Wireless = saved
                 };
+            }
             return new(saved, true, settings.Board);
         }
     }
@@ -479,7 +495,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
                 lock (gate)
                 {
                     activeClient = client;
-                    telemetryReceipt = storageReceipt = selfTestReceipt = 0;
+                    telemetryReceipt = storageReceipt = selfTestReceipt = wirelessReceipt = 0;
                     var uncertain = snapshot.CommandOutcomeUncertain;
                     snapshot = new(true, uncertain ? UncertainMessage : null, hardware,
                         BoardConfiguration: configuration, CommandOutcomeUncertain: uncertain,
@@ -550,7 +566,11 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             var wireless = client.ReadWireless();
             active = wireless.WifiState == WifiState.Testing ||
                 (WirelessScanState)wireless.ScanState == WirelessScanState.Scanning;
-            lock (gate) snapshot = snapshot with { Wireless = wireless, WirelessError = null };
+            lock (gate)
+            {
+                wirelessReceipt = time.GetTimestamp();
+                snapshot = snapshot with { Wireless = wireless, WirelessError = null };
+            }
         }
         catch (Exception error) when (IsDeviceError(error))
         {
@@ -608,7 +628,10 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
             SelfTest = selfTestStale ? null : snapshot.SelfTest,
             TelemetryStale = telemetryStale,
             StorageStale = storageStale,
-            SelfTestStale = selfTestStale
+            SelfTestStale = selfTestStale,
+            WirelessError = snapshot.WirelessError ??
+                (snapshot.Wireless is not null && IsStale(wirelessReceipt, 5000)
+                    ? "Wireless status is stale; wait for a fresh report" : null)
         };
     }
 

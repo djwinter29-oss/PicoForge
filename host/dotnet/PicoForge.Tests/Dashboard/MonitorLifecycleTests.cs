@@ -1,3 +1,12 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace PicoForge.Tests;
@@ -14,7 +23,7 @@ public sealed class MonitorLifecycleTests
         var ready = new StatusResponse(true, null, client.ReadInfo() with { Capabilities = 0x8f },
             new(1, 0, 200_000_000, true, false, false, null, true, false),
             Memory: new MemoryStatusResponse(1, true, true, true, false, null, null, null, null, null, null)
-                { Msc = new(false, false, false) }, BoardConfiguration: client.ReadConfiguration());
+            { Msc = new(false, false, false) }, BoardConfiguration: client.ReadConfiguration());
         monitor.Attach(client, ready);
         if (reboot) monitor.Reboot();
         else monitor.SetSettings(new(200, 1, 0));
@@ -52,13 +61,17 @@ public sealed class MonitorLifecycleTests
     [InlineData("timeout")]
     public async Task ConfigurationFailureKeepsIdentityAndTelemetryButBlocksDependentCommands(string failure)
     {
-        var client = new Client { Capabilities = 0x89, Configuration = () => throw (failure switch
+        var client = new Client
         {
-            "io" => new IOException("Feature 2 unavailable"),
-            "protocol" => new InvalidDataException("Feature 2 invalid"),
-            "permission" => new UnauthorizedAccessException("Feature 2 denied"),
-            _ => new TimeoutException("Feature 2 timed out")
-        }) };
+            Capabilities = 0x89,
+            Configuration = () => throw (failure switch
+            {
+                "io" => new IOException("Feature 2 unavailable"),
+                "protocol" => new InvalidDataException("Feature 2 invalid"),
+                "permission" => new UnauthorizedAccessException("Feature 2 denied"),
+                _ => new TimeoutException("Feature 2 timed out")
+            })
+        };
         await using var monitor = new DeviceMonitor(() => client);
         monitor.Start();
         await WaitUntil(() => monitor.Snapshot.Runtime is not null);
@@ -187,10 +200,21 @@ public sealed class MonitorLifecycleTests
                 : [];
             clock.Advance(TimeSpan.FromSeconds(31));
             await Task.Run(boards.Boards).WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.Same(monitor, boards.Monitor(id));
+            if (ambiguous) Assert.Throws<BoardStateException>(() => boards.Monitor(id));
+            else Assert.Same(monitor, boards.Monitor(id));
             Assert.Equal(0, client.Closes);
             release.Set();
             var error = await command.WaitAsync(TimeSpan.FromSeconds(2));
+            if (ambiguous)
+            {
+                Assert.Throws<BoardStateException>(() => boards.Monitor(id));
+                Assert.Contains("ambiguous", Assert.Throws<BoardStateException>(() => monitor.SetLed(false)).Message);
+                attached = [];
+                boards.Boards();
+                if (uncertain)
+                    Assert.Contains("ambiguous",
+                        Assert.Throws<BoardStateException>(() => monitor.SetLed(false)).Message);
+            }
             if (uncertain)
             {
                 Assert.IsType<TimeoutException>(error);
@@ -203,6 +227,7 @@ public sealed class MonitorLifecycleTests
                 Assert.Equal(1, created);
                 Assert.Equal(1, client.Writes);
             }
+
             else
             {
                 Assert.Null(error);
@@ -223,6 +248,118 @@ public sealed class MonitorLifecycleTests
     }
 
     [Fact]
+    public async Task UniqueScanClearsQuarantineWithoutRetiringAnActiveOwner()
+    {
+        HidBoard[] attached = [new("/hid/a", "board-A", "PicoForge")];
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var client = new Client { OnLed = () =>
+        {
+            entered.Set();
+            Assert.True(release.Wait(TimeSpan.FromSeconds(5)));
+        } };
+        var monitor = new DeviceMonitor(() => client);
+        await using var boards = new DashboardBoards(null, null, () => attached, (_, _) => monitor);
+        var id = boards.Boards().Boards[0].Id;
+        boards.Monitor(id);
+        await WaitUntil(() => monitor.Snapshot.Runtime is not null);
+        var command = Task.Run(() => monitor.SetLed(true));
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(2)));
+            attached = [new("/hid/a", "board-A", "PicoForge"), new("/hid/b", "board-A", "PicoForge")];
+            Assert.Empty(boards.Boards().Boards);
+            Assert.Throws<BoardStateException>(() => boards.Monitor(id));
+            attached = [new("/hid/a", "board-A", "PicoForge")];
+            Assert.Single(boards.Boards().Boards);
+            Assert.Same(monitor, boards.Monitor(id));
+        }
+        finally { release.Set(); await command; }
+        monitor.SetLed(false);
+        Assert.Equal(2, client.Writes);
+        Assert.Equal(0, client.Closes);
+    }
+
+    [Theory]
+    [InlineData("poll")]
+    [InlineData("stale")]
+    [InlineData("disconnected")]
+    [InlineData("missing")]
+    public async Task ConsoleHttpRejectsUnavailableWirelessStatus(string failure)
+    {
+        var clock = new ManualTime();
+        var failPoll = 0;
+        var wireless = new WirelessStatusResponse
+        {
+            WifiEnabled = true,
+            WifiState = WifiState.Connected,
+            Ipv4 = "127.0.0.1",
+            TcpCliEnabled = true,
+            TcpCliStarted = true,
+            BleKeyConfigured = true
+        };
+        var client = new Client
+        {
+            Capabilities = 0x89,
+            Wireless = () =>
+            Volatile.Read(ref failPoll) != 0 ? throw new IOException("Feature 12 unavailable") : wireless
+        };
+        await using var monitor = new DeviceMonitor(() => client, time: clock);
+        if (failure == "poll")
+        {
+            monitor.Start();
+            await WaitUntil(() => monitor.Snapshot.Wireless is not null);
+            Volatile.Write(ref failPoll, 1);
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await WaitUntil(() => monitor.Snapshot.WirelessError == "Feature 12 unavailable");
+            Assert.Same(wireless, monitor.Snapshot.Wireless);
+        }
+        else
+        {
+            monitor.Attach(client, new(failure != "disconnected", null, client.ReadInfo(),
+                BoardConfiguration: client.ReadConfiguration(), Wireless: failure == "missing" ? null : wireless));
+            if (failure == "stale") clock.Advance(TimeSpan.FromSeconds(5));
+        }
+        using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        listener.Listen(1);
+        using var bridge = new ConsoleBridge(null, ((IPEndPoint)listener.LocalEndPoint!).Port, true);
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton<IDashboardBoards>(new OneBoard(monitor));
+        builder.Services.AddSingleton(bridge);
+        await using var app = await DashboardApplication.BuildAsync(builder);
+        await app.StartAsync();
+        using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await http.PostAsJsonAsync("/api/console?board=board-a", new { });
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.False(string.IsNullOrEmpty((await response.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString()));
+        Assert.Equal(0, client.Writes);
+        Assert.False(listener.Poll(0, SelectMode.SelectRead));
+        if (failure == "poll")
+        {
+            Volatile.Write(ref failPoll, 0);
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await WaitUntil(() => monitor.Snapshot.WirelessError is null);
+            Assert.Same(wireless, monitor.Snapshot.Wireless);
+            var opening = http.PostAsJsonAsync("/api/console?board=board-a", new { });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var peer = await listener.AcceptAsync(timeout.Token);
+            await peer.SendAsync(Encoding.ASCII.GetBytes(
+                "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r\n"),
+                SocketFlags.None, timeout.Token);
+            using var connected = await opening.WaitAsync(timeout.Token);
+            Assert.Equal(HttpStatusCode.OK, connected.StatusCode);
+            Assert.Equal(64, (await connected.Content.ReadFromJsonAsync<JsonElement>())
+                .GetProperty("session").GetString()!.Length);
+            Assert.Equal(1, client.Writes);
+        }
+        await app.StopAsync();
+    }
+
+    [Fact]
     public async Task RetirementRejectsPreviouslyObtainedReferencesIncludingNoOpResync()
     {
         var client = new Client();
@@ -231,6 +368,28 @@ public sealed class MonitorLifecycleTests
         Assert.True(monitor.TryRetire());
         Assert.Throws<BoardStateException>(() => monitor.ResyncCommand(true));
         Assert.Throws<BoardStateException>(() => monitor.SetLed(true));
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task QuarantineBlocksEveryWriteButRetainsReadOnlyReconciliation()
+    {
+        var client = new Client { Reconciled = new(new(1, Opcode.Led, ControlStatus.Completed,
+            ControlError.None, new byte[48]), null) };
+        await using var monitor = new DeviceMonitor(() => client);
+        monitor.Attach(client, new(true, null, client.ReadInfo(), CommandOutcomeUncertain: true,
+            BoardConfiguration: client.ReadConfiguration()));
+        monitor.SetQuarantined(true);
+        foreach (var command in new Action[]
+        {
+            () => monitor.SetLed(true), () => monitor.SetMsc(true), () => monitor.SetSettings(new(200, 1, 0)),
+            () => monitor.SetSelfTest("start", 1), () => monitor.Reboot(), () => monitor.ScanWireless(),
+            () => monitor.TestWireless("Pico", "password"), () => monitor.CancelWirelessTest(),
+            () => monitor.SetWireless(new()), () => monitor.TcpCliAuthProof(new byte[16], new byte[8])
+        })
+            Assert.Contains("ambiguous", Assert.Throws<BoardStateException>(command).Message);
+        Assert.False(monitor.ResyncCommand(true).Uncertain);
+        Assert.Contains("ambiguous", Assert.Throws<BoardStateException>(() => monitor.SetLed(false)).Message);
         Assert.Equal(0, client.Writes);
     }
 
@@ -395,6 +554,7 @@ public sealed class MonitorLifecycleTests
         public Action? OnRead { get; init; }
         public Action? OnClose { get; init; }
         public Func<BoardConfigurationResponse>? Configuration { get; init; }
+        public Func<WirelessStatusResponse>? Wireless { get; init; }
         public CommandResyncResult? Reconciled { get; init; }
         public byte Capabilities { get; init; } = 9;
         public int Writes;
@@ -431,8 +591,12 @@ public sealed class MonitorLifecycleTests
         }
         public void Reboot() => Interlocked.Increment(ref Writes);
         public void SetSelfTest(string action, uint sizeMib) => throw new NotSupportedException();
-        public WirelessStatusResponse ReadWireless() => throw new NotSupportedException();
-        public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid) => throw new NotSupportedException();
+        public WirelessStatusResponse ReadWireless() => Wireless?.Invoke() ?? throw new NotSupportedException();
+        public byte[] TcpCliAuthProof(byte[] nonce, byte[] uid)
+        {
+            Interlocked.Increment(ref Writes);
+            return new byte[16];
+        }
         public CommandResyncResult? ReconcileOutcome(ControlCommandReference? command,
             WirelessOperationReference? operation) => Reconciled ?? throw new NotSupportedException();
         public WirelessStatusResponse SetWireless(WirelessRequest settings) => throw new NotSupportedException();

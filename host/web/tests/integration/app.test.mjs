@@ -91,6 +91,18 @@ test("startup polling and drafts recover after status and scan failures", async 
   await state.tick();
 });
 
+test("board identity warnings stay visible across status polls and clear on a clean rescan", async context => {
+  const { state, handlers, elements } = await appFixture(context);
+  state.boardWarnings = ["Duplicate PicoForge board identity; disconnect boards with duplicate serials"];
+  await handlers.get("#rescan-boards:click")();
+  assert.match(elements.get("#status-message").textContent, /Duplicate PicoForge/);
+  await state.tick();
+  assert.match(elements.get("#status-message").textContent, /Duplicate PicoForge/);
+  state.boardWarnings = [];
+  await handlers.get("#rescan-boards:click")();
+  assert.doesNotMatch(elements.get("#status-message").textContent, /Duplicate PicoForge/);
+});
+
 test("settings presentation respects active and pending self-tests", async context => {
   const { state, connected, elements } = await appFixture(context);
   for (const testState of [
@@ -335,6 +347,7 @@ test("storage telemetry, pin rows, and dashboard layout preserve presentation", 
 test("settings, reboot and LED recovery preserve per-board command ownership", async context => {
   const {
     state, connected, handlers, elements, requestedUrls, savedSettings, ledRequestedStates, saveAndConfirm, switchBoard,
+    reconnect,
   } = await appFixture(context);
   assert.equal(elements.get("#board-select").value, "board-a");
   assert.equal(elements.get("#board-select").children.find(option => option.value === "board-a").textContent,
@@ -364,10 +377,14 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   assert.deepEqual(savedSettings[0], { system_clock_mhz: 250, sdcard_profile: 0, radios: 0 });
   assert.equal(requestedUrls.at(-1), "/api/settings?board=board-a");
   assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot")).length, 0);
+  connected.settings = { ...savedSettings[0] };
+  await reconnect();
   elements.get("#settings-storage").value = "1";
   handlers.get("#settings-storage:change")();
   await saveAndConfirm();
   assert.deepEqual(savedSettings[1], { system_clock_mhz: 250, sdcard_profile: 1, radios: 0 });
+  connected.settings = { ...savedSettings[1] };
+  await reconnect();
   elements.get("#settings-clock").value = "200";
   handlers.get("#settings-clock:change")();
   for (const failure of ["save", "readback", "unsupported"]) {
@@ -375,16 +392,26 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
     state.settingsFailure = failure;
     state.readbackMismatch = failure === "readback";
     await saveAndConfirm();
-    assert.equal(requestedUrls.at(-1), "/api/settings?board=board-a", "failed save must not reboot");
-    assert.match(elements.get("#settings-note").textContent, /Save failed/);
+    assert.equal(savedSettings.length, 3 + ["save", "readback", "unsupported"].indexOf(failure));
+    assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot")).length, 0,
+      "failed save must not send a separate reboot");
+    assert.match(elements.get("#settings-note").textContent, failure === "readback" ? /outcome is uncertain/ : /Save failed/);
     assert.equal(elements.get("#settings-note").hidden, false);
+    if (failure === "readback") {
+      connected.settings = { ...savedSettings.at(-1) };
+      await reconnect();
+      elements.get("#settings-clock").value = "250";
+      handlers.get("#settings-clock:change")();
+    }
   }
   state.saveFails = false;
   state.readbackMismatch = false;
   await saveAndConfirm();
   assert.match(elements.get("#settings-note").textContent, /Settings saved. Reboot requested/);
+  connected.settings = { ...savedSettings.at(-1) };
+  await reconnect();
   state.settingsOutcomeConflict = true;
-  elements.get("#settings-clock").value = "250";
+  elements.get("#settings-clock").value = "200";
   handlers.get("#settings-clock:change")();
   const beforeUncertainConflict = savedSettings.length;
   await saveAndConfirm();
@@ -448,13 +475,11 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   await handlers.get("#confirm-reboot:click")();
   assert.equal(requestedUrls.filter(url => url.startsWith("/api/reboot?")).length, rebootRequests,
     "a server error with an unknown reboot outcome is not resent");
-  connected.reboot_pending = true;
-  await state.tick();
-  connected.reboot_pending = false;
-  await state.tick();
+  await reconnect();
   await handlers.get("#reboot-control:click")();
   await handlers.get("#confirm-reboot:click")();
   assert.equal(requestedUrls.at(-1), "/api/reboot?board=board-a");
+  await reconnect();
   state.ledResponseError = true;
   const ledBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/led?")).length;
   await handlers.get("#led-control:click")();
@@ -480,11 +505,11 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
     + elements.get("#settings-note").textContent);
   assert.match(elements.get("#settings-note").textContent, /Reboot outcome is uncertain; command was not resent/);
   state.rebootResponseError = false;
-  connected.reboot_pending = true;
-  await state.tick();
-  connected.reboot_pending = false;
-  await state.tick();
+  await reconnect();
   connected.self_test = { sequence: 5, active: false, state: "idle" };
+  connected.memory = { initialized: true };
+  connected.filesystem_format = "exfat";
+  await new Promise(resolve => setImmediate(resolve));
   await state.tick();
   state.selfTestResponseError = true;
   const selfTestBeforeConflict = requestedUrls.filter(url => url.startsWith("/api/self-test")).length;
@@ -586,6 +611,8 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
   await saveAndConfirm();
   assert.equal(savedSettings.length, beforeForcedSave + 1);
   assert.equal(elements.get("#reboot-control").disabled, true, "standalone reboot stays safe");
+  connected.settings = { ...savedSettings.at(-1) };
+  await reconnect();
   const beforeReturn = requestedUrls.length;
   await handlers.get("#msc-control:click")();
   assert.equal(elements.get("#return-dialog").open, true);
@@ -625,7 +652,7 @@ test("settings, reboot and LED recovery preserve per-board command ownership", a
 test("wireless provisioning and cancellation preserve draft and uncertainty invariants", async context => {
   const {
     state, connected, handlers, elements, configureRadio, requestedUrls, savedSettings, wirelessSettings,
-    testedWireless, requestTimeouts, saveAndConfirm, switchBoard,
+    testedWireless, requestTimeouts, saveAndConfirm, switchBoard, reconnect,
   } = await appFixture(context);
   await switchBoard("board-b");
   connected.hardware.capabilities = 128 | 16 | 2;
@@ -780,7 +807,7 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   assert.match(elements.get("#wifi-status").textContent, /saved/);
   assert.match(elements.get("#settings-note").textContent, /Settings saved. Reboot requested/);
   assert.equal(elements.get("#settings-save").disabled, true);
-  await state.tick();
+  await reconnect();
   state.wirelessFailure = 503;
   configureRadio("wifi");
   handlers.get("#wifi-other:click")();
@@ -818,6 +845,11 @@ test("wireless provisioning and cancellation preserve draft and uncertainty inva
   elements.get("#board-select").value = "board-b";
   handlers.get("#board-select:change")();
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(elements.get("#wifi-connect").disabled, true, "board B retains its earlier unresolved save");
+  connected.command_outcome_uncertain = true;
+  connected.command_resync_supported = true;
+  await state.tick();
+  await handlers.get("#command-resync:click")();
   configureRadio("wifi");
   elements.get("#wifi-ssid").value = "timed-out-network";
   state.wirelessTestError = new DOMException("HTTP deadline", "TimeoutError");

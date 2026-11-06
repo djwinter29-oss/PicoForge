@@ -10,6 +10,7 @@ snapshot.command_outcome_uncertain = "false";
 const operations = {
   outcomeUncertain: false, mscPending: false, selfTestPending: false, storageCommandPending: false,
   busy: false, settingsBusy: false, canSetLed: true, canChangeMsc: true, boardSelectionBusy: false,
+  rebootPending: false, canStartSelfTest: false, canCancelSelfTest: false, canEditSelfTest: true,
 };
 // @ts-expect-error Eligibility must not use numeric sentinels.
 operations.canChangeMsc = 1;

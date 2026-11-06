@@ -12,6 +12,8 @@ def make_monitor(client=None, snapshot=None, *, fresh=True):
         client.command_uncertain = False
         client.last_command_result = None
         client.wireless_active = False
+        client.uncertain_command = None
+        client.uncertain_wireless_operation = None
     monitor = DeviceMonitor(client_factory=lambda: client, autostart=False)
     monitor._active_client = client
     if snapshot is not None:

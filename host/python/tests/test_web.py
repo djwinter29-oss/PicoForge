@@ -5,7 +5,7 @@ from unittest.mock import patch
 from unittest.mock import Mock
 
 from picoforge.dashboard.server import create_app
-from picoforge.dashboard.monitor import CommandOutcomeUncertain
+from picoforge.dashboard.monitor import BoardConflict, CommandOutcomeUncertain
 from picoforge.cli import parse_args
 from picoforge.reports import ProtocolError, build_self_test_command_report
 from picoforge.reports.common import _validate_settings
@@ -279,7 +279,7 @@ class WebTests(unittest.TestCase):
     def test_api_error_statuses_distinguish_bad_input_conflicts_and_unavailable_devices(self):
         class FailingBoards(FakeBoards):
             def monitor(self, board_id):
-                raise RuntimeError("device busy")
+                raise BoardConflict("device busy")
 
             def boards(self):
                 raise OSError("HID enumeration failed")
@@ -362,10 +362,11 @@ class WebTests(unittest.TestCase):
         }
         timed_out = {"test": "Wi-Fi test timed out; confirm the result before retrying"}
         for route, (method, url, body) in routes.items():
-            for error, status in ((RuntimeError("busy"), 409), (LookupError("unknown board"), 404),
+            for error, status in ((BoardConflict("busy"), 409), (LookupError("unknown board"), 404),
                                   (OSError("io"), 503), (ConnectionError("PicoForge HID is not connected"), 503),
                                   (TimeoutError("late"), 503), (ProtocolError("bad reply"), 503),
-                                  (ValueError("bug"), 500), (NotImplementedError("todo"), 500)):
+                                  (ValueError("bug"), 500), (RuntimeError("bug"), 500),
+                                  (NotImplementedError("todo"), 500)):
                 with self.subTest(route=route, error=type(error).__name__):
                     client = create_app(Raising(error)).test_client()
                     response = client.open(url, method=method, json=body, base_url="http://127.0.0.1")
@@ -474,7 +475,7 @@ class WebTests(unittest.TestCase):
     def test_led_endpoint_reports_unavailable_device(self):
         class DisconnectedMonitor(FakeMonitor):
             def set_led(self, on):
-                raise RuntimeError("board LED is unavailable")
+                raise BoardConflict("board LED is unavailable")
 
         response = create_app(FakeBoards(DisconnectedMonitor())).test_client().post(
             "/api/led?board=board-a", json={"on": True}, base_url="http://127.0.0.1"
@@ -492,12 +493,12 @@ class WebTests(unittest.TestCase):
     def test_msc_endpoint_reports_device_error(self):
         class BusyMonitor(FakeMonitor):
             def set_msc(self, enabled, *, force=False):
-                raise RuntimeError("PicoForge HID is not connected")
+                raise ConnectionError("PicoForge HID is not connected")
 
         response = create_app(FakeBoards(BusyMonitor())).test_client().post(
             "/api/msc?board=board-a", json={"enabled": False}, base_url="http://127.0.0.1"
         )
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json["error"], "PicoForge HID is not connected")
 
     def test_reboot_requires_explicit_confirmation_and_returns_status(self):
@@ -549,10 +550,10 @@ class WebTests(unittest.TestCase):
     def test_self_test_endpoint_reports_device_unavailability(self):
         class DisconnectedMonitor(FakeMonitor):
             def set_self_test(self, action, size_mib):
-                raise RuntimeError("PicoForge HID is not connected")
+                raise ConnectionError("PicoForge HID is not connected")
         response = create_app(FakeBoards(DisconnectedMonitor())).test_client().post(
             "/api/self-test?board=board-a", json={"action": "cancel"}, base_url="http://127.0.0.1")
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 503)
 
 
 if __name__ == "__main__":

@@ -51,11 +51,14 @@ async function measureConsole() {
   };
   try {
     document.querySelector("#connect").click();
-    await feed([("x".repeat(150) + "\r\n").repeat(1000)]);
+    await feed([("x".repeat(512) + "\r\n").repeat(1000)]);
     for (let sample = 0; sample < 30; sample++) {
       phases = { parse: 0, text: 0, dom: 0, layout: 0, renders: 0 };
-      await feed(Array.from({ length: 6 }, (_, index) => `sample ${sample}/${index}\r\n`));
+      await feed(Array.from({ length: 6 }, (_, index) => `sample ${sample}/${index}`.padEnd(512, "x") + "\r\n"));
       samples.push({ ...phases });
+      const lines = terminal.textContent.split("\n");
+      if (lines.length !== 1000 || Math.max(...lines.map(line => line.length)) !== 512)
+        throw new Error("Console measurement did not retain the full supported scrollback and column bounds");
     }
     const summary = {};
     for (const phase of ["parse", "text", "dom", "layout", "renders"]) {

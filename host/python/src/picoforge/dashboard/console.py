@@ -11,7 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 
-from ..reports.common import ProtocolError
+from ..reports.common import BoardConflict, ProtocolError
 
 _LOGGER = logging.getLogger(__name__)
 # ponytail: one long-poll GET per 2 s idle replaces 20 polls/s; a WebSocket would only cut the per-chunk request.
@@ -27,16 +27,17 @@ class ConsoleBridge:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._socket: socket.socket | None = None
+        self._opening: socket.socket | None = None
         self._session: str | None = None
         self._board_id: str | None = None
         self._expiry_timer: threading.Timer | None = None
         self._closed = False
         self._connecting = False
-        self._generation = 0
         self._last_request = 0
 
     @staticmethod
-    def _authenticate(connection: socket.socket, sign_proof: Callable[[bytes, bytes], bytes]) -> None:
+    def _authenticate(connection: socket.socket, sign_proof: Callable[[bytes, bytes], bytes],
+                      before_proof_or_send: Callable[[], None] | None = None) -> None:
         started = time.monotonic()
         challenge_deadline = started + _AUTH_CHALLENGE_SECONDS
         challenge = bytearray()
@@ -60,22 +61,26 @@ class ConsoleBridge:
         if ((tag, kind) != ("PicoForge", "AUTH") or len(nonce_hex) != 32 or len(nonce) != 16
                 or len(uid_hex) != 16 or len(uid) != 8):
             raise ProtocolError("Invalid TCP CLI authentication challenge")
+        if before_proof_or_send is not None:
+            before_proof_or_send()
         proof = sign_proof(nonce, uid)
         if not isinstance(proof, bytes) or len(proof) != 16:
-            raise RuntimeError("The connected board returned an invalid TCP CLI proof")
+            raise ProtocolError("The connected board returned an invalid TCP CLI proof")
         remaining = started + _AUTH_TIMEOUT_SECONDS - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("TCP CLI authentication timed out")
+        if before_proof_or_send is not None:
+            before_proof_or_send()
         connection.settimeout(remaining)
         connection.sendall(b"AUTH " + proof.hex().encode("ascii") + b"\r\n")
 
     def open(self, wireless: Mapping[str, object], sign_proof: Callable[[bytes, bytes], bytes] | None = None,
              board_id: str | None = None) -> str:
         if wireless.get("stale"):
-            raise RuntimeError("The board's wireless status is stale; wait for the next refresh")
+            raise BoardConflict("The board's wireless status is stale; wait for the next refresh")
         if not (wireless.get("wifi_enabled") and wireless.get("wifi_state") == "connected"
                 and wireless.get("tcp_cli_started")):
-            raise RuntimeError("The board's Wi-Fi TCP CLI is not available")
+            raise BoardConflict("The board's Wi-Fi TCP CLI is not available")
         ipv4 = wireless.get("ipv4")
         if not isinstance(ipv4, str):
             raise ProtocolError("Invalid board IPv4 address")
@@ -86,43 +91,62 @@ class ConsoleBridge:
         if address.is_loopback or address.is_multicast or address.is_unspecified or int(address) == 0xFFFFFFFF:
             raise ProtocolError("Invalid board IPv4 address")
         if wireless.get("ble_key_configured") and sign_proof is None:
-            raise RuntimeError("USB Control key proof is unavailable")
+            raise BoardConflict("USB Control key proof is unavailable")
         with self._lock:
             if self._closed:
-                raise RuntimeError("Console bridge is shutting down")
+                raise BoardConflict("Console bridge is shutting down")
             if self._socket is not None or self._connecting:
-                raise RuntimeError("A web console is already connected; disconnect it first")
+                raise BoardConflict("A web console is already connected; disconnect it first")
             self._connecting = True
-            generation = self._generation
         connection = None
+        registered = False
         installed = False
         try:
             connection = socket.create_connection((str(address), 2323), timeout=3)
+            with self._lock:
+                if self._closed:
+                    raise BoardConflict("Console connection was cancelled during dashboard shutdown")
+                self._opening = connection
+                registered = True
             if wireless.get("ble_key_configured"):
                 if sign_proof is None:
-                    raise RuntimeError("USB Control key proof is unavailable")
-                self._authenticate(connection, sign_proof)
+                    raise BoardConflict("USB Control key proof is unavailable")
+                self._authenticate(connection, sign_proof, self._require_opening)
             connection.settimeout(0.1)
             with self._lock:
-                if generation != self._generation:
-                    raise RuntimeError("Console connection was cancelled during dashboard shutdown")
+                if self._closed:
+                    raise BoardConflict("Console connection was cancelled during dashboard shutdown")
                 if self._socket is not None:
-                    raise RuntimeError("A web console is already connected; disconnect it first")
+                    raise BoardConflict("A web console is already connected; disconnect it first")
                 self._socket = connection
+                self._opening = None
                 self._session = secrets.token_urlsafe(32)
                 self._board_id = board_id
                 self._last_request = time.monotonic()
                 self._schedule_expiry(_CONSOLE_IDLE_SECONDS)
                 installed = True
                 return self._session
+        except OSError as error:
+            with self._lock:
+                if self._closed:
+                    raise BoardConflict("Console connection was cancelled during dashboard shutdown") from error
+            raise
         finally:
             with self._lock:
                 self._connecting = False
-            if connection is not None and not installed:
+                owned = not registered or self._opening is connection
+                if self._opening is connection:
+                    self._opening = None
+            if connection is not None and not installed and owned:
                 try:
                     connection.close()
                 except OSError:
                     _LOGGER.exception("Failed to close an uninstalled TCP console connection")
+
+    def _require_opening(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise BoardConflict("Console connection was cancelled during dashboard shutdown")
 
     def _schedule_expiry(self, delay: float) -> None:
         if self._expiry_timer is not None:
@@ -148,7 +172,7 @@ class ConsoleBridge:
     def _require_session(self, session: str | None) -> socket.socket:
         if (self._socket is None or self._session is None
                 or not secrets.compare_digest(self._session, session or "")):
-            raise RuntimeError("Console disconnected; connect again")
+            raise BoardConflict("Console disconnected; connect again")
         self._last_request = time.monotonic()
         return self._socket
 
@@ -171,14 +195,14 @@ class ConsoleBridge:
         except (OSError, ValueError) as error:
             with self._lock:
                 if self._socket is not connection:
-                    raise RuntimeError("Console disconnected; connect again") from error
+                    raise BoardConflict("Console disconnected; connect again") from error
                 self._close()
             if isinstance(error, OSError):
                 raise
             raise OSError("TCP console polling failed") from error
         with self._lock:
             if self._require_session(session) is not connection:
-                raise RuntimeError("Console disconnected; connect again")
+                raise BoardConflict("Console disconnected; connect again")
             if not ready:
                 return b"", False
             try:
@@ -208,7 +232,11 @@ class ConsoleBridge:
 
     def close_all(self) -> None:
         with self._lock:
-            self._generation += 1
             self._closed = True
-            if self._socket is not None:
-                self._close()
+            opening, self._opening = self._opening, None
+            try:
+                if opening is not None:
+                    opening.close()
+            finally:
+                if self._socket is not None:
+                    self._close()

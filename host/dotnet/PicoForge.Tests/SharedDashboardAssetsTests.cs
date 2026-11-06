@@ -16,6 +16,8 @@ public sealed class SharedDashboardAssetsTests
     [InlineData("css/dashboard.css")]
     [InlineData("js/app.mjs")]
     [InlineData("js/dashboard.mjs")]
+    [InlineData("js/dashboard-api.mjs")]
+    [InlineData("js/operation-state.mjs")]
     [InlineData("console.html")]
     [InlineData("css/console.css")]
     [InlineData("js/console.mjs")]

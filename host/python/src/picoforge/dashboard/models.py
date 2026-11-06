@@ -50,7 +50,11 @@ class DashboardBoard(TypedDict):
     device_path: str
 
 
-class DashboardBoardsResponse(TypedDict):
+class _BoardWarnings(TypedDict, total=False):
+    warnings: list[str]
+
+
+class DashboardBoardsResponse(_BoardWarnings):
     boards: list[DashboardBoard]
     default_board_id: str | None
 

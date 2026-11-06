@@ -14,6 +14,9 @@ internal sealed class PicoForgeHid : IHidClient
     private readonly Func<byte, int, byte[]> readFeature;
     private readonly Action<byte[]> writeFeature;
     private readonly Action<string> reopen;
+    private readonly Func<IEnumerable<HidDevice>> matchingDevices;
+    private Exception? cleanupError;
+    private bool disposed;
     private byte[] inputReport;
     private byte[] featureReport;
     private readonly TimeProvider time;
@@ -27,6 +30,9 @@ internal sealed class PicoForgeHid : IHidClient
     public WirelessOperationReference? UncertainWirelessOperation { get; private set; }
 
     public PicoForgeHid(string? serialNumber = null, string? devicePath = null)
+        : this(SelectDevice(serialNumber, devicePath), MatchingDevices) { }
+
+    private static HidDevice SelectDevice(string? serialNumber, string? devicePath)
     {
         if (serialNumber is not null && devicePath is not null)
             throw new ArgumentException("--serial and --device-path cannot be used together");
@@ -40,7 +46,13 @@ internal sealed class PicoForgeHid : IHidClient
             throw new BoardStateException(
                 "Multiple PicoForge HID interfaces matched; connect one board at a time");
 
-        device = candidates[0];
+        return candidates[0];
+    }
+
+    internal PicoForgeHid(HidDevice device, Func<IEnumerable<HidDevice>> matchingDevices)
+    {
+        this.device = device;
+        this.matchingDevices = matchingDevices;
         stream = device.Open();
         stream.ReadTimeout = 250;
         stream.WriteTimeout = 1000;
@@ -48,13 +60,13 @@ internal sealed class PicoForgeHid : IHidClient
         featureReport = new byte[Math.Max(
             HidProtocol.ControlFeatureSize, device.GetMaxFeatureReportLength())];
         readFeature = GetFeatureReport;
-        writeFeature = report => stream.SetFeature(report);
+        writeFeature = report => { RequireOpen(); stream.SetFeature(report); };
         reopen = ReopenSameBoard;
         time = TimeProvider.System;
         try { identity = ReadHardwareInfo(); }
         catch
         {
-            stream.Dispose();
+            Dispose();
             throw;
         }
     }
@@ -67,6 +79,7 @@ internal sealed class PicoForgeHid : IHidClient
         this.readFeature = readFeature;
         this.writeFeature = writeFeature;
         this.reopen = reopen;
+        matchingDevices = MatchingDevices;
         inputReport = new byte[HidProtocol.SelfTestPayloadSize + 1];
         featureReport = new byte[HidProtocol.ControlFeatureSize];
     }
@@ -95,6 +108,7 @@ internal sealed class PicoForgeHid : IHidClient
 
     public InputReport? ReadInputReport(int timeoutMilliseconds = 250)
     {
+        RequireOpen();
         ArgumentOutOfRangeException.ThrowIfNegative(timeoutMilliseconds);
         var previousTimeout = stream.ReadTimeout;
         stream.ReadTimeout = timeoutMilliseconds;
@@ -378,10 +392,34 @@ internal sealed class PicoForgeHid : IHidClient
         SendCommand(Opcode.SelfTest, arguments: arguments);
     }
 
-    public void Dispose() => stream?.Dispose();
+    public void Dispose()
+    {
+        ThrowIfCleanupFailed();
+        if (disposed) return;
+        try { stream?.Dispose(); }
+        catch (Exception error)
+        {
+            cleanupError = error;
+            throw;
+        }
+        disposed = true;
+    }
+
+    private void ThrowIfCleanupFailed()
+    {
+        if (cleanupError is not null)
+            throw new IOException("HID cleanup failed; restart the dashboard before reconnecting", cleanupError);
+    }
+
+    private void RequireOpen()
+    {
+        ThrowIfCleanupFailed();
+        ObjectDisposedException.ThrowIf(disposed, this);
+    }
 
     private byte[] GetFeatureReport(byte reportId, int requiredSize)
     {
+        RequireOpen();
         if (featureReport.Length != requiredSize)
             featureReport = new byte[requiredSize];
         Array.Clear(featureReport);
@@ -392,6 +430,7 @@ internal sealed class PicoForgeHid : IHidClient
 
     private ControlResult SendCommand(Opcode opcode, byte flags = 0, byte[]? arguments = null)
     {
+        RequireOpen();
         if (CommandOutcomeUncertain)
             throw new BoardStateException("A prior HID command outcome is uncertain; further writes are blocked");
         transactionId = transactionId == byte.MaxValue ? (byte)1 : (byte)(transactionId + 1);
@@ -422,7 +461,7 @@ internal sealed class PicoForgeHid : IHidClient
                 }
                 response = readFeature(HidProtocol.ControlReportId, HidProtocol.ControlFeatureSize);
             }
-            catch (Exception error) when (retryRead && error is IOException or TimeoutException)
+            catch (Exception error) when (retryRead && cleanupError is null && error is IOException or TimeoutException)
             {
                 disconnected = true;
                 Thread.Sleep(20);
@@ -448,26 +487,26 @@ internal sealed class PicoForgeHid : IHidClient
     /// <summary>Replace a detached handle only after Feature 1 proves the original board UID.</summary>
     private void ReopenSameBoard(string uid)
     {
-        stream.Dispose();
-        foreach (var candidate in MatchingDevices())
+        Dispose();
+        foreach (var candidate in matchingDevices())
         {
-            HidStream? replacement = null;
+            var adopted = false;
             try
             {
-                replacement = candidate.Open();
-                replacement.ReadTimeout = 250;
-                replacement.WriteTimeout = 1000;
+                stream = candidate.Open();
+                disposed = false;
+                stream.ReadTimeout = 250;
+                stream.WriteTimeout = 1000;
                 var report = new byte[HidProtocol.IdentityFeatureSize];
                 report[0] = HidProtocol.IdentityReportId;
-                replacement.GetFeature(report);
+                stream.GetFeature(report);
                 if (HidProtocol.ParseIdentityReport(report).SerialNumber != uid) continue;
                 inputReport = new byte[Math.Max(
                     HidProtocol.SelfTestPayloadSize + 1, candidate.GetMaxInputReportLength())];
                 featureReport = new byte[Math.Max(
                     HidProtocol.ControlFeatureSize, candidate.GetMaxFeatureReportLength())];
                 device = candidate;
-                stream = replacement;
-                replacement = null;
+                adopted = true;
                 return;
             }
             catch (Exception error) when (error is IOException or TimeoutException or InvalidDataException
@@ -475,7 +514,7 @@ internal sealed class PicoForgeHid : IHidClient
             {
                 // A board may still be reconnecting; do not select an unverified identity.
             }
-            finally { replacement?.Dispose(); }
+            finally { if (!adopted) Dispose(); }
         }
         throw new IOException("Waiting for the original PicoForge board UID to reconnect");
     }

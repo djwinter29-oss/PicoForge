@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -9,6 +10,59 @@ namespace PicoForge.Tests;
 
 public sealed class ConsoleBridgeTests
 {
+    [Fact]
+    public async Task ShutdownAfterChallengeReceiveBeforeContinuationDoesNotStartProof()
+    {
+        await Task.Run(() =>
+        {
+            var (listener, port) = Listen();
+            using var bridge = new ConsoleBridge(null, port, true);
+            using var queued = new QueuedContext();
+            var previous = SynchronizationContext.Current;
+            Task<string>? opening = null;
+            var proofs = 0;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(queued);
+                opening = bridge.OpenAsync(Wireless("127.0.0.1"), (_, _) =>
+                {
+                    proofs++;
+                    return new byte[16];
+                });
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var peer = listener.AcceptSocketAsync(timeout.Token).AsTask().GetAwaiter().GetResult();
+                peer.Send(Encoding.ASCII.GetBytes(
+                    "PicoForge AUTH 00000000000000000000000000000000 0001020304050607\r"));
+                while (queued.Callbacks.TryTake(out var callback, 100, timeout.Token))
+                    callback.Callback(callback.State);
+                Assert.False(opening.IsCompleted);
+                peer.Send([(byte)'\n']);
+                var received = queued.Callbacks.Take(timeout.Token);
+                bridge.Dispose();
+                received.Callback(received.State);
+                while (!opening.IsCompleted)
+                {
+                    var callback = queued.Callbacks.Take(timeout.Token);
+                    callback.Callback(callback.State);
+                }
+                Assert.IsType<BoardStateException>(Record.Exception(() => opening.GetAwaiter().GetResult()));
+                Assert.Equal(0, proofs);
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+                listener.Stop();
+            }
+        });
+    }
+
+    private sealed class QueuedContext : SynchronizationContext, IDisposable
+    {
+        public BlockingCollection<(SendOrPostCallback Callback, object? State)> Callbacks { get; } = new();
+        public override void Post(SendOrPostCallback callback, object? state) => Callbacks.Add((callback, state));
+        public void Dispose() => Callbacks.Dispose();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

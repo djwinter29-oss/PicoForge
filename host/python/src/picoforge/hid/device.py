@@ -63,7 +63,7 @@ from ..reports import (
     parse_self_test_report,
     parse_status_report,
 )
-from ..reports.common import _validate_settings
+from ..reports.common import BoardConflict, _validate_settings
 from ..reports.wireless import display_ssid, request_ssid
 
 VENDOR_ID = 0xCAFE
@@ -144,7 +144,7 @@ def _select_device(serial_number: str | None, device_path: str | None) -> dict[s
     if not matches:
         raise ConnectionError("PicoForge HID interface not found; check the USB connection and HID permissions")
     if len(matches) != 1:
-        raise RuntimeError("multiple PicoForge HID interfaces matched; select one with --serial or --device-path")
+        raise BoardConflict("multiple PicoForge HID interfaces matched; select one with --serial or --device-path")
     return matches[0]
 
 
@@ -172,12 +172,13 @@ class PicoForgeHid:
         try:
             device.open_path(info["path"])
         except OSError as error:
-            raise RuntimeError(
+            raise OSError(
                 "failed to open PicoForge HID interface; check device permissions "
                 "(Linux setup: see host/python/README.md)"
             ) from error
         self._device = device
         self.closed = False
+        self._close_error: Exception | None = None
         self._expected_serial_number = info.get("serial_number")
         self.identity: HardwareIdentity | None = None
         self.configuration: BoardConfiguration | None = None
@@ -254,13 +255,13 @@ class PicoForgeHid:
     def _supported_identity(self) -> SupportedHardwareIdentity:
         identity = self.identity or self.read_info()
         if identity["supported"] is not True:
-            raise RuntimeError(f"unsupported product: {identity.get('product_name', 'unknown product')}")
+            raise BoardConflict(f"unsupported product: {identity.get('product_name', 'unknown product')}")
         return identity
 
     def _require(self, capability: int, message: str) -> SupportedHardwareIdentity:
         identity = self._supported_identity()
         if not identity["capabilities"] & capability:
-            raise RuntimeError(message)
+            raise BoardConflict(message)
         return identity
 
     @_serialized
@@ -275,14 +276,14 @@ class PicoForgeHid:
         self._require_open()
         identity = self._require(CAP_SAVE_SETTINGS, "persistent settings are unavailable on this firmware")
         if force and not identity["capabilities"] & CAP_FORCE_SAVE:
-            raise RuntimeError("forced settings save is unavailable on this firmware")
+            raise BoardConflict("forced settings save is unavailable on this firmware")
         settings = self._complete_settings(settings)
         command = build_settings_command_report(settings, self._next_transaction_id(), force=force)
         result = self._execute_control(command, ControlOpcode.SAVE_SETTINGS, reconnect=force)
         self._require_completed(result, "Settings")
         saved = result["saved_settings"]
         if saved is None or saved != settings:
-            raise RuntimeError("Firmware did not confirm the requested settings")
+            raise ProtocolError("Firmware did not confirm the requested settings")
         return saved
 
     def _complete_settings(self, settings: dict[str, object]) -> dict[str, object]:
@@ -332,7 +333,7 @@ class PicoForgeHid:
         try:
             expected_uid = bytes.fromhex(identity["serial_number"])
         except (KeyError, ValueError) as error:
-            raise RuntimeError("The connected board identity is unavailable") from error
+            raise ProtocolError("The connected board identity is unavailable") from error
         if not isinstance(uid, bytes) or len(uid) != 8 or uid != expected_uid:
             raise ProtocolError("TCP CLI challenge belongs to a different board")
         result = self._execute_control(
@@ -350,7 +351,7 @@ class PicoForgeHid:
         """Save board settings and credentials atomically; return wireless status plus confirmed settings."""
         self._require_open()
         if self._command_uncertain:
-            raise RuntimeError("A prior command outcome is uncertain; further writes are blocked")
+            raise BoardConflict("A prior command outcome is uncertain; further writes are blocked")
         validate_wireless_configuration(settings)
         previous = self.read_wireless()
         board_settings = settings["board"]
@@ -369,7 +370,7 @@ class PicoForgeHid:
             if (not previous["pair_tested"] or previous["staged_state"] & 8
                     or (("ssid" in settings or "ssid_hex" in settings)
                         and request_ssid(settings).hex() != previous["ssid_hex"])):
-                raise RuntimeError("The exact staged Wi-Fi pair has not passed testing or has expired")
+                raise BoardConflict("The exact staged Wi-Fi pair has not passed testing or has expired")
         else:
             for field, opcode in (("ssid", ControlOpcode.STAGE_SSID),
                                   ("password", ControlOpcode.STAGE_PASSWORD)):
@@ -379,7 +380,7 @@ class PicoForgeHid:
             self._wireless_command(ControlOpcode.STAGE_KEY, value=settings["ble_key"])
         staged = self.read_wireless()
         if use_tested and (not staged["pair_tested"] or staged["test_generation"] != previous["test_generation"]):
-            raise RuntimeError("The tested Wi-Fi pair changed before saving")
+            raise BoardConflict("The tested Wi-Fi pair changed before saving")
         commit = staged["ssid_staged"] or staged["password_staged"] or staged["key_staged"]
         expected_mask = (int(staged["ssid_staged"]) | (int(staged["password_staged"]) << 1)
                          | (int(staged["key_staged"]) << 2))
@@ -392,7 +393,7 @@ class PicoForgeHid:
         if saved is None or type(radios) is not int or type(tcp_cli_enabled) is not bool:
             raise ProtocolError("Wireless save result is missing validated board settings")
         if saved != board or result["commit_mask"] != expected_mask:
-            raise RuntimeError("Firmware settings or credential commit differ from the requested values")
+            raise ProtocolError("Firmware settings or credential commit differ from the requested values")
         # Reset is already scheduled. Confirm saved fields from the verified commit, not a post-save GET.
         response: WirelessSaveResult = {
             **staged, "wifi_enabled": bool(radios & 1), "ble_enabled": bool(radios & 2),
@@ -473,11 +474,14 @@ class PicoForgeHid:
         return result
 
     @staticmethod
-    def _require_completed(result: ControlResult, action: str = "Control") -> None:
+    def require_completed(result: ControlResult, action: str = "Control") -> None:
+        """Raise a board conflict for a confirmed refusal or failure."""
         if result["status"] != "completed":
-            raise RuntimeError(
+            raise BoardConflict(
                 f"{action} command {result['status']}: {result['error']} (detail {result['detail']})"
             )
+
+    _require_completed = require_completed
 
     def _poll_wireless(
         self, kind: str, previous_generation: int, timeout: float, *,
@@ -506,7 +510,7 @@ class PicoForgeHid:
             status = self.read_wireless()
             generation = status[f"{kind}_generation"]
             if generation not in (previous_generation, expected_generation):
-                raise ValueError("Wireless operation generation changed unexpectedly; outcome is uncertain")
+                raise ProtocolError("Wireless operation generation changed unexpectedly; outcome is uncertain")
             if generation == expected_generation:
                 failed = (
                     status["scan_state"] == "failed" if kind == "scan"
@@ -518,7 +522,7 @@ class PicoForgeHid:
                     self._uncertain_command = None
                     self._uncertain_wireless_operation = None
                     if failed:
-                        raise RuntimeError(f"Wireless {kind} failed: {status['phase'] or 'Timed out'}")
+                        raise BoardConflict(f"Wireless {kind} failed: {status['phase'] or 'Timed out'}")
                     return status
                 if on_progress is not None:
                     on_progress(status["phase"] or "Connecting to Wi-Fi")
@@ -538,8 +542,14 @@ class PicoForgeHid:
         )
 
     def close(self) -> None:
+        if self._close_error is not None:
+            raise RuntimeError("HID cleanup failed; restart before reconnecting") from self._close_error
         if not self.closed:
-            self._device.close()
+            try:
+                self._device.close()
+            except Exception as error:
+                self._close_error = error
+                raise
             self.closed = True
     
     @_serialized
@@ -605,7 +615,7 @@ class PicoForgeHid:
         self, command: bytes, opcode: int, *, reconnect: bool = False, retry_get: bool = False,
     ) -> ControlResult:
         if self.command_uncertain:
-            raise RuntimeError("a prior HID command has an uncertain outcome; reconnect and inspect device state")
+            raise BoardConflict("a prior HID command has an uncertain outcome; reconnect and inspect device state")
         self._command_uncertain = True
         transaction_id = command[2]
         self._uncertain_command = (transaction_id, opcode)
@@ -643,8 +653,7 @@ class PicoForgeHid:
     def _reopen_for_result(self, deadline: float, disconnect_error: OSError) -> None:
         """Reopen only the original UID to read its outstanding result; never replay SET."""
         expected_uid = self._supported_identity()["serial_number"]
-        self._device.close()
-        self.closed = True
+        self.close()
         while monotonic() < deadline:
             sleep(0.05)
             candidates = [info for info in _matching_devices()
@@ -652,30 +661,30 @@ class PicoForgeHid:
             if not candidates:
                 continue
             if len(candidates) != 1:
-                raise RuntimeError("Multiple HID devices matched the original board UID")
-            device = _require_hid().device()
-            try:
-                device.open_path(candidates[0]["path"])
-                identity = _parse_report(parse_identity_report,
-                                         device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE))
-            except OSError:
-                device.close()
-                continue
-            except ValueError:
-                device.close()
-                raise
-            if identity["supported"] is not True or identity["serial_number"] != expected_uid:
-                device.close()
-                raise RuntimeError("Reconnected HID identity does not match the original board")
-            self._device = device
-            self.identity = identity
+                raise BoardConflict("Multiple HID devices matched the original board UID")
+            self._device = _require_hid().device()
             self.closed = False
+            try:
+                self._device.open_path(candidates[0]["path"])
+                identity = _parse_report(parse_identity_report,
+                                         self._device.get_feature_report(IDENTITY_REPORT_ID, IDENTITY_FEATURE_SIZE))
+                if identity["supported"] is not True or identity["serial_number"] != expected_uid:
+                    raise ProtocolError("Reconnected HID identity does not match the original board")
+            except OSError:
+                self.close()
+                continue
+            except Exception:
+                self.close()
+                raise
+            self.identity = identity
             return
         raise TimeoutError("Forced save result unavailable after USB detach; outcome is uncertain") from disconnect_error
 
     def _require_open(self) -> None:
+        if self._close_error is not None:
+            raise RuntimeError("HID cleanup failed; restart before reconnecting") from self._close_error
         if self.closed:
-            raise RuntimeError("PicoForge HID connection is closed")
+            raise ConnectionError("PicoForge HID connection is closed")
 
     def __enter__(self) -> "PicoForgeHid":
         self._require_open()

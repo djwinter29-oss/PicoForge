@@ -18,11 +18,11 @@ class MonitorMscTests(unittest.TestCase):
 
     def test_forced_settings_require_confirmed_idle_host_ownership(self):
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
-        snapshot = {"connected": True, "settings_supported": True,
+        snapshot = {**_empty_snapshot(), "connected": True, "settings_supported": True,
                     "hardware": {"capabilities": 68, "storage_transport": "sdio"},
                     "memory": {"msc": {"enabled": True, "transition_pending": False}},
                     "self_test": {"active": False}}
-        self.monitor._snapshot = snapshot
+        self.monitor._snapshot = dict(snapshot)
         self.client.set_settings.return_value = settings
         self.assertEqual(self.monitor.set_settings(settings, force=True)["settings"], settings)
         self.client.set_settings.assert_called_once_with(settings, force=True)
@@ -268,7 +268,10 @@ class MonitorReconnectTests(unittest.TestCase):
                 snapshot = monitor.snapshot()
                 self.assertFalse(snapshot["connected"])
                 self.assertEqual(snapshot["reconnecting"], reconnecting)
-                self.assertEqual(snapshot["error"], None if reconnecting else str(error))
+                if isinstance(error, (ValueError, RuntimeError)):
+                    self.assertTrue(snapshot["error"].startswith("Internal monitor error:"))
+                else:
+                    self.assertEqual(snapshot["error"], None if reconnecting else str(error))
 
     def test_reconnect_snapshot_keeps_stable_api_shape(self):
         monitor = make_monitor(fresh=False)
@@ -397,6 +400,13 @@ class MonitorSettingsTests(unittest.TestCase):
         settings = {"system_clock_mhz": 200, "sdcard_profile": 1, "radios": 0}
         self.client.set_settings.return_value = settings
         self.client.configuration = settings
+        self.client.last_command_result = None
+
+        def save(*_args, **_kwargs):
+            self.client.last_command_result = {"status": "completed", "opcode": 5}
+            return settings
+
+        self.client.set_settings.side_effect = save
         saved = self.monitor.set_settings(settings)["settings"]
         self.assertEqual(saved["sdcard_profile"], 1)
         self.client.set_settings.assert_called_once_with(settings, force=False)

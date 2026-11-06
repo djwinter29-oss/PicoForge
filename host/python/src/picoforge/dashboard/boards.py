@@ -39,13 +39,14 @@ class DashboardBoards:
         self._retiring: dict[str, DeviceMonitor] = {}
         self._retirement_threads: dict[str, threading.Thread] = {}
         self._retirement_errors: dict[str, Exception] = {}
+        self._ambiguous: set[str] = set()
         self._closed = False
 
     def boards(self) -> DashboardBoardsResponse:
         with self._discovery_lock:
             with self._lock:
                 if self._closed:
-                    raise RuntimeError("dashboard is shutting down")
+                    raise BoardConflict("dashboard is shutting down")
             devices = self._discover()
             return self._publish_boards(devices)
 
@@ -53,17 +54,18 @@ class DashboardBoards:
         """Publish one complete enumeration without holding the registry lock during HID discovery."""
         with self._lock:
             if self._closed:
-                raise RuntimeError("dashboard is shutting down")
+                raise BoardConflict("dashboard is shutting down")
             now = self._clock()
             boards: list[DashboardBoard] = []
             seen: set[str] = set()
+            ambiguous: set[str] = set()
             for device in devices:
                 serial = device.get("serial_number") or None
                 path = device.get("device_path") or ""
                 identity = f"serial:{serial}" if serial else f"path:{path}"
                 board_id = hashlib.sha256(identity.encode("utf-8", errors="surrogateescape")).hexdigest()
                 if board_id in seen:
-                    raise RuntimeError("duplicate PicoForge board identity; board serials must be unique")
+                    ambiguous.add(board_id)
                 seen.add(board_id)
                 board: DashboardBoard = {
                     "id": board_id,
@@ -73,6 +75,14 @@ class DashboardBoards:
                 }
                 boards.append(board)
 
+            for board_id in ambiguous - self._ambiguous:
+                _LOGGER.warning("Quarantining duplicate PicoForge board identity %s", board_id)
+            changed = self._ambiguous ^ ambiguous
+            self._ambiguous = ambiguous
+            for board_id, monitor in self._monitors.items():
+                if board_id in changed:
+                    monitor.set_identity_ambiguous(board_id in ambiguous)
+            boards = [board for board in boards if board["id"] not in ambiguous]
             for board in boards:
                 self._known[board["id"]] = board
                 self._last_seen[board["id"]] = now
@@ -106,7 +116,10 @@ class DashboardBoards:
             default = preferred or (
                 None if self._serial_number or self._device_path or not boards else boards[0]["id"]
             )
-            return {"boards": boards, "default_board_id": default}
+            result: DashboardBoardsResponse = {"boards": boards, "default_board_id": default}
+            if ambiguous:
+                result["warnings"] = ["Duplicate PicoForge board identity; disconnect boards with duplicate serials"]
+            return result
 
     def _retire_monitor(self, board_id: str, monitor: DeviceMonitor) -> None:
         try:
@@ -125,14 +138,16 @@ class DashboardBoards:
         """Return the shared monitor for a listed board, starting it on first use."""
         with self._lock:
             if self._closed:
-                raise RuntimeError("dashboard is shutting down")
+                raise BoardConflict("dashboard is shutting down")
+            if board_id in self._ambiguous:
+                raise BoardConflict("Duplicate PicoForge board identity; disconnect boards with duplicate serials")
             if not board_id or board_id not in self._known:
                 raise LookupError("unknown board; rescan and select a listed board")
             if board_id in self._retiring:
                 raise BoardConflict("board monitor is shutting down; retry after the next rescan")
             if board_id not in self._monitors:
                 if len(self._monitors) + len(self._retiring) >= _MAX_MANAGED_MONITORS:
-                    raise RuntimeError("monitor capacity reached; wait for cleanup or restart the dashboard")
+                    raise BoardConflict("monitor capacity reached; wait for cleanup or restart the dashboard")
                 board = self._known[board_id]
                 serial = board["serial_number"]
                 path = None if serial else board["device_path"]

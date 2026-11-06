@@ -3,8 +3,11 @@
 # pyright: reportPrivateUsage=false
 
 from picoforge.dashboard.console import ConsoleBridge
+from picoforge.dashboard.boards import DashboardBoards
 from picoforge.dashboard.models import ControlResponse, MscResponse, ResyncResponse, SettingsResponse
 from picoforge.dashboard.monitor import DeviceMonitor
+from picoforge.dashboard.server import _board, create_app
+from flask import Flask
 from picoforge.hid.device import PicoForgeHid
 from picoforge.reports.models import ControlResult, WirelessTestResult
 
@@ -23,3 +26,26 @@ def check_command_types(client: PicoForgeHid, monitor: DeviceMonitor, console: C
     monitor._send_control(client.test_wireless, "SSID", cancel=True)  # pyright: ignore[reportArgumentType]
     client.set_msc("on")  # pyright: ignore[reportArgumentType]
     console.write(None, "help")  # pyright: ignore[reportArgumentType]
+
+
+def check_route_types(boards: DashboardBoards) -> None:
+    _app: Flask = create_app(boards)
+    _monitor: DeviceMonitor = _board(boards)
+    _default: str | None = boards.boards()["default_board_id"]
+    create_app("boards")  # pyright: ignore[reportArgumentType]
+    _board(None)  # pyright: ignore[reportArgumentType]
+    _invalid: str = _board(boards).set_msc(True)["msc"]["enabled"]  # pyright: ignore[reportAssignmentType]
+
+
+def check_lifecycle_types(client: PicoForgeHid, monitor: DeviceMonitor, result: ControlResult) -> None:
+    _command: tuple[int, int] | None = client.uncertain_command
+    _wireless: tuple[str, int] | None = client.uncertain_wireless_operation
+    _close_error: Exception | None = client._close_error
+    _closed: bool = client.closed
+    monitor._record_uncertain_command(client)
+    monitor._publish_control_result(result)
+    client.require_completed(result)
+    client.close()
+    _invalid: tuple[str, int] | None = client.uncertain_command  # pyright: ignore[reportAssignmentType]
+    monitor._publish_control_result({"status": "completed"})  # pyright: ignore[reportArgumentType]
+    client._close_error = "failed"  # pyright: ignore[reportAttributeAccessIssue]

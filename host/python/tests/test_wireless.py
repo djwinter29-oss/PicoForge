@@ -45,6 +45,7 @@ class WirelessTests(unittest.TestCase):
     def client(self, reports=()):
         client = PicoForgeHid.__new__(PicoForgeHid)
         client.closed = False
+        client._close_error = None
         client.identity = {"supported": True, "capabilities": 0xF5, "serial_number": "0123456789ABCDEF"}
         client.configuration = {"radios": 3, "tcp_cli_enabled": True}
         client._transaction_id = 0
@@ -264,7 +265,7 @@ class WirelessTests(unittest.TestCase):
         self.assertEqual(client._device.send_feature_report.call_args.args[0][4], 0)
         for data in (bytes((150, 0, 1, 7, 1)), bytes((200, 0, 1, 7, 0))):
             client = self.client([status(), result(6), status(flags=0x13), result(5, 2, data=data)])
-            with self.assertRaisesRegex(RuntimeError, "differ"):
+            with self.assertRaisesRegex(ProtocolError, "differ"):
                 client.set_wireless(settings())
             self.assertFalse(client.command_uncertain)
 

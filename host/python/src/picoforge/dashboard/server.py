@@ -7,12 +7,12 @@ import base64
 import binascii
 import secrets
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from .boards import DashboardBoards
 from .console import ConsoleBridge
-from .monitor import BoardConflict, CommandOutcomeUncertain, _empty_snapshot
+from .monitor import BoardConflict, CommandOutcomeUncertain, DeviceMonitor, _empty_snapshot
 from .. import __version__
 from ..hid.device import WirelessTestCancelled
 from ..reports.models import WirelessStatus
@@ -32,7 +32,7 @@ def _public_wireless(status: WirelessStatus) -> dict[str, object]:
     }
 
 
-def _unavailable(message: str, *, uncertain: bool = False) -> tuple:
+def _unavailable(message: str, *, uncertain: bool = False) -> tuple[Response, int]:
     return jsonify({"error": message, "uncertain": uncertain}), 503
 
 
@@ -50,7 +50,7 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
     )
 
     @app.before_request
-    def same_origin_writes():
+    def same_origin_writes() -> tuple[Response, int] | None:
         if request.path == "/api/console":
             request.max_content_length = 2048
         limit = request.max_content_length
@@ -63,43 +63,43 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
         return None
 
     @app.errorhandler(RequestEntityTooLarge)
-    def request_too_large(_error: RequestEntityTooLarge):
+    def request_too_large(_error: RequestEntityTooLarge) -> tuple[Response, int]:
         return jsonify({"error": "Request body exceeds the API size limit"}), 413
 
     @app.errorhandler(RuntimeError)
-    def conflict(error: RuntimeError):
-        if type(error) is RuntimeError or isinstance(error, (BoardConflict, WirelessTestCancelled)):
+    def conflict(error: RuntimeError) -> tuple[Response, int]:
+        if isinstance(error, (BoardConflict, WirelessTestCancelled)):
             return jsonify({"error": str(error)}), 409
         app.logger.exception("Unhandled RuntimeError")
         return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(CommandOutcomeUncertain)
-    def uncertain_command(error: CommandOutcomeUncertain):
+    def uncertain_command(error: CommandOutcomeUncertain) -> tuple[Response, int]:
         return jsonify({"error": str(error), "uncertain": True}), 503
 
     @app.errorhandler(LookupError)
-    def not_found(error: LookupError):
+    def not_found(error: LookupError) -> tuple[Response, int]:
         if type(error) is not LookupError:
             raise error  # KeyError/IndexError are bugs, not unknown boards; let Flask report 500.
         return jsonify({"error": str(error)}), 404
 
     @app.errorhandler(ValueError)
-    def invalid_request_or_bug(error: ValueError):
+    def invalid_request_or_bug(error: ValueError) -> tuple[Response, int]:
         if isinstance(error, InvalidRequest):
             return jsonify({"error": str(error)}), 400
         app.logger.exception("Unhandled ValueError")
         return jsonify({"error": "Internal server error"}), 500
 
     @app.errorhandler(ProtocolError)
-    def protocol_error(error: ProtocolError):
+    def protocol_error(error: ProtocolError) -> tuple[Response, int]:
         return jsonify({"error": str(error)}), 503
 
     @app.errorhandler(OSError)
-    def unavailable(error: OSError):
+    def unavailable(error: OSError) -> tuple[Response, int]:
         return jsonify({"error": str(error)}), 503
 
     @app.after_request
-    def security_headers(response):
+    def security_headers(response: Response) -> Response:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -121,33 +121,33 @@ def create_app(dashboard: DashboardBoards | None = None, web_root: Path | None =
 
 def _register_ui_routes(app: Flask, root: Path) -> None:
     @app.get("/")
-    def index():
+    def index() -> str:
         return render_template("index.html", dashboard_type="Python", app_version=__version__)
 
     @app.get("/console")
-    def console_page():
+    def console_page() -> str:
         return render_template("console.html", dashboard_type="Python", app_version=__version__)
 
     @app.get("/favicon.svg")
-    def favicon():
+    def favicon() -> Response:
         return send_from_directory(root, "favicon.svg", mimetype="image/svg+xml")
 
     @app.get("/css/<path:filename>")
-    def css(filename: str):
+    def css(filename: str) -> Response:
         return send_from_directory(root / "css", filename)
 
     @app.get("/js/<path:filename>")
-    def javascript(filename: str):
+    def javascript(filename: str) -> Response:
         return send_from_directory(root / "js", filename)
 
 
-def _board(boards: DashboardBoards):
+def _board(boards: DashboardBoards) -> DeviceMonitor:
     return boards.monitor(request.args.get("board"))
 
 
 def _register_console_routes(app: Flask, boards: DashboardBoards, console: ConsoleBridge) -> None:
     @app.post("/api/console")
-    def console_connect():
+    def console_connect() -> Response | tuple[Response, int]:
         try:
             payload = request.get_json(silent=True)
             if not isinstance(payload, dict) or payload:
@@ -158,7 +158,7 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
             monitor = boards.monitor(board_id)
             wireless = monitor.snapshot().get("wireless")
             if wireless is None:
-                raise RuntimeError("Waiting for the board's wireless status")
+                raise BoardConflict("Waiting for the board's wireless status")
             return jsonify({
                 "session": console.open(wireless, monitor.tcp_cli_auth_proof, board_id=board_id),
             })
@@ -167,12 +167,12 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
             return jsonify({"error": f"TCP console connection failed: {error}"}), 503
 
     @app.get("/api/console")
-    def console_read():
+    def console_read() -> Response:
         data, closed = console.read(request.args.get("session"))
         return jsonify({"data": base64.b64encode(data).decode("ascii"), "closed": closed})
 
     @app.put("/api/console")
-    def console_write():
+    def console_write() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if (not isinstance(payload, dict) or set(payload) != {"data"}
                 or not isinstance(payload["data"], str) or len(payload["data"]) > 1368):
@@ -187,14 +187,14 @@ def _register_console_routes(app: Flask, boards: DashboardBoards, console: Conso
         return jsonify({"ok": True})
 
     @app.delete("/api/console")
-    def console_close():
+    def console_close() -> Response:
         console.close(request.args.get("session"))
         return jsonify({"ok": True})
 
 
 def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
     @app.get("/api/status")
-    def status():
+    def status() -> Response:
         board_id = request.args.get("board")
         if board_id is None:
             return jsonify(_empty_snapshot())
@@ -205,18 +205,18 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         return jsonify(snapshot)
 
     @app.get("/api/boards")
-    def boards_list():
+    def boards_list() -> Response:
         return jsonify(boards.boards())
 
     @app.post("/api/led")
-    def set_led():
+    def set_led() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or not isinstance(payload.get("on"), bool):
             return jsonify({"error": "Expected JSON with a boolean 'on' field"}), 400
         return jsonify(_board(boards).set_led(payload["on"]))
 
     @app.post("/api/settings")
-    def set_settings():
+    def set_settings() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected boot settings JSON"}), 400
@@ -227,21 +227,21 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         return jsonify(_board(boards).set_settings(payload, force=force))
 
     @app.post("/api/msc")
-    def set_msc():
+    def set_msc() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
             return jsonify({"error": "Expected JSON with a boolean 'enabled' field"}), 400
         return jsonify(_board(boards).set_msc(payload["enabled"]))
 
     @app.post("/api/reboot")
-    def reboot():
+    def reboot() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or payload.get("confirm") is not True:
             return jsonify({"error": "Explicit confirm: true is required"}), 400
         return jsonify(_board(boards).reboot())
 
     @app.post("/api/control/resync")
-    def resync_control():
+    def resync_control() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or payload.get("confirm") is not True:
             return jsonify({"error": "Explicit confirm: true is required"}), 400
@@ -250,7 +250,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         return jsonify({**result, "wireless": _public_wireless(wireless) if wireless is not None else None})
 
     @app.post("/api/self-test")
-    def self_test():
+    def self_test() -> tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected a self-test JSON command"}), 400
@@ -262,7 +262,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
         return jsonify(_board(boards).set_self_test(action, size_mib)), 202
 
     @app.post("/api/msc/force-return")
-    def force_return_msc():
+    def force_return_msc() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or payload.get("confirm_data_loss") is not True:
             return jsonify({"error": "Explicit confirm_data_loss: true is required"}), 400
@@ -271,7 +271,7 @@ def _register_api_routes(app: Flask, boards: DashboardBoards) -> None:
 
 def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
     @app.post("/api/wireless/scan")
-    def scan_wireless():
+    def scan_wireless() -> Response | tuple[Response, int]:
         try:
             return jsonify(_board(boards).scan_wireless())
         except (OSError, ProtocolError):
@@ -279,7 +279,7 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
             return _unavailable("Wireless scan failed")
 
     @app.post("/api/wireless/test")
-    def test_wireless():
+    def test_wireless() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or set(payload) - {"ssid", "ssid_hex", "password"}:
             return jsonify({"error": "Expected SSID and optional password"}), 400
@@ -296,7 +296,7 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
             return _unavailable("Wi-Fi test is unavailable")
 
     @app.post("/api/wireless/cancel")
-    def cancel_wireless_test():
+    def cancel_wireless_test() -> Response | tuple[Response, int]:
         try:
             return jsonify(_board(boards).cancel_wireless_test())
         except (OSError, ProtocolError):
@@ -304,7 +304,7 @@ def _register_wireless_routes(app: Flask, boards: DashboardBoards) -> None:
             return _unavailable("Could not clear the wireless test credentials")
 
     @app.post("/api/wireless")
-    def set_wireless():
+    def set_wireless() -> Response | tuple[Response, int]:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
             return jsonify({"error": "Expected wireless configuration JSON"}), 400

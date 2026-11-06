@@ -15,6 +15,7 @@ internal sealed class ConsoleBridge : IDisposable
     private readonly bool allowLoopbackForTests;
     private Socket? connection;
     private Socket? opening;
+    private CancellationTokenSource? openingCancel;
     private bool closed;
     private string? session;
     // TimeProvider timestamp of the last session request, guarded by gate.
@@ -46,6 +47,7 @@ internal sealed class ConsoleBridge : IDisposable
             throw new BoardStateException("USB Control key proof is unavailable");
         const string Busy = "A web console is already connected; disconnect it first";
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         try
         {
             lock (gate)
@@ -53,12 +55,13 @@ internal sealed class ConsoleBridge : IDisposable
                 if (closed) throw new BoardStateException("Console bridge is shutting down");
                 if (connection is not null || opening is not null) throw new BoardStateException(Busy);
                 opening = socket;
+                openingCancel = lifetime;
             }
             // Neither the 3 s connect nor the 8 s authentication budget holds the session lock.
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(3));
             await socket.ConnectAsync(new IPEndPoint(address, port), timeout.Token);
-            await AuthenticateAsync(socket, signProof, cancel);
+            await AuthenticateAsync(socket, signProof, lifetime.Token);
             socket.SendTimeout = 100;
             lock (gate)
             {
@@ -83,7 +86,11 @@ internal sealed class ConsoleBridge : IDisposable
         finally
         {
             lock (gate)
-                if (ReferenceEquals(opening, socket)) opening = null;
+                if (ReferenceEquals(opening, socket))
+                {
+                    opening = null;
+                    openingCancel = null;
+                }
         }
     }
 
@@ -105,8 +112,10 @@ internal sealed class ConsoleBridge : IDisposable
         try
         {
             timeout.Token.ThrowIfCancellationRequested();
+            RequireOpen();
             proof = signProof(nonce, uid);
             timeout.Token.ThrowIfCancellationRequested();
+            RequireOpen();
             if (time.GetElapsedTime(started) >= TimeSpan.FromSeconds(8))
                 throw new TimeoutException("TCP CLI authentication timed out");
             if (proof.Length != 16) throw new InvalidDataException("The board returned an invalid TCP CLI proof");
@@ -124,6 +133,12 @@ internal sealed class ConsoleBridge : IDisposable
             CryptographicOperations.ZeroMemory(uid);
             CryptographicOperations.ZeroMemory(proof);
         }
+    }
+
+    private void RequireOpen()
+    {
+        lock (gate)
+            if (closed) throw new BoardStateException("Console bridge is shutting down");
     }
 
     private async Task<string> ReadChallengeAsync(Socket socket, CancellationToken cancel)
@@ -280,6 +295,8 @@ internal sealed class ConsoleBridge : IDisposable
         {
             if (closed) return;
             closed = true;
+            openingCancel?.Cancel();
+            openingCancel = null;
             opening?.Dispose();
             opening = null;
             CloseConnection();

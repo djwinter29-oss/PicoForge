@@ -7,6 +7,7 @@ from picoforge.hid.device import PicoForgeHid, _matches_vendor_collection, enume
 from picoforge.reports import (
     CONTROL_FEATURE_SIZE,
     InvalidRequest,
+    ProtocolError,
     SELF_TEST_INPUT_SIZE,
     build_control_command_report,
     parse_identity_report,
@@ -102,11 +103,85 @@ class HidDeviceTests(unittest.TestCase):
         client = self.connection()
         client.identity["capabilities"] |= 64
         client._device.feature_reports[20] = [control_result(opcode=5)]
-        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+        with self.assertRaisesRegex(ProtocolError, "did not confirm"):
             client.set_settings({"system_clock_mhz": 150, "sdcard_profile": 1, "radios": 0,
                                  "tcp_cli_enabled": False}, force=True)
         self.assertFalse(client.command_uncertain)
         self.assertEqual(len(client._device.sent), 1)
+
+    def test_replacement_cleanup_failure_retains_the_handle_and_is_terminal(self):
+        for failure in ("open", "read", "malformed", "identity", "bug"):
+            with self.subTest(failure=failure):
+                client = self.connection()
+                original = client._device
+                original.close = Mock()
+                replacement = Mock()
+                close_error = OSError("replacement close failed")
+                replacement.close.side_effect = close_error
+                replacement.get_feature_report.return_value = bytes(27)
+                if failure == "open":
+                    replacement.open_path.side_effect = OSError("open failed")
+                elif failure == "read":
+                    replacement.get_feature_report.side_effect = OSError("read failed")
+                elif failure == "identity":
+                    replacement.get_feature_report.return_value = bytes([1, 1, 3]) + bytes(24)
+                elif failure == "bug":
+                    replacement.get_feature_report.side_effect = RuntimeError("native bug")
+                with patch("picoforge.hid.device._matching_devices", return_value=[
+                        {"path": b"/hid/new", "serial_number": "0123456789ABCDEF"}]), \
+                        patch("picoforge.hid.device._require_hid") as hid, \
+                        patch("picoforge.hid.device.sleep"):
+                    hid.return_value.device.return_value = replacement
+                    with self.assertRaisesRegex(OSError, "replacement close failed"):
+                        client._reopen_for_result(float("inf"), OSError("detached"))
+                    self.assertIs(client._device, replacement)
+                    self.assertFalse(client.closed)
+                    self.assertIs(client._close_error, close_error)
+                    with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                        client.close()
+                    with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                        client.set_led(True)
+                original.close.assert_called_once()
+                replacement.close.assert_called_once()
+                replacement.send_feature_report.assert_not_called()
+                hid.return_value.device.assert_called_once()
+
+    def test_replacement_validation_errors_close_the_candidate_and_preserve_the_error(self):
+        for failure, expected in (("malformed", ProtocolError), ("identity", ProtocolError), ("bug", RuntimeError)):
+            with self.subTest(failure=failure):
+                client = self.connection()
+                client._device.close = Mock()
+                replacement = Mock()
+                replacement.get_feature_report.return_value = bytes(27)
+                if failure == "identity":
+                    replacement.get_feature_report.return_value = bytes([1, 1, 3]) + bytes(24)
+                elif failure == "bug":
+                    replacement.get_feature_report.side_effect = RuntimeError("native bug")
+                with patch("picoforge.hid.device._matching_devices", return_value=[
+                        {"path": b"/hid/new", "serial_number": "0123456789ABCDEF"}]), \
+                        patch("picoforge.hid.device._require_hid") as hid, patch("picoforge.hid.device.sleep"):
+                    hid.return_value.device.return_value = replacement
+                    with self.assertRaises(expected):
+                        client._reopen_for_result(float("inf"), OSError("detached"))
+                self.assertIs(client._device, replacement)
+                self.assertTrue(client.closed)
+                self.assertIsNone(client._close_error)
+                client.close()
+                replacement.close.assert_called_once()
+
+    def test_failed_original_cleanup_never_opens_a_replacement_or_retries_close(self):
+        client = self.connection()
+        original = client._device
+        original.close = Mock(side_effect=OSError("original close failed"))
+        with patch("picoforge.hid.device._require_hid") as hid:
+            with self.assertRaisesRegex(OSError, "original close failed"):
+                client._reopen_for_result(float("inf"), OSError("detached"))
+            self.assertIs(client._device, original)
+            self.assertFalse(client.closed)
+            with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                client.close()
+            hid.assert_not_called()
+        original.close.assert_called_once()
 
     def connection(self, reports=None):
         class FakeTransport:
@@ -131,6 +206,7 @@ class HidDeviceTests(unittest.TestCase):
         client = PicoForgeHid.__new__(PicoForgeHid)
         client._device = FakeTransport()
         client.closed = False
+        client._close_error = None
         client.identity = identity()
         client._transaction_id = 0
         client.last_command_result = None

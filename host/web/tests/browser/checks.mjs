@@ -46,23 +46,53 @@ const mock = `<script>
     hardware: { product_name: "PicoForge", board_model: "Pico 2 W", mcu: "RP2350",
       capabilities: 128 | 16 | 2, ram_reserved_bytes: 121008, ram_total_bytes: 532480 },
     settings_supported: true,
-    board_configuration: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0 },
-    memory: { mode: "spi", msc: { enabled: false, transition_pending: false } },
+    board_configuration: { system_clock_mhz: 200, sdcard_profile: 0, radios: 0,
+      storage_gpios: [2,3,4,5,6,7], monitor_uart_index: 255 },
+    memory: { mode: "spi", initialized: true, filesystem_format: "exfat",
+      msc: { enabled: false, transition_pending: false } },
     storage_stale: false,
-    self_test: null,
+    self_test: {sequence: 1, active: false, state: "idle", written_bytes: 0, target_bytes: 0,
+      read_bytes: 0, write_elapsed_ms: 0, read_elapsed_ms: 0},
     wireless: { ssid: "", wifi_enabled: false, password_configured: false, ble_enabled: false,
       ble_key_configured: false, tcp_cli_enabled: true }
   };
+  window.sharedBrowserState = {connected, unknown: false, scans: 0, leds: 0, tests: 0,
+    ledUncertain: false, mismatch: false};
   window.fetch = async (input, options = {}) => {
     const url = new URL(input, document.baseURI);
-    if (url.pathname === "/api/boards") return response({
-      boards: [{ id: "browser-board", serial_number: "browser-board", device_path: "/hid/browser" }],
-      default_board_id: "browser-board"
-    });
+    const state = window.sharedBrowserState;
+    if (url.pathname === "/api/boards") {
+      state.scans++;
+      return response({
+        boards: [{ id: "browser-board", serial_number: "browser-board", device_path: "/hid/browser" }],
+        default_board_id: "browser-board"
+      });
+    }
+    if (url.pathname === "/api/status" && state.unknown)
+      return response({error: "unknown board; rescan and select a listed board"}, 404);
     if (url.pathname === "/api/status") return response(connected);
-    if (url.pathname === "/api/wireless" && options.method === "POST") return response({
-      wireless: { ...JSON.parse(options.body), password_configured: true }
-    });
+    if (url.pathname === "/api/led") {
+      state.leds++;
+      if (state.ledUncertain) throw new DOMException("lost reply", "TimeoutError");
+      return response({});
+    }
+    if (url.pathname === "/api/reboot") return response({});
+    if (url.pathname === "/api/self-test") {state.tests++; return response({}, 202);}
+    if (url.pathname === "/api/settings") {
+      const settings = JSON.parse(options.body);
+      return response({settings: {...settings, sdcard_profile: state.mismatch ? 99 : settings.sdcard_profile}});
+    }
+    if (url.pathname === "/api/wireless" && options.method === "POST") {
+      const request = JSON.parse(options.body);
+      return response({
+        settings: request.board, reboot_pending: true,
+        wireless: {ssid: request.ssid, ssid_hex: request.ssid_hex ??
+          [...new TextEncoder().encode(request.ssid)].map(byte => byte.toString(16).padStart(2, "0")).join(""),
+          wifi_enabled: request.wifi_enabled, ble_enabled: request.ble_enabled,
+          password_configured: true, ble_key_configured: Boolean(request.ble_key),
+          tcp_cli_enabled: request.tcp_cli_enabled}
+      });
+    }
     if (url.pathname === "/api/wireless/test") return response({
       test: { remaining_seconds: 600, ipv4: "192.0.2.2" }
     });
@@ -72,7 +102,7 @@ const mock = `<script>
     if (url.pathname === "/api/wireless/cancel" && ++cancelAttempts === 1) {
       return response({ error: "temporary failure" }, 409);
     }
-    if (url.pathname === "/api/wireless/cancel") return response({});
+    if (url.pathname === "/api/wireless/cancel") return response({cancelled: true});
     return response({ error: "Unexpected browser-check request" }, 404);
   };
 </script>
@@ -95,7 +125,60 @@ dashboardWindow = dashboard.contentWindow;
 await waitFor(() => page.querySelector("#connection-label").textContent === "Connected",
   "mock board did not connect");
 
-await run("confirmation dialog focuses, closes with Escape, and restores focus", async () => {
+await run("command lifecycle gates, restart recovery, and confirmation focus", async () => {
+  const state = dashboardWindow.sharedBrowserState;
+  const el = id => page.querySelector(`#${id}`);
+  const refresh = () => page.dispatchEvent(new Event("visibilitychange"));
+  const reconnect = async () => {
+    state.connected.connected = false;
+    refresh();
+    await waitFor(() => el("connection-label").textContent === "Disconnected", "disconnect was not rendered");
+    state.connected.connected = true;
+    refresh();
+    await waitFor(() => !el("led-control").disabled, "reconnection did not release command gates");
+  };
+  await waitFor(() => !el("led-control").disabled, "initial commands did not become ready");
+  const scans = state.scans;
+  state.unknown = true;
+  refresh();
+  await waitFor(() => state.scans > scans, "production 404 did not trigger a rescan");
+  state.unknown = false;
+  refresh();
+  await waitFor(() => !el("led-control").disabled, "404 recovery did not restore commands");
+
+  el("reboot-control").click();
+  el("confirm-reboot").click();
+  await waitFor(() => el("settings-note").textContent.includes("Reboot requested"), "reboot was not acknowledged");
+  check(el("led-control").disabled, "acknowledged reboot left LED enabled");
+  refresh();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  check(el("led-control").disabled, "old status cleared the local reboot gate");
+  await reconnect();
+
+  state.ledUncertain = true;
+  el("led-control").click();
+  await waitFor(() => el("status-message").textContent.includes("uncertain"), "lost LED reply was not retained");
+  el("self-test-size").value = "64";
+  el("self-test-size").dispatchEvent(new Event("input", {bubbles: true}));
+  check(el("self-test-start").disabled, "size edit bypassed the command gate");
+  const tests = state.tests;
+  el("self-test-start").click();
+  check(state.tests === tests, "benchmark request escaped the gate");
+  state.ledUncertain = false;
+  state.connected.runtime.led_on = true;
+  await reconnect();
+
+  state.mismatch = true;
+  el("settings-clock").value = "250";
+  el("settings-clock").dispatchEvent(new Event("change", {bubbles: true}));
+  el("settings-save").click();
+  el("confirm-configuration").click();
+  await waitFor(() => el("settings-note").textContent.includes("uncertain"), "mismatched save was not unresolved");
+  check(el("settings-save").disabled && el("led-control").disabled, "mismatched save permits another write");
+  state.mismatch = false;
+  state.connected.board_configuration.system_clock_mhz = 250;
+  await reconnect();
+
   const opener = page.querySelector("#msc-control");
   const dialog = page.querySelector("#share-dialog");
   opener.focus();

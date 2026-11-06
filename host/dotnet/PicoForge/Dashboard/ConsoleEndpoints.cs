@@ -21,7 +21,10 @@ internal static class ConsoleEndpoints
             if (payload.ValueKind != JsonValueKind.Object || payload.EnumerateObject().Any())
                 throw new ApiInputException("Expected an empty object; TCP authentication uses the connected board");
             var monitor = dashboard.Monitor(board);
-            var wireless = monitor.Snapshot.Wireless ??
+            var status = monitor.Snapshot;
+            if (!status.Connected || status.WirelessError is not null)
+                throw new BoardStateException(status.WirelessError ?? "The board is disconnected");
+            var wireless = status.Wireless ??
                 throw new BoardStateException("Waiting for the board's wireless status");
             var session = await bridge.OpenAsync(wireless,
                 (nonce, uid) => monitor.TcpCliAuthProof(nonce, uid, cancel), cancel);
