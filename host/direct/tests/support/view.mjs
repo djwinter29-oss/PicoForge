@@ -1,18 +1,20 @@
 import { createDashboardView } from "../../web/js/ui/dashboard-view.mjs";
 import { decodeIdentityReport, decodeConfigReport, decodeSelfTestReport } from "../../web/js/protocol/codec.mjs";
 import { identity, config, selfTest } from "./fixtures.mjs";
+import { createDocument } from "./dom.mjs";
 
 export function withDocument(run) {
   const saved = globalThis.document;
-  const elements = new Map();
-  const element = selector => {
-    if (!elements.has(selector)) elements.set(selector, { dataset: {}, textContent: "", value: "0", open: false,
-      valueAsNumber: 32, setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; this.replaceCount = (this.replaceCount ?? 0) + 1; } });
-    return elements.get(selector);
-  };
-  globalThis.document = { querySelector: element, createElement: () => ({ children: [],
-    append(...children) { this.children.push(...children); } }) };
+  const { document, element } = createDocument();
+  for (const id of ["board-uart", "board-storage-pins"]) {
+    const table = element(`#${id}`);
+    const replace = table.replaceChildren;
+    table.replaceChildren = function (...children) {
+      replace.call(this, ...children);
+      this.replaceCount = (this.replaceCount ?? 0) + 1;
+    };
+  }
+  globalThis.document = document;
   const renderStatus = createDashboardView();
   try { run(element, renderStatus); } finally { globalThis.document = saved; }
 }
@@ -24,4 +26,3 @@ export function snapshot() {
     memory: { sample_valid: true, initialized: true, configured: true, presence_known: true, present: true },
     msc: { enabled: false, transition_pending: false }, filesystem_format: "exfat" };
 }
-

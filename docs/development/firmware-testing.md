@@ -162,6 +162,36 @@ transport, host OS, and access point configuration. Do not use production creden
 Record results in the [validation records](../validation/records/README.md). Partial runs and untested combinations
 remain qualification gaps; host checks and target builds do not substitute for these board checks.
 
+#### Direct Dashboard Board Checks
+
+This is an acceptance procedure, not a passing hardware record. Run it on both Pico W (RP2040) and Pico 2 W (RP2350)
+with the intended storage transport and browser. Record firmware/dashboard revisions, board, card/transport, host
+OS, browser version, test access point, connection type, scenario, observed result, and pass/fail/not-run status.
+Do not record Control keys or Wi-Fi passwords. Use test credentials and backed-up or expendable media.
+
+1. Over USB, test a candidate Wi-Fi pair, then fail a replacement test. Verify the old pair is not saveable and the
+   visible Save blocker requires another test or clearing. Cancel successfully and verify temporary staging clears.
+   With a controlled cancellation failure, verify Save stays blocked until retry or a matching reconnect result;
+   capture transaction evidence that reconnect does not resend cancellation.
+2. Disconnect during scan/test/cancellation, reconnect the same board, and verify old progress/results cannot
+   overwrite new drafts or unlock uncertain writes. Repeat with another board and verify its identity cannot
+   resolve the original board's pending operation.
+3. Test staging expiry with the dashboard open and disconnected. At expiry, verify Save is blocked and retesting is
+   required. Do not shorten the firmware lifetime merely to qualify the normal ten-minute path.
+4. Generate a replacement Control key, delay clipboard completion, then regenerate, disable Bluetooth, or complete
+   a save. Verify late clipboard success/failure cannot overwrite newer feedback. With a controlled save failure,
+   verify submitted key text is wiped, Save explains regeneration, and disabling releases that blocker. Verify the
+   saved key is removed only after a successful save/reboot.
+5. Connect over BLE with valid and invalid keys, disconnect/reconnect, and verify fresh status and permitted
+   clock/storage/TCP CLI saves. Verify credential provisioning and storage ownership writes remain USB-only.
+6. Run the [forced-save storage check](#storage-lifecycle-board-checks) with host writes stopped and safely ejected.
+   Verify confirmation, same-board recovery of the original result without SET replay, and preservation of any
+   newer dashboard draft. Do not infer storage integrity from a successful reconnect.
+
+Use controlled diagnostic/fault fixtures for deterministic failures; do not interrupt production writes to induce
+them. Keep browser-mock results separate from physical observations. An unavailable board, browser, or fault fixture
+is `not-run`, not a pass, and remains in the [qualification gaps](../validation/qualification-gaps.md).
+
 ### Boot Settings Board Checks
 
 Record the firmware commit, SDK/FreeRTOS revisions, board/MCU/flash model, transport, build clock, selected profiles,

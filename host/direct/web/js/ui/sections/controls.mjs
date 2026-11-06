@@ -7,7 +7,7 @@ const element = id => queryElement(`#${id}`);
 /**
  * @typedef {{eligibility: ReturnType<typeof import("../../state/selectors.mjs").deriveOperationEligibility>,
  *   formBusy: boolean, settingsMessage: string | null, bleName: string | null, settingsDirty: boolean,
- *   wirelessDirty: boolean, wirelessCanSave: boolean}} ControlsUi
+ *   wirelessDirty: boolean, wirelessSaveBlockReason: string | null}} ControlsUi
  */
 
 export function deriveClockOptions(mcu, savedClock) {
@@ -24,7 +24,7 @@ export function deriveClockOptions(mcu, savedClock) {
 
 export function renderClockOptions(state) {
   const model = deriveClockOptions(state.hardware?.mcu, state.settings?.system_clock_mhz);
-  const select = element("settings-clock");
+  const select = queryElement("select#settings-clock");
   if (select.dataset.clockOptions === model.signature || typeof select.replaceChildren !== "function") return;
   const previous = select.value;
   const options = model.choices.map(([value, label, disabled = false]) => {
@@ -53,7 +53,7 @@ export function deriveControlsViewModel(state, ui, environment) {
   const reason = operation => ui.formBusy ? "Finish the wireless operation first."
     : describe(canRun(state, operation, eligibility).reason);
   const reasons = { "led-control": reason("led"), "msc-control": reason("msc"), "settings-reboot": reason("reboot"),
-    "settings-save": reason("settings") };
+    "settings-save": ui.wirelessSaveBlockReason || reason("settings") };
   const bleLinked = bluetooth && (state.connected || state.reconnecting);
   const usbUnsupported = !environment.secure || !environment.hid;
   const bleUnsupported = !environment.secure || !environment.ble;
@@ -84,7 +84,7 @@ export function deriveControlsViewModel(state, ui, environment) {
       "led-control": Boolean(reasons["led-control"]),
       "msc-control": Boolean(reasons["msc-control"]),
       "settings-save": Boolean(reasons["settings-save"]) || !ui.settingsDirty && !ui.wirelessDirty
-        || !ui.wirelessCanSave || ui.wirelessDirty && Boolean(state.msc?.enabled),
+        || ui.wirelessDirty && Boolean(state.msc?.enabled),
       "settings-reboot": Boolean(reasons["settings-reboot"]),
     },
     text: {
@@ -112,17 +112,20 @@ export function deriveControlsViewModel(state, ui, environment) {
 export function renderControls(state, ui, environment) {
   const model = deriveControlsViewModel(state, ui, environment);
   if (model.settingsValues) {
-    element("settings-clock").value = String(model.settingsValues.system_clock_mhz);
-    element("settings-storage").value = String(model.settingsValues.sdcard_profile);
+    queryElement("select#settings-clock").value = String(model.settingsValues.system_clock_mhz);
+    queryElement("select#settings-storage").value = String(model.settingsValues.sdcard_profile);
     ["direct-settings-wifi", "direct-settings-ble"].forEach((id, bit) => {
-      element(id).value = String(model.settingsValues.radios >> bit & 1);
+      queryElement(`select#${id}`).value = String(model.settingsValues.radios >> bit & 1);
     });
   }
   setText(model.text);
   for (const id of ["settings-clock", "settings-storage"]) {
-    element(id).disabled = model.settingsDisabled;
+    queryElement(`select#${id}`).disabled = model.settingsDisabled;
   }
-  for (const [id, disabled] of Object.entries(model.disabled)) element(id).disabled = disabled;
+  for (const [id, disabled] of Object.entries(model.disabled)) {
+    if (id === "direct-ble-control-key") queryElement(`input#${id}`).disabled = disabled;
+    else queryElement(`button#${id}`).disabled = disabled;
+  }
   for (const [id, title] of Object.entries(model.titles)) element(id).title = title;
   element("settings-note").hidden = !model.text["settings-note"];
   element("msc-note").hidden = !model.text["msc-note"];

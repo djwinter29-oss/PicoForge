@@ -13,6 +13,7 @@ test("wireless form presentation derives phase gates, key availability and accur
     form: { phase: "idle", cancelError: null, cancelNeedsReconnect: false },
     wifiStage: { ssid: "tested", use_tested_wifi: true }, remainingSeconds: 9,
     selectedSsidHex: "61", keyDirty: false,
+    saveBlockReason: null,
   };
   el("#direct-settings-wifi").value = "1";
   el("#direct-wifi-ssid").value = "tested";
@@ -27,7 +28,8 @@ test("wireless form presentation derives phase gates, key availability and accur
     assert.equal(network["aria-pressed"], "true");
     assert.equal(el("#direct-ble-copy").disabled, false);
     assert.match(el("#direct-wireless-summary").textContent, /expires in 9s/);
-    renderWirelessForm({ ...view, keyDirty: true, remainingSeconds: 0 });
+    renderWirelessForm({ ...view, keyDirty: true, remainingSeconds: 0,
+      saveBlockReason: "Test credentials expired; test the connection again before saving." });
     assert.equal(bleOn.disabled, false);
     assert.match(el("#direct-wireless-summary").textContent, /expired/);
     for (const phase of ["scanning", "testing", "canceling", "cancelFailed"]) {

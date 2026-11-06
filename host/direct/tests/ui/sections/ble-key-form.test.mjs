@@ -33,6 +33,13 @@ test("Bluetooth key drafts own generation, save outcomes, retention and explicit
     assert.equal(el("#direct-ble-secret").value, "");
     assert.equal(el("#direct-ble-secret").type, "password");
     assert.equal(el("#direct-ble-status").textContent, "Save failed");
+    assert.match(key.saveBlockReason(), /replacement Control key or disable/);
+    key.clear();
+    assert.equal(key.canSave(), true, "abandoning the failed replacement releases the Save blocker");
+    assert.equal(key.request(true), undefined, "abandoning retains the existing saved key");
+    configured = true;
+    assert.equal(key.request(false), "", "disabling removes a saved key without requiring regeneration");
+    configured = false;
     await fire("#direct-ble-generate", "click");
     assert.equal(key.canSave(), true);
     key.finish(true);
@@ -45,6 +52,29 @@ test("Bluetooth key drafts own generation, save outcomes, retention and explicit
     assert.equal(key.dirty(), false);
     assert.equal(key.canSave(), true);
     assert.equal(el("#direct-ble-dialog").open, false);
+  } finally { key.reset(); globalThis.document = previous; }
+});
+
+test("Bluetooth replacement failures block Save until regenerated or explicitly disabled", async () => {
+  const previous = globalThis.document;
+  const { document, element: el, fire } = createDocument();
+  globalThis.document = document;
+  const key = bindBleKeyForm({
+    signal: () => new AbortController().signal, configured: () => true, enable() {}, changed() {}, clipboard: null,
+  });
+  try {
+    await fire("#direct-ble-generate", "click");
+    key.finish(false, "Save failed");
+    assert.equal(key.canSave(), false);
+    assert.equal(key.request(true), undefined);
+    assert.equal(el("#direct-ble-secret").value, "");
+    await fire("#direct-ble-generate", "click");
+    assert.equal(key.canSave(), true);
+    assert.equal(key.request(true).length, 64);
+    key.finish(false, "Save failed again");
+    key.clear();
+    assert.equal(key.saveBlockReason(), null);
+    assert.equal(key.request(false), "");
   } finally { key.reset(); globalThis.document = previous; }
 });
 

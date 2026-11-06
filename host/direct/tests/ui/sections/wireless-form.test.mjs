@@ -2,6 +2,37 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bindWirelessForm, formTransition } from "../../../web/js/ui/sections/wireless-form.mjs";
 import { createDocument } from "../../support/dom.mjs";
+import { OP } from "../../../web/js/protocol/constants.mjs";
+
+test("failed replacement-key Save can be abandoned by disabling Bluetooth", async () => {
+  const previous = globalThis.document;
+  const { document, element: el, fire } = createDocument();
+  globalThis.document = document;
+  const form = bindWirelessForm({
+    supported: () => true, ready: () => true, scan: async () => [],
+    test: async () => ({ remaining_seconds: 60 }), cancelTest: async () => {},
+  });
+  try {
+    form.update({ wireless: {
+      ssid: "", wifi_enabled: false, ble_enabled: true, ble_key_configured: true, tcp_cli_enabled: true,
+    } });
+    el("#direct-settings-ble").value = "1";
+    await fire("#direct-ble-generate", "click");
+    form.finish(null, "Save failed");
+    assert.equal(form.canSave(), false);
+    assert.throws(() => form.request(), { message: form.saveBlockReason() });
+    assert.equal(el("#direct-wireless-summary").textContent, form.saveBlockReason());
+    await fire("#direct-settings-ble", "focus");
+    el("#direct-settings-ble").value = "0";
+    await fire("#direct-settings-ble", "input");
+    await fire("#direct-settings-ble", "change");
+    assert.equal(form.canSave(), true);
+    assert.equal(form.saveBlockReason(), null);
+    assert.equal(form.dirty(), true);
+    assert.equal(form.request().ble_key, "");
+    assert.equal(el("#direct-ble-secret").value, "");
+  } finally { form.dispose(); globalThis.document = previous; }
+});
 
 test("dashboard form updates reuse gates but local input refreshes current readiness", async () => {
   const previous = globalThis.document;
@@ -54,7 +85,7 @@ test("replacement tests invalidate the previous pair and require retry or cancel
     assert.equal(form.canSave(), false);
     assert.equal(form.dirty(), true, "firmware staging still needs clearing");
     assert.throws(() => form.request(), /again or clear/);
-    assert.equal(el("#direct-wireless-summary").hidden, true, "old success/countdown is gone");
+    assert.match(el("#direct-wireless-summary").textContent, /again or clear/, "failed staging explains Save blocker");
 
     fails = false;
     await fire("#direct-wifi-connect", "click");
@@ -75,19 +106,9 @@ test("replacement tests invalidate the previous pair and require retry or cancel
 test("scan selection retains raw SSID bytes, manual edits drop hex, "
   + "and failed-test cancellation clears staging", async () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  const makeElement = () => ({
-    value: "", children: [], handlers: {}, dataset: {}, options: ["0", "1", "configure"].map(value => ({ value })),
-    label: { toggleAttribute() {} }, closest() { return this.label; },
-    setAttribute(name, value) { this[name] = value; }, append(...items) { this.children.push(...items); },
-    addEventListener(event, callback) { this.handlers[event] = callback; },
-    replaceChildren(...items) { this.children = items; }, close() {}, showModal() {}, focus() {},
-  });
-  const el = id => {
-    if (!elements.has(id)) elements.set(id, makeElement());
-    return elements.get(id);
-  };
-  globalThis.document = { querySelector: selector => el(selector.slice(1)), createElement: makeElement };
+  const { document, element, fire } = createDocument();
+  const el = id => element(`#${id}`);
+  globalThis.document = document;
   let cancelCount = 0, cancellationFails = false, testFails = false;
   const tested = [];
   const form = bindWirelessForm({
@@ -103,49 +124,39 @@ test("scan selection retains raw SSID bytes, manual edits drop hex, "
   try {
     el("direct-settings-wifi").value = "1"; el("direct-settings-ble").value = "0";
     form.update({ wireless: { ssid: "saved", ssid_hex: "7361766564", wifi_enabled: true, ble_enabled: false } });
-    await el("direct-wifi-scan").handlers.click();
+    await fire("#direct-wifi-scan", "click");
     const button = el("direct-wifi-networks").children[0];
     assert.equal(button.role, undefined, "network choices use native buttons, not a partial listbox");
     assert.equal(button["aria-pressed"], "false");
     assert.equal(button.children[0].textContent, "\\x00\\xFF<script>", "SSID label is text, never HTML");
-    button.handlers.click();
+    button.dispatchEvent(new Event("click"));
     assert.equal(button["aria-pressed"], "true", "selection state follows the selected raw SSID");
-    await el("direct-wifi-connect").handlers.click();
+    await fire("#direct-wifi-connect", "click");
     assert.equal(tested[0].ssid_hex, "00ff3c7363726970743e");
     assert.equal(form.request().ssid_hex, "00ff3c7363726970743e");
     assert.equal(form.request().use_tested_wifi, true);
     cancellationFails = true;
-    await el("direct-wifi-cancel").handlers.click();
+    await fire("#direct-wifi-cancel", "click");
     assert.equal(form.canSave(), false, "failed discard cannot silently lose the retained pair");
     cancellationFails = false;
-    await el("direct-wifi-cancel").handlers.click();
+    await fire("#direct-wifi-cancel", "click");
     assert.equal(form.canSave(), true);
     assert.equal(cancelCount, 2);
-    el("direct-wifi-ssid").value = "manual"; el("direct-wifi-ssid").handlers.input();
+    el("direct-wifi-ssid").value = "manual"; await fire("#direct-wifi-ssid", "input");
     assert.equal(button["aria-pressed"], "false", "manual edits clear the scanned selection");
     testFails = true;
-    await el("direct-wifi-connect").handlers.click();
+    await fire("#direct-wifi-connect", "click");
     assert.equal(Object.hasOwn(tested[1], "ssid_hex"), false, "manual text is encoded exactly once");
-    await el("direct-wifi-cancel").handlers.click();
+    await fire("#direct-wifi-cancel", "click");
     assert.equal(cancelCount, 3, "a failed test also leaves firmware staging that must be discarded");
   } finally { form.reset(); globalThis.document = previous; }
 });
 
 test("TCP switch is saved explicitly and expired test credentials block saving", async context => {
   const previous = globalThis.document;
-  const elements = new Map();
-  const el = id => {
-    if (!elements.has(id)) elements.set(id, {
-      value: "", children: [], handlers: {},
-      label: { hidden: true, toggleAttribute(name, hidden) { this[name] = hidden; } },
-      closest() { return this.label; },
-      options: ["0", "1", "configure"].map(value => ({ value })),
-      addEventListener(event, callback) { this.handlers[event] = callback; },
-      replaceChildren() {}, close() {}, showModal() {},
-    });
-    return elements.get(id);
-  };
-  globalThis.document = { querySelector: selector => el(selector.slice(1)) };
+  const { document, element, fire } = createDocument();
+  const el = id => element(`#${id}`);
+  globalThis.document = document;
   let now = 100;
   const intervals = new Map();
   let nextTimer = 0;
@@ -173,7 +184,7 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     assert.equal(el("direct-settings-tcp-cli").disabled, false);
     assert.equal(el("direct-settings-tcp-cli").label.hidden, false);
     el("direct-settings-tcp-cli").value = "0";
-    el("direct-settings-tcp-cli").handlers.change();
+    await fire("#direct-settings-tcp-cli", "change");
     form.update({ wireless: status });
     assert.equal(el("direct-settings-tcp-cli").value, "0", "periodic refresh preserves unsaved TCP edits");
     assert.equal(form.dirty(), true);
@@ -183,10 +194,10 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     const bleOn = () => el("direct-settings-ble").options.find(option => option.value === "1");
     assert.equal(bleOn().disabled, true, "Bluetooth cannot be enabled without a saved or staged key");
     Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues: bytes => bytes.fill(1) } });
-    el("direct-ble-generate").handlers.click();
+    await fire("#direct-ble-generate", "click");
     assert.equal(bleOn().disabled, false);
     el("direct-settings-tcp-cli").value = "1";
-    el("direct-settings-tcp-cli").handlers.change();
+    await fire("#direct-settings-tcp-cli", "change");
     assert.equal(el("direct-settings-ble").value, "1", "generating a key enables Bluetooth");
     assert.equal(Object.hasOwn(form.request(), "tcp_cli_auth_required"), false, "TCP auth follows the key");
     el("direct-settings-ble").value = "0";
@@ -198,7 +209,7 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
     ready = true;
     form.update();
     el("direct-wifi-ssid").value = "tested";
-    await el("direct-wifi-connect").handlers.click();
+    await fire("#direct-wifi-connect", "click");
     assert.equal(form.request().use_tested_wifi, true);
     assert.equal(form.canSave(), true);
     assert.equal(saveEnabled, true);
@@ -245,18 +256,9 @@ test("TCP switch is saved explicitly and expired test credentials block saving",
 
 test("one form phase serializes scan, test and cancel, and a reset drops late results", async () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  const el = id => {
-    if (!elements.has(id)) elements.set(id, {
-      value: "", children: [], handlers: {}, open: false, textContent: "",
-      options: ["0", "1", "configure"].map(value => ({ value })),
-      addEventListener(event, callback) { this.handlers[event] = callback; },
-      replaceChildren(...children) { this.children = children; },
-      close() { this.open = false; }, showModal() { this.open = true; },
-    });
-    return elements.get(id);
-  };
-  globalThis.document = { querySelector: selector => el(selector.slice(1)) };
+  const { document, element, fire } = createDocument();
+  const el = id => element(`#${id}`);
+  globalThis.document = document;
   const deferred = () => {
     let resolve, reject;
     const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
@@ -269,9 +271,9 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
     const form = bindWirelessForm({ ready: () => true, supported: () => true,
       scan: () => (scan = deferred()).promise, test: () => (check = deferred()).promise,
       cancelTest: () => (cancel = deferred()).promise });
-    form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true } });
 
-    const scanning = el("direct-wifi-scan").handlers.click();
+    const scanning = fire("#direct-wifi-scan", "click");
     assert.equal(form.operationBusy(), true, "scanning owns the device");
     assert.equal(form.canSave(), false, "a running operation cannot produce a save request");
     assert.equal(el("direct-wifi-connect").disabled, true);
@@ -282,18 +284,21 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
     assert.equal(el("direct-wifi-networks").children.length, 0, "a scan from before the reset is ignored");
     assert.equal(form.operationBusy(), false);
 
-    form.update({ wireless: { ssid: "saved", wifi_enabled: true } });
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true } });
     el("direct-wifi-ssid").value = "home";
     el("direct-wifi-password").value = "password";
-    const testing = el("direct-wifi-connect").handlers.click();
+    const testing = fire("#direct-wifi-connect", "click");
     assert.equal(el("direct-wifi-connect").textContent, "Testing…");
     assert.equal(el("direct-wifi-cancel").disabled, true, "cancel waits for the test result");
     check.reject(new Error("Password rejected"));
     await testing;
     assert.equal(el("direct-wifi-connect").textContent, "Test connection");
     assert.equal(form.operationBusy(), false);
+    assert.equal(form.dirty(), true, "attempted but untested firmware staging remains owned by the form");
+    assert.equal(form.canSave(), false);
+    assert.throws(() => form.request(), /again or clear/);
 
-    const canceling = el("direct-wifi-cancel").handlers.click();
+    const canceling = fire("#direct-wifi-cancel", "click");
     assert.equal(el("direct-wifi-cancel").textContent, "Clearing…");
     assert.equal(form.canSave(), false);
     cancel.reject(new Error("link lost"));
@@ -301,13 +306,93 @@ test("one form phase serializes scan, test and cancel, and a reset drops late re
     assert.equal(el("direct-wifi-cancel").textContent, "Retry clearing test");
     assert.equal(form.operationBusy(), true, "an uncleared test blocks other device work");
     assert.throws(() => form.request(), /Clear the temporary Wi-Fi test/);
-    const retry = el("direct-wifi-cancel").handlers.click();
+    const retry = fire("#direct-wifi-cancel", "click");
     cancel.resolve();
     await retry;
     assert.equal(el("direct-wifi-cancel").textContent, "Cancel");
     assert.equal(form.operationBusy(), false);
     assert.equal(form.canSave(), true);
+    assert.equal(form.dirty(), false, "known cancellation releases all temporary staging");
+    assert.equal(form.request(), null, "the canceled pair cannot leak into a later save request");
+    assert.equal(el("direct-wifi-ssid").value, "");
+    assert.equal(el("direct-wifi-password").value, "");
+    form.dispose();
   } finally { globalThis.document = previous; }
+});
+
+test("reset fences successful and failed in-flight Wi-Fi tests and their progress callbacks", async () => {
+  const previous = globalThis.document;
+  try {
+    for (const outcome of ["resolve", "reject"]) {
+      const { document, element: el, fire } = createDocument();
+      globalThis.document = document;
+      let resolveTest, rejectTest, progress, notifications = 0;
+      const form = bindWirelessForm({
+        supported: () => true, ready: () => true, scan: async () => [], cancelTest: async () => {},
+        changed: () => notifications++,
+        test: (_, onProgress) => {
+          progress = onProgress;
+          return new Promise((resolve, reject) => { resolveTest = resolve; rejectTest = reject; });
+        },
+      });
+      try {
+        el("#direct-settings-wifi").value = "1";
+        form.update({ wireless: { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true } });
+        el("#direct-wifi-ssid").value = "old test";
+        const testing = fire("#direct-wifi-connect", "click");
+        const originalSignal = form.signal;
+        form.reset();
+        assert.equal(originalSignal.aborted, true);
+        assert.notEqual(form.signal, originalSignal);
+        form.update({ wireless: { ssid: "new saved", wifi_enabled: true, tcp_cli_enabled: true } });
+        el("#direct-wifi-status").textContent = "new lifecycle";
+        el("#direct-wifi-dialog").open = true;
+        const before = notifications;
+        progress("old progress");
+        if (outcome === "resolve") resolveTest({ remaining_seconds: 599 });
+        else rejectTest(new Error("Old test failed"));
+        await testing;
+        assert.equal(el("#direct-wifi-status").textContent, "new lifecycle", outcome);
+        assert.equal(el("#direct-wifi-dialog").open, true, outcome);
+        assert.equal(el("#direct-wifi-ssid").value, "new saved", outcome);
+        assert.equal(notifications, before, outcome);
+        assert.equal(form.operationBusy(), false);
+        assert.equal(form.canSave(), true);
+        assert.equal(form.dirty(), false);
+        assert.equal(form.request(), null, "obsolete test credentials are never offered to Save");
+      } finally { form.dispose(); }
+    }
+  } finally { globalThis.document = previous; }
+});
+
+test("known cancellation recovery clears the staged pair without replaying cancellation", async () => {
+  const previous = globalThis.document;
+  const { document, element: el, fire } = createDocument();
+  globalThis.document = document;
+  let ready = true, cancellations = 0;
+  const form = bindWirelessForm({
+    supported: () => true, ready: () => ready, scan: async () => [],
+    test: async () => ({ remaining_seconds: 599 }),
+    cancelTest: async () => { cancellations++; ready = false; throw new Error("Link lost"); },
+  });
+  try {
+    el("#direct-settings-wifi").value = "1";
+    form.update({ wireless: { ssid: "saved", wifi_enabled: true, tcp_cli_enabled: true } });
+    el("#direct-wifi-ssid").value = "tested";
+    await fire("#direct-wifi-connect", "click");
+    await fire("#direct-wifi-cancel", "click");
+    assert.equal(form.canSave(), false);
+    assert.equal(form.operationBusy(), true);
+    ready = true;
+    form.update({ connected: true, outcome_uncertain: false, recovered_opcode: OP.CANCEL_TEST });
+    assert.equal(cancellations, 1, "reconciliation never resends a known cancellation");
+    assert.equal(form.operationBusy(), false);
+    assert.equal(form.canSave(), true);
+    assert.equal(form.dirty(), false);
+    assert.equal(form.request(), null);
+    assert.equal(el("#direct-wifi-ssid").value, "");
+    assert.match(el("#direct-wifi-status").textContent, /cleared after reconnect/);
+  } finally { form.dispose(); globalThis.document = previous; }
 });
 
 test("formTransition serializes one phase and requires reconnect recovery before a retry", () => {

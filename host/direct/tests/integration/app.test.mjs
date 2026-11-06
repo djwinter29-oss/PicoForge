@@ -86,11 +86,16 @@ test("Direct UI preserves unsaved profiles, separates confirmed reboot, and conf
     [name, BoardSession.prototype[name]]));
   const elements = new Map();
   const el = selector => {
-    if (!elements.has(selector)) elements.set(selector, { value: "0", dataset: {}, valueAsNumber: 32, children: [],
+    const tag = selector.match(/^([a-z]+)#/)?.[1];
+    selector = selector.replace(/^[a-z]+(?=#)/, "");
+    if (!elements.has(selector)) elements.set(selector, {
+      namespaceURI: "http://www.w3.org/1999/xhtml", value: "0", dataset: {}, valueAsNumber: 32, children: [],
+      options: ["0", "1", "configure"].map(value => ({ value })),
       open: false, showModal() { this.open = true; }, close() { this.open = false; this.onclose?.(); },
       addEventListener(type, handler) { this[type === "close" ? "onclose" : type] = handler; },
       setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; } });
+      replaceChildren(...children) { this.children = children; }, querySelectorAll() { return []; } });
+    if (tag) elements.get(selector).localName ??= tag;
     return elements.get(selector);
   };
   let client;
@@ -315,12 +320,17 @@ test("Bluetooth dialog takes the control key, then scans, and preserves transpor
   let reloads = 0;
   let consolePopup;
   const el = selector => {
-    if (!elements.has(selector)) elements.set(selector, { value: "", dataset: {}, valueAsNumber: 32, children: [],
+    const tag = selector.match(/^([a-z]+)#/)?.[1];
+    selector = selector.replace(/^[a-z]+(?=#)/, "");
+    if (!elements.has(selector)) elements.set(selector, {
+      namespaceURI: "http://www.w3.org/1999/xhtml", value: "", dataset: {}, valueAsNumber: 32, children: [],
+      options: ["0", "1", "configure"].map(value => ({ value })),
       open: false, showModal() { this.open = true; },
       close() { this.open = false; this.events.close?.(); }, focus() { this.focused = true; }, events: {},
       addEventListener(type, handler) { this.events[type] = handler; if (type !== "close") this[type] = handler; },
       setAttribute(name, value) { this[name] = value; },
-      replaceChildren(...children) { this.children = children; } });
+      replaceChildren(...children) { this.children = children; }, querySelectorAll() { return []; } });
+    if (tag) elements.get(selector).localName ??= tag;
     return elements.get(selector);
   };
   globalThis.document = { querySelector: el, createElement: () => ({ append() {} }) };

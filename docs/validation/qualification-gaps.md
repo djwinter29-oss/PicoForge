@@ -16,6 +16,10 @@ follow the [getting-started safety precautions](../guides/getting-started.md#bef
 - **W-board radios:** physical Wi-Fi association/reconnect, BLE access/control, and coexistence with USB and storage
   remain unqualified. See the
   [wireless and BLE board checks](../development/firmware-testing.md#wireless-and-ble-board-checks).
+- **Direct dashboard hardware lifecycle:** host/browser mocks cover draft ownership, cancellation, expiry and
+  recovery, but do not qualify USB/BLE reconnect, physical staging cleanup or forced saves on Pico W/Pico 2 W.
+  Follow the [Direct board checks](../development/firmware-testing.md#direct-dashboard-board-checks) and record
+  each board/OS/browser combination separately.
 - **Python host timing and lifecycle:** the 50 ms HID polling interval, real report freshness, CPU cost under multiple
   monitors, USB detach/reconnect, MSC ownership handoff, and shutdown during wireless operations have not yet been
   qualified on physical boards. Follow the [Python host hardware procedure](../development/host-tools.md#qualify-the-python-host-with-hardware).

@@ -2,6 +2,17 @@ import { createDashboardStore, createUiStore } from "../../web/js/state/store.mj
 import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { mountDashboard } from "../../web/js/ui/dashboard.mjs";
 import { deriveControlsViewModel } from "../../web/js/ui/sections/controls.mjs";
+import { queryElement } from "../../web/js/ui/dom.mjs";
+
+const keyInput = queryElement("input#direct-ble-secret");
+keyInput.value = "";
+// @ts-expect-error Input values are strings.
+keyInput.value = 32;
+// @ts-expect-error Untagged lookups do not promise input or dialog methods.
+queryElement("#unknown").showModal();
+// @ts-expect-error A select is not a dialog.
+queryElement("select#direct-settings-ble").showModal();
+queryElement("dialog#direct-wifi-dialog").showModal();
 
 const board = createDashboardStore();
 board.dispatch({ type: "command/started", changes: { busy: true, pending_request: { transaction_id: 1, opcode: 1 } } });
@@ -61,6 +72,8 @@ function checkControlTypes(controls) {
   controls.eligibility.settingsReady = "ready";
   // @ts-expect-error Dirty state is boolean, not display text.
   controls.settingsDirty = "changed";
+  // @ts-expect-error Save blockers are user-facing text or null, not a second boolean gate.
+  controls.wirelessSaveBlockReason = false;
 }
 /** @param {ReturnType<typeof import("../../web/js/ui/sections/wireless-form.mjs").bindWirelessForm>} form */
 function checkFormSnapshot(form) {
@@ -68,4 +81,10 @@ function checkFormSnapshot(form) {
   form.update({}, { wireless: true, settings: "ready", tcp: true });
   /** @type {AbortSignal} */
   const signal = form.signal;
+  // @ts-expect-error Save requests have a structured wireless shape, not presentation text.
+  form.request = () => "saved";
+  // @ts-expect-error Saved wireless flags are boolean.
+  form.finish({ wifi_enabled: "yes" });
+  // @ts-expect-error Draft lifecycle is an AbortSignal, not an AbortController.
+  form.signal = new AbortController();
 }

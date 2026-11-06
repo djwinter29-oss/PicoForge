@@ -43,14 +43,14 @@ export function deriveSelfTestViewModel(state, sizeMiB) {
 }
 
 export function renderSelfTest(state) {
-  const model = deriveSelfTestViewModel(state, queryElement("#self-test-size").valueAsNumber);
+  const model = deriveSelfTestViewModel(state, queryElement("input#self-test-size").valueAsNumber);
   setText(model.text);
-  queryElement("#self-test-progress").value = model.progress;
+  queryElement("progress#self-test-progress").value = model.progress;
   queryElement("#self-test-meter").dataset.result = model.result;
-  const disclosure = queryElement("#self-test-disclosure");
+  const disclosure = queryElement("details#self-test-disclosure");
   if (model.autoOpen && disclosure.dataset.autoOpen !== model.autoOpen) disclosure.open = true;
   disclosure.dataset.autoOpen = model.autoOpen;
-  queryElement("#self-test-start").disabled = model.startDisabled;
-  queryElement("#self-test-cancel").disabled = model.cancelDisabled;
-  queryElement("#self-test-size").disabled = model.sizeDisabled;
+  queryElement("button#self-test-start").disabled = model.startDisabled;
+  queryElement("button#self-test-cancel").disabled = model.cancelDisabled;
+  queryElement("input#self-test-size").disabled = model.sizeDisabled;
 }

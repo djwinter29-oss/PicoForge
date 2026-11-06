@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderWirelessStatus } from "../../../web/js/ui/sections/wireless.mjs";
 import { withDocument, snapshot } from "../../support/view.mjs";
+import { createDocument } from "../../support/dom.mjs";
 
 test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating unavailable reports as disabled", () =>
   withDocument((el, renderStatus) => {
@@ -66,42 +67,31 @@ test("Direct dashboard shows live Wi-Fi and Bluetooth state without treating una
 
 test("keyless Bluetooth reports that a control key is needed; unavailable reports stay distinct", () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  globalThis.document = { querySelector(selector) {
-    if (!elements.has(selector)) elements.set(selector, {});
-    return elements.get(selector);
-  } };
+  const { document, element } = createDocument();
+  globalThis.document = document;
   const snapshot = { connected: true, hardware: { capabilities: 128, serial_number: "AB" }, wireless: {
     wifi_enabled: true, ssid: "saved", wifi_state: "failed", ble_enabled: true, ble_state: "off",
     ble_key_configured: false,
   } };
   try {
     renderWirelessStatus(snapshot);
-    assert.equal(elements.get("#direct-ble-state").textContent, "Off (no control key)");
-    assert.doesNotMatch(elements.get("#direct-wifi-state").textContent, /key/);
+    assert.equal(element("#direct-ble-state").textContent, "Off (no control key)");
+    assert.doesNotMatch(element("#direct-wifi-state").textContent, /key/);
     renderWirelessStatus({ ...snapshot, wireless: { ...snapshot.wireless, ble_key_configured: true } });
-    assert.equal(elements.get("#direct-ble-state").textContent, "PicoForge-AB (starting)");
+    assert.equal(element("#direct-ble-state").textContent, "PicoForge-AB (starting)");
     renderWirelessStatus({ ...snapshot, connected: false });
-    assert.equal(elements.get("#direct-wifi-state").textContent, "--");
+    assert.equal(element("#direct-wifi-state").textContent, "--");
     renderWirelessStatus({ ...snapshot, wireless_error: "Read failed" });
-    assert.equal(elements.get("#direct-wifi-state").textContent, "Unavailable");
-    assert.equal(elements.get("#direct-wifi-state").title, "Read failed");
+    assert.equal(element("#direct-wifi-state").textContent, "Unavailable");
+    assert.equal(element("#direct-wifi-state").title, "Read failed");
   } finally { globalThis.document = previous; }
 });
 
 test("connected Wi-Fi CLI status links to the console in a new tab", () => {
   const previous = globalThis.document;
-  const elements = new Map();
-  const wifi = { textContent: "", title: "", children: [], querySelector() { return this.children[0] ?? null; },
-    replaceChildren(...children) { this.children = children; } };
-  const makeElement = () => ({ textContent: "", title: "", hidden: false, dataset: {} });
-  elements.set("#direct-wifi-diagnostics", makeElement());
-  elements.set("#direct-wifi-state", wifi);
-  elements.set("#direct-ble-diagnostics", makeElement());
-  elements.set("#direct-ble-state", makeElement());
-  globalThis.document = { querySelector: selector => elements.get(selector), createElement: () => ({
-    dataset: {}, textContent: "", href: "", title: "",
-  }) };
+  const { document, element } = createDocument();
+  const wifi = element("#direct-wifi-state");
+  globalThis.document = document;
   try {
     renderWirelessStatus({ connected: true, hardware: { capabilities: 128 },
       console_url: "console.html?ipv4=192.168.1.9",

@@ -139,7 +139,8 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   await waitFor(() => document.querySelector("#direct-wifi-status").textContent.includes("Replacement failed"),
     "failed replacement was not reported");
   check(!form.canSave(), "a failed replacement left the old tested pair saveable");
-  check(document.querySelector("#direct-wireless-summary").hidden, "obsolete success countdown remains visible");
+  check(document.querySelector("#direct-wireless-summary").textContent === form.saveBlockReason(),
+    "failed staging does not show its Save blocker");
   testFails = false;
   const cancel = new Event("cancel", { cancelable: true });
   dialog.dispatchEvent(cancel);
@@ -231,6 +232,40 @@ await run("save completion preserves newer drafts and verified forced-save recov
   }
 });
 
+await run("failed replacement-key saves expose a blocker and allow regeneration or disabling", async () => {
+  for (const recovery of ["generate", "disable"]) {
+    await withDashboardFixture(async (fixture, page) => {
+      fixture.client.saveConfiguration = async () => { throw new Error("Replacement save failed"); };
+      page.querySelector("#direct-ble-generate").click();
+      await Promise.resolve();
+      const save = page.querySelector("#settings-save");
+      check(!save.disabled, "replacement key did not enable Save");
+      save.click();
+      page.querySelector("#confirm-configuration").click();
+      await waitFor(() => page.querySelector("#settings-note").textContent.includes("Replacement save failed"),
+        "save failure was not shown");
+      check(save.disabled && save.title.includes("replacement Control key"), "Save has no key-regeneration reason");
+      check(page.querySelector("#direct-wireless-summary").textContent === save.title,
+        "visible feedback and Save reason disagree");
+      check(page.querySelector("#direct-ble-secret").value === "", "failed save retained the submitted key");
+      if (recovery === "generate") page.querySelector("#direct-ble-generate").click();
+      else {
+        const radio = page.querySelector("#direct-settings-ble");
+        radio.focus();
+        radio.value = "0";
+        radio.dispatchEvent(new Event("input"));
+        radio.dispatchEvent(new Event("change"));
+        const clock = page.querySelector("#settings-clock");
+        clock.value = "250";
+        clock.dispatchEvent(new Event("change"));
+      }
+      await Promise.resolve();
+      check(!save.disabled, `${recovery} did not release the Save blocker`);
+      check(!page.querySelector("#direct-wireless-summary").textContent, "obsolete Save blocker remains visible");
+    });
+  }
+});
+
 await run("telemetry bursts coalesce and avoid unchanged connection-label writes", async () => {
   await withDashboardFixture(async (fixture, page) => {
     const times = [];
@@ -242,6 +277,11 @@ await run("telemetry bursts coalesce and avoid unchanged connection-label writes
     let updates = 0;
     const telemetryObserver = new MutationObserver(records => { updates += records.length; });
     telemetryObserver.observe(uptime, { childList: true, characterData: true, subtree: true });
+    let provisioningWrites = 0;
+    const provisioningObserver = new MutationObserver(records => { provisioningWrites += records.length; });
+    for (const id of ["direct-wireless-summary", "direct-wifi-status", "direct-ble-status"]) {
+      provisioningObserver.observe(page.querySelector(`#${id}`), { childList: true, characterData: true, subtree: true });
+    }
     try {
       for (let index = 0; index < 60; index++) {
         const start = performance.now();
@@ -251,10 +291,11 @@ await run("telemetry bursts coalesce and avoid unchanged connection-label writes
       }
       check(updates === 60, `180 telemetry events caused ${updates} uptime writes rather than 60`);
       check(labelWrites === 0, "unchanged connection labels were rewritten");
+      check(provisioningWrites === 0, "unchanged provisioning feedback was rewritten");
       times.sort((a, b) => a - b);
       results.dataset.dashboardMedianMs = times[Math.floor(times.length / 2)].toFixed(2);
       results.dataset.dashboardP95Ms = times[Math.floor(times.length * 0.95)].toFixed(2);
-    } finally { observer.disconnect(); telemetryObserver.disconnect(); }
+    } finally { observer.disconnect(); telemetryObserver.disconnect(); provisioningObserver.disconnect(); }
   });
 });
 
@@ -285,11 +326,47 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
     render(screen);
     check(!terminal.querySelector("svg"), "console output was rendered as HTML");
     const streamingTimes = [];
+    const phaseTimes = { parse: [], text: [], dom: [], layout: [] };
+    const originalDisplay = screen.display;
+    const scrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight").get;
+    let textMs = 0, layoutMs = 0;
+    screen.display = function () {
+      const start = performance.now();
+      const result = originalDisplay.call(this);
+      textMs = performance.now() - start;
+      return result;
+    };
+    Object.defineProperty(terminal, "scrollHeight", { configurable: true, get() {
+      const start = performance.now();
+      const height = scrollHeight.call(this);
+      layoutMs = performance.now() - start;
+      return height;
+    } });
     for (let index = 0; index < 60; index++) {
       const start = performance.now();
       screen.write(`\r\n${"output ".repeat(60)}`);
+      const parsed = performance.now();
+      textMs = 0;
+      layoutMs = 0;
       render(screen);
-      if (index >= 10) streamingTimes.push(performance.now() - start);
+      const end = performance.now();
+      if (index >= 10) {
+        streamingTimes.push(end - start);
+        phaseTimes.parse.push(parsed - start);
+        phaseTimes.text.push(textMs);
+        phaseTimes.layout.push(layoutMs);
+        phaseTimes.dom.push(Math.max(0, end - parsed - textMs - layoutMs));
+      }
+    }
+    screen.display = originalDisplay;
+    delete terminal.scrollHeight;
+    for (const [phase, samples] of Object.entries(phaseTimes)) {
+      check(samples.length === 50 && samples.every(Number.isFinite), `incomplete ${phase} measurements`);
+      samples.sort((a, b) => a - b);
+      results.dataset[`streaming${phase[0].toUpperCase()}${phase.slice(1)}MedianMs`] =
+        samples[Math.floor(samples.length / 2)].toFixed(2);
+      results.dataset[`streaming${phase[0].toUpperCase()}${phase.slice(1)}P95Ms`] =
+        samples[Math.floor(samples.length * 0.95)].toFixed(2);
     }
     check(screen.display()[0].split("\n").length === 1000, "continuous output exceeded the row limit");
     check(nodes.every((node, index) => terminal.childNodes[index] === node), "streaming replaced terminal nodes");

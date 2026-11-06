@@ -90,9 +90,13 @@ def main() -> None:
                     for label, key in (("Dashboard telemetry burst", "dashboard"), ("Console streaming", "streaming")):
                         print(f"{label}: {page.locator('#results').get_attribute(f'data-{key}-median-ms')}ms median, "
                               f"{page.locator('#results').get_attribute(f'data-{key}-p95-ms')}ms p95")
+                    for phase in ("parse", "text", "dom", "layout"):
+                        print(f"Streaming {phase}: "
+                              f"{page.locator('#results').get_attribute(f'data-streaming-{phase}-median-ms')}ms median, "
+                              f"{page.locator('#results').get_attribute(f'data-streaming-{phase}-p95-ms')}ms p95")
                     failures = page.locator('#results li[data-result="fail"]').count()
-                    if len(results) != 7 or failures or errors:
-                        raise AssertionError(f"Expected 7 checks, got {len(results)}; "
+                    if len(results) != 8 or failures or errors:
+                        raise AssertionError(f"Expected 8 checks, got {len(results)}; "
                                              f"failed assertions: {failures}; page errors: {errors}")
                     check_history(browser, origin)
                 finally:
