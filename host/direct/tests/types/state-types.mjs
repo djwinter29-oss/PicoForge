@@ -1,6 +1,7 @@
 import { createDashboardStore, createUiStore } from "../../web/js/state/store.mjs";
 import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { mountDashboard } from "../../web/js/ui/dashboard.mjs";
+import { deriveControlsViewModel } from "../../web/js/ui/sections/controls.mjs";
 
 const board = createDashboardStore();
 board.dispatch({ type: "command/started", changes: { busy: true, pending_request: { transaction_id: 1, opcode: 1 } } });
@@ -53,3 +54,18 @@ const configuration = {
 };
 // @ts-expect-error Configuration profile is numeric.
 configuration.settings.sdcard_profile = "fast";
+
+/** @param {Parameters<typeof deriveControlsViewModel>[1]} controls */
+function checkControlTypes(controls) {
+  // @ts-expect-error Render readiness must be a boolean.
+  controls.eligibility.settingsReady = "ready";
+  // @ts-expect-error Dirty state is boolean, not display text.
+  controls.settingsDirty = "changed";
+}
+/** @param {ReturnType<typeof import("../../web/js/ui/sections/wireless-form.mjs").bindWirelessForm>} form */
+function checkFormSnapshot(form) {
+  // @ts-expect-error Render-only readiness has boolean gates.
+  form.update({}, { wireless: true, settings: "ready", tcp: true });
+  /** @type {AbortSignal} */
+  const signal = form.signal;
+}

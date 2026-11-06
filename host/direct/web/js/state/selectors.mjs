@@ -74,9 +74,10 @@ const RULES = {
  * @brief The one readiness gate for user operations, shared by BoardSession methods and UI disabling.
  * @param state Domain state snapshot.
  * @param {"led" | "reboot" | "msc" | "selfTest" | "settings" | "wireless"} operation
+ * @param {ReturnType<typeof deriveOperationEligibility>} [eligibility] Same-snapshot render cache; actions omit it.
  * @return {{allowed: boolean, reason: string | null}} `reason` is a REASON code; ui/messages.mjs has its text.
  */
-export function canRun(state, operation) {
-  const reason = RULES[operation](state, deriveOperationEligibility(state), state.hardware?.capabilities ?? 0);
+export function canRun(state, operation, eligibility = deriveOperationEligibility(state)) {
+  const reason = RULES[operation](state, eligibility, state.hardware?.capabilities ?? 0);
   return { allowed: reason === null, reason };
 }

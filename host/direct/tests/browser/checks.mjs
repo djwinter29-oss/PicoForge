@@ -1,6 +1,7 @@
 import { bindWirelessForm } from "../../web/js/ui/sections/wireless-form.mjs";
 import { CliScreen } from "../../web/js/ui/cli-screen.mjs";
 import { createConsoleRenderer } from "../../web/js/ui/console.mjs";
+import { OP } from "../../web/js/protocol/constants.mjs";
 
 const results = document.querySelector("#results");
 const report = (name, error) => {
@@ -80,12 +81,16 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   let cancelAttempts = 0;
   let completeCancel;
   let notifications = 0;
+  let testFails = false;
   const form = bindWirelessForm({
     scan: async () => [
       { ssid: "First", ssid_hex: "4669727374", secured: false, rssi: -40 },
       { ssid: "Second", ssid_hex: "5365636f6e64", secured: false, rssi: -50 },
     ],
-    test: async () => ({ remaining_seconds: 600, ipv4: "192.0.2.2" }),
+    test: async () => {
+      if (testFails) throw new Error("Replacement failed");
+      return { remaining_seconds: 600, ipv4: "192.0.2.2" };
+    },
     cancelTest: async () => {
       if (++cancelAttempts === 1) throw new Error("temporary failure");
       if (cancelAttempts === 3) await new Promise(resolve => { completeCancel = resolve; });
@@ -127,6 +132,15 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   wifi.focus();
   wifi.value = "configure";
   wifi.dispatchEvent(new Event("input", { bubbles: true }));
+  testFails = true;
+  ssid.value = "replacement";
+  ssid.dispatchEvent(new Event("input", { bubbles: true }));
+  document.querySelector("#direct-wifi-connect").click();
+  await waitFor(() => document.querySelector("#direct-wifi-status").textContent.includes("Replacement failed"),
+    "failed replacement was not reported");
+  check(!form.canSave(), "a failed replacement left the old tested pair saveable");
+  check(document.querySelector("#direct-wireless-summary").hidden, "obsolete success countdown remains visible");
+  testFails = false;
   const cancel = new Event("cancel", { cancelable: true });
   dialog.dispatchEvent(cancel);
   await waitFor(() => document.querySelector("#direct-wireless-summary").textContent.includes("temporary failure"),
@@ -160,6 +174,90 @@ await run("Wi-Fi selection and cancellation failure/retry keep accurate state", 
   form.dispose();
 });
 
+const withDashboardFixture = async action => {
+  const html = await (await fetch("../../web/index.html")).text();
+  const content = new DOMParser().parseFromString(html, "text/html");
+  for (const asset of content.querySelectorAll("link[href]")) {
+    asset.href = new URL(asset.getAttribute("href"), new URL("../../web/", location.href)).href;
+  }
+  content.querySelector("script").src = new URL("./fixture.mjs", location.href).href;
+  const frame = document.createElement("iframe");
+  frame.style.width = "1000px";
+  frame.style.height = "800px";
+  frame.srcdoc = `<!doctype html>${content.documentElement.outerHTML}`;
+  document.body.append(frame);
+  try {
+    await waitFor(() => frame.contentWindow.directFixture, "dashboard fixture did not initialize");
+    await action(frame.contentWindow.directFixture, frame.contentDocument);
+  } finally {
+    frame.contentWindow.directFixture?.dispose();
+    frame.remove();
+  }
+};
+
+await run("save completion preserves newer drafts and verified forced-save recovery", async () => {
+  for (const outcome of ["resolve", "reject", "forced", "forced-new-draft"]) {
+    await withDashboardFixture(async (fixture, page) => {
+      let resolveSave, rejectSave;
+      fixture.client.saveConfiguration = () => new Promise((resolve, reject) => {
+        resolveSave = resolve;
+        rejectSave = reject;
+      });
+      const forced = outcome.startsWith("forced");
+      if (forced) fixture.patch({ msc: { enabled: true, transition_pending: false } });
+      await Promise.resolve();
+      const clock = page.querySelector("#settings-clock");
+      clock.value = "250";
+      clock.dispatchEvent(new Event("change"));
+      await Promise.resolve();
+      page.querySelector("#settings-save").click();
+      page.querySelector("#confirm-configuration").click();
+      check(resolveSave, `${outcome}: save did not start`);
+      await fixture.client.disconnect();
+      await Promise.resolve();
+      await fixture.ready();
+      if (forced) fixture.patch({ recovered_opcode: OP.SAVE_SETTINGS });
+      if (outcome !== "forced") page.querySelector("#direct-ble-generate").click();
+      await Promise.resolve();
+      const key = page.querySelector("#direct-ble-secret").value;
+      if (outcome === "reject") rejectSave(new Error("Old save failed"));
+      else resolveSave({ tcp_cli_enabled: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      check(page.querySelector("#direct-ble-secret").value === key, `${outcome}: a newer key was cleared`);
+      const note = page.querySelector("#settings-note").textContent;
+      check(outcome === "forced" ? note.includes("confirmed after reconnect")
+        : !/Settings saved|Old save failed/.test(note), `${outcome}: obsolete save changed the UI`);
+    });
+  }
+});
+
+await run("telemetry bursts coalesce and avoid unchanged connection-label writes", async () => {
+  await withDashboardFixture(async (fixture, page) => {
+    const times = [];
+    const label = page.querySelector("#connection-label");
+    let labelWrites = 0;
+    const observer = new MutationObserver(records => { labelWrites += records.length; });
+    observer.observe(label, { childList: true, characterData: true, subtree: true });
+    const uptime = page.querySelector("#uptime");
+    let updates = 0;
+    const telemetryObserver = new MutationObserver(records => { updates += records.length; });
+    telemetryObserver.observe(uptime, { childList: true, characterData: true, subtree: true });
+    try {
+      for (let index = 0; index < 60; index++) {
+        const start = performance.now();
+        for (let burst = 0; burst < 3; burst++) fixture.telemetry((index * 3 + burst) * 1000);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (index >= 10) times.push(performance.now() - start);
+      }
+      check(updates === 60, `180 telemetry events caused ${updates} uptime writes rather than 60`);
+      check(labelWrites === 0, "unchanged connection labels were rewritten");
+      times.sort((a, b) => a - b);
+      results.dataset.dashboardMedianMs = times[Math.floor(times.length / 2)].toFixed(2);
+      results.dataset.dashboardP95Ms = times[Math.floor(times.length * 0.95)].toFixed(2);
+    } finally { observer.disconnect(); telemetryObserver.disconnect(); }
+  });
+});
+
 await run("bounded console scrollback remains correct during cursor edits", async () => {
   const screen = new CliScreen();
   screen.write(`${"x".repeat(512)}\r\n`.repeat(999));
@@ -186,6 +284,22 @@ await run("bounded console scrollback remains correct during cursor edits", asyn
     screen.write("\r<svg onload='throw new Error(\"unsafe\")'>");
     render(screen);
     check(!terminal.querySelector("svg"), "console output was rendered as HTML");
+    const streamingTimes = [];
+    for (let index = 0; index < 60; index++) {
+      const start = performance.now();
+      screen.write(`\r\n${"output ".repeat(60)}`);
+      render(screen);
+      if (index >= 10) streamingTimes.push(performance.now() - start);
+    }
+    check(screen.display()[0].split("\n").length === 1000, "continuous output exceeded the row limit");
+    check(nodes.every((node, index) => terminal.childNodes[index] === node), "streaming replaced terminal nodes");
+    streamingTimes.sort((a, b) => a - b);
+    results.dataset.streamingMedianMs = streamingTimes[Math.floor(streamingTimes.length / 2)].toFixed(2);
+    results.dataset.streamingP95Ms = streamingTimes[Math.floor(streamingTimes.length * 0.95)].toFixed(2);
+    screen.write("\r> cmd\x1b[DZ");
+    render(screen);
+    check(nodes[1].textContent === " ", "interactive cursor did not advance after streaming");
+    check(nodes[0].data.endsWith("> cmZ"), "interactive input echo was lost after streaming");
   } finally { terminal.remove(); }
 });
 

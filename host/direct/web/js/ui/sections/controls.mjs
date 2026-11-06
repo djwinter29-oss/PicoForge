@@ -4,6 +4,12 @@ import { describe } from "../messages.mjs";
 
 const element = id => queryElement(`#${id}`);
 
+/**
+ * @typedef {{eligibility: ReturnType<typeof import("../../state/selectors.mjs").deriveOperationEligibility>,
+ *   formBusy: boolean, settingsMessage: string | null, bleName: string | null, settingsDirty: boolean,
+ *   wirelessDirty: boolean, wirelessCanSave: boolean}} ControlsUi
+ */
+
 export function deriveClockOptions(mcu, savedClock) {
   const choices = mcu === "RP2040"
     ? [[0, "Default (125 MHz)"], [150, "150 MHz"], [200, "200 MHz"], [250, "250 MHz"]]
@@ -36,16 +42,16 @@ export function renderClockOptions(state) {
 /**
  * @brief Derive control labels, notes and gates. Operation gates come from `canRun`, so a disabled button and a
  * refused session call share one reason (shown as the button title).
- * @param state Domain state with the dashboard's merged `error`.
- * @param ui `{eligibility, formBusy, settingsMessage, bleName, settingsDirty, wirelessDirty, wirelessCanSave}`.
- * @param environment Injected browser facts `{secure, hid, ble}`.
+ * @param {import("./status-model.mjs").DashboardPresentation} state Domain snapshot with display-text errors.
+ * @param {ControlsUi} ui
+ * @param {Pick<import("../dashboard.mjs").DashboardEnvironment, "secure" | "hid" | "ble">} environment
  */
 export function deriveControlsViewModel(state, ui, environment) {
   const bluetooth = state.link === "ble";
   const { eligibility } = ui;
   const { storageReady } = eligibility;
   const reason = operation => ui.formBusy ? "Finish the wireless operation first."
-    : describe(canRun(state, operation).reason);
+    : describe(canRun(state, operation, eligibility).reason);
   const reasons = { "led-control": reason("led"), "msc-control": reason("msc"), "settings-reboot": reason("reboot"),
     "settings-save": reason("settings") };
   const bleLinked = bluetooth && (state.connected || state.reconnecting);
@@ -100,6 +106,9 @@ export function deriveControlsViewModel(state, ui, environment) {
   };
 }
 
+/** @copydoc deriveControlsViewModel */
+/** @type {(state: Parameters<typeof deriveControlsViewModel>[0], ui: ControlsUi,
+ *   environment: Parameters<typeof deriveControlsViewModel>[2]) => void} */
 export function renderControls(state, ui, environment) {
   const model = deriveControlsViewModel(state, ui, environment);
   if (model.settingsValues) {
