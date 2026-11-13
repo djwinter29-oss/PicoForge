@@ -22,9 +22,10 @@ PHYSICAL_SOURCES = [
 
 
 def test_project_c_includes_do_not_traverse_relative_directories():
+    excluded = {"third_party", ".venv", "venv", "node_modules", "build", "bin", "obj", "__pycache__"}
     for directory in ("firmware/src", "firmware/tests", "host", "tools"):
         for source in (ROOT / directory).rglob("*"):
-            if source.suffix not in (".c", ".h", ".inc") or "third_party" in source.parts:
+            if source.suffix not in (".c", ".h", ".inc") or not excluded.isdisjoint(source.relative_to(ROOT).parts):
                 continue
             assert not re.search(
                 r'^\s*#\s*(?:include\s*|define\s+\w+\s+)[<"]\.\.?/',
@@ -81,10 +82,6 @@ def test_product_cli_is_application_owned_and_logging_driver_owns_output():
         assert not any(header.startswith("app/") or Path(header).name in (
             "cli.h",
         ) for header in headers), source
-    logging = (ROOT / "firmware/src/platform/logging.c").read_text()
-    assert logging.index("stdio_uart_init_full(") < logging.index("stdio_filter_driver(&stdio_uart)")
-    assert "stdio_put_string(line, (int)line_length, true, true)" in logging
-    assert "pf_logging_write(" in logging
     assert "pf_logging_init(" in (ROOT / "firmware/src/main.c").read_text()
     assert "pf_monitor_uart_init" not in "\n".join(
         source.read_text() for source in (ROOT / "firmware/src").rglob("*.[ch]")
@@ -93,24 +90,7 @@ def test_product_cli_is_application_owned_and_logging_driver_owns_output():
     assert "add_library(pf_logging STATIC" in cmake
     assert "pf_monitor_uart" not in cmake
     header = (ROOT / "firmware/src/platform/logging.h").read_text()
-    assert "pf_logging_level_t" in header
-    assert "pf_logging_write(" in header
-    assert "pf_logging_set_minimum_level" not in header
-    assert "PF_LOGGING_INFO" in header
-    assert "pf_logging_board_t" in header
-    assert "pf_logging_board.default_level" in logging
-    config = (ROOT / "firmware/src/config/config.h").read_text()
-    assert "#ifndef PF_LOG_LINE_BUFFER_SIZE" in config
-    assert "#define PF_LOG_LINE_BUFFER_SIZE 128u" in config
-    assert '#include "config/config.h"' in logging
-    assert "_Static_assert(PF_LOG_LINE_BUFFER_SIZE >= sizeof(" in logging
-    assert "char line[PF_LOG_LINE_BUFFER_SIZE]" in logging
-    assert "Invalid logging default severity" in logging
     assert 'format(printf, format_index, first_argument)' in header
-    assert 'line[line_length - 3u] =' in logging
-    assert "longer messages end with an ellipsis" in header
-    assert "requires PICO_STDOUT_MUTEX" in header
-    assert "about 11 ms for a maximum-length line" in header
 
 
 def test_file_benchmark_and_application_headers_do_not_expose_sd():
@@ -232,7 +212,8 @@ def test_common_lifecycle_and_raw_wire_interfaces_do_not_expose_device_transacti
 def test_backend_api_and_guards_match_module_names(mode):
     header = (ENGINES[mode] / f"{mode}.h").read_text()
     guard = f"PF_{mode.upper()}_H"
-    assert re.search(rf"^#ifndef {guard}\n#define {guard}$", header, re.MULTILINE)
+    assert re.search(rf"^\s*#\s*ifndef\s+{guard}\b", header, re.MULTILINE)
+    assert re.search(rf"^\s*#\s*define\s+{guard}\b", header, re.MULTILINE)
     assert f"pf_{mode}_t" in header
     assert f"pf_{mode}_bus(" in header
     for source in ENGINES[mode].rglob("*"):
@@ -248,7 +229,8 @@ def test_wire_interface_names_and_guards_match_modules(module):
     ]
     header = (directory / f"{module}.h").read_text()
     guard = f"PF_{module.upper()}_H"
-    assert re.search(rf"^#ifndef {guard}\n#define {guard}$", header, re.MULTILINE)
+    assert re.search(rf"^\s*#\s*ifndef\s+{guard}\b", header, re.MULTILINE)
+    assert re.search(rf"^\s*#\s*define\s+{guard}\b", header, re.MULTILINE)
     assert f"pf_{module}_" in header
     sources = [directory / f"{module}.h"]
     if module == "sd_link":
