@@ -17,6 +17,14 @@
 - Do not claim firmware builds until the firmware CMake project and its required sources are present.
 - The Direct dashboard (`host/direct`) is independent and shares no code with the Python/.NET dashboard (`host/web`, `host/python`, `host/dotnet`), including copied files. See `docs/development/host-tools.md#direct-dashboard-independence`.
 
+## Testing
+
+- Check behavior and meaningful configuration or architecture invariants, not exact dependency versions, prose, or the
+  source spelling of assertions already executed by runtime tests.
+- Parse structured configuration when order and formatting are irrelevant.
+- Restrict source scans to project-owned files, excluding installed dependencies and generated output.
+- Keep pinned upstream source-order checks where integration behavior depends on that ordering.
+
 ## Documentation
 
 - Keep each design decision, development procedure, and test plan in one authoritative document; link to it rather than duplicating details.
