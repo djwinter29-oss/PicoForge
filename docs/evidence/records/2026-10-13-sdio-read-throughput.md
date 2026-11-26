@@ -1,5 +1,7 @@
 # SDIO read throughput fix — 2026-10-13 UTC
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 ## Scope and artifact
 
 - Repository: PicoForge, branch `fix-sdcard`, base `0f000b2` plus uncommitted changes.

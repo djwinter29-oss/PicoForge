@@ -1,17 +1,15 @@
 # PicoForge Python Host
 
+[Documentation](../../docs/README.md) / [Dashboard guides](../../docs/guides/README.md#dashboards)
+
 USB HID control, diagnostics, and a local dashboard for PicoForge firmware on Pico, Pico 2, and their W variants.
 Basic monitoring needs no SD card. Storage and wireless controls depend on the connected firmware's capabilities.
 
 Python and .NET share their own frontend in `host/web/src`. The Direct dashboard is independent: **no code is shared
 with Direct**. See the
 [Direct independence policy](../../docs/development/host-tools.md#direct-dashboard-independence).
-This Python host connects over USB HID, not Bluetooth LE.
-Wireless status uses Feature 12 and all writes use the unified Feature 20 channel. The dashboard preserves saved
-service switches from Feature 2 and supports staged credentials, testing, scans, and USB-generated TCP CLI proofs.
-Opaque scan SSIDs include `ssid_hex` beside an escaped display name; test/save requests may send that hex value
-to preserve the network bytes. Saving a tested pair reuses its staging without resending either credential.
-See the [authoritative wire contract](../../docs/reference/usb-hid.md) for layouts and expiry rules.
+This host connects over USB HID, not Bluetooth LE. Available controls depend on firmware capabilities and fresh status;
+see the [HID report reference](../../docs/reference/usb-hid.md) for the device contract.
 
 ## Install
 
@@ -31,15 +29,11 @@ picoforge web
 Open **http://127.0.0.1:5000/**. The wheel includes the local dashboard assets; Node.js and .NET are not required.
 Runtime dependencies are Flask and HIDAPI, with versions defined in [pyproject.toml](pyproject.toml).
 Native HID access still requires the operating system's usual libraries, drivers, and permissions.
-The displayed application version comes from the installed `picoforge` distribution metadata when the imported
-package is inside that metadata's distribution root, including source trees with local package metadata.
-Without matching metadata, imports use `0.0.0-debug`; an unrelated installation does not override the fallback.
-Release packaging stamps both distribution metadata and the source fallback.
 
 Packages are published to [PyPI](https://pypi.org/project/picoforge/) and
 [GitHub Releases](https://github.com/djwinter29-oss/PicoForge/releases/latest) after successful
-[release setup and publication](../../docs/deployment/release.md#publishing-setup); downloads may be unavailable before then.
-For firmware installation and wiring, start with [Getting Started](../../docs/guides/getting-started.md).
+[release setup and publication](../../docs/development/releases.md#publishing-setup); downloads may be unavailable before then.
+For firmware installation and wiring, start with [Getting Started](../../docs/getting-started.md).
 
 ### Run from a source checkout
 
@@ -93,7 +87,7 @@ tools/host/hid-permissions-setup.sh
 - **SD storage:** **Enable USB drive** hands the card to the computer; firmware file operations and self-tests are
   unavailable while USB owns it. Safely eject before returning it. **Return to Pico** requires data-loss confirmation;
   successful remount does not prove filesystem integrity. See
-  [storage setup and use](../../docs/guides/getting-started.md#5-try-sd-card-storage) and
+  [storage setup and use](../../docs/guides/storage.md) and
   [force-return risks](../../docs/reference/usb-hid.md#msc-force-return-safety).
 - **SD benchmark:** start/cancel the firmware self-test and view verified bytes and throughput. It writes a temporary
   file: back up card data and follow the [benchmark procedure](../../docs/guides/sdcard-benchmark.md).
@@ -107,7 +101,7 @@ tools/host/hid-permissions-setup.sh
 Commands can be rejected or remain uncertain after a timeout/disconnect; delivery is not completion.
 Do not replay uncertain writes. Feature availability and safety gates follow the connected firmware.
 Builds and host tests do not establish physical hardware reliability; see the
-[qualification gaps](../../docs/validation/qualification-gaps.md).
+[qualification gaps](../../docs/evidence/README.md).
 
 ## Development and License
 

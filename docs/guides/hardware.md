@@ -1,5 +1,7 @@
 # Hardware Setup
 
+[Documentation](../README.md) / [User guides](README.md)
+
 This guide owns board wiring, power, debug connections, and the SD-card breakout setup.
 Supported builds target Pico, Pico W, Pico 2, and Pico 2 W. Choose one SD transport at build time. Expansion GPIO examples below
 describe available hardware functions, not implemented application features.
@@ -75,7 +77,7 @@ automatic hardware CS. SDIO has no CS signal.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and
   busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
 - Pin names follow the breakout guide below. Historical operations are preserved in
-  [bring-up records](../validation/records/sdcard-bringup-observations.md); they do not qualify current firmware.
+  [bring-up records](../evidence/records/sdcard-bringup-observations.md); they do not qualify current firmware.
 
 ## Lab Hardware Examples
 

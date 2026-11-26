@@ -1,5 +1,7 @@
 # Test Ownership
 
+[Development](../docs/development/README.md)
+
 This directory structure separates firmware unit tests, repository-level contracts, and hardware test documentation. Keep tests in the location that matches what they verify; do not treat a host pass as hardware qualification.
 
 ## Firmware Unit Tests
@@ -70,25 +72,35 @@ These project-level tests assert properties of supplied cross-build artifacts:
 | [artifacts/test_msc_elf.py](artifacts/test_msc_elf.py) | Verify MSC callback pointers and SD build dependencies |
 | [artifacts/test_sd_ports.py](artifacts/test_sd_ports.py) | Verify bare-metal compilation manifests and linked symbols |
 
-For existing Pico 2 FreeRTOS validation builds, run from the repository root:
+For the MSC artifact check against an existing Pico 2 FreeRTOS build, run from
+the repository root:
 
 ```sh
-python3 -m pytest tests -m artifacts \
+python3 -m pytest tests/artifacts/test_msc_elf.py -m artifacts \
     --elf "$(cat build/validation-pico2-SDIO_PIO/pico_forge_elf.txt)"
 ```
 
 `validate.sh` builds the four Pico/Pico 2 × SDIO/SPI FreeRTOS combinations and invokes the MSC artifact check.
-The bare-metal port artifact test remains a developer-only direct CMake smoke check, not a product build.
+The bare-metal port artifact test is a separate developer-only direct CMake
+smoke check, not a product build. See the [driver smoke build instructions](../docs/reference/sdcard/driver.md#execution-environment-ports)
+and supply its build directory explicitly:
+
+```sh
+python3 -m pytest tests/artifacts/test_sd_ports.py -m artifacts \
+    --baremetal-build-dir build/driver-smoke-pico2-sdio
+```
+
 The MSC checker requires an unstripped ELF with DWARF and Arm GNU `nm`/`readelf`;
-the storage dependency check requires `compile_commands.json` and `CMakeCache.txt`.
-Neither test builds or flashes firmware.
-Repeat either option to check multiple inputs. Selecting artifact tests without
-the corresponding input fails explicitly; missing files are never silently skipped.
+the bare-metal checker requires `compile_commands.json`, `CMakeCache.txt`, the
+linked smoke ELF, and Arm GNU `nm`. These tests inspect supplied builds; neither
+builds nor flashes firmware. Missing inputs fail explicitly.
 
 ## Hardware Test Documentation
 
-`docs/validation/` tracks qualification gaps, review dispositions, and historical evidence.
-Current procedures live in `docs/development/` and wiring in `docs/guides/hardware.md`.
+The [evidence index](../docs/evidence/README.md) tracks qualification gaps, review dispositions, and historical results.
+Current [firmware procedures](../docs/development/firmware-testing.md#hardware-validation) and
+[host procedures](../docs/development/host-tools.md#qualify-the-python-host-with-hardware) live in development;
+wiring is in the [hardware guide](../docs/guides/hardware.md).
 Procedures requiring a board or probe should distinguish a partial run from a complete pass.
 
 ## Project Validation
@@ -100,13 +112,14 @@ inputs are parametrized so failures identify the individual case.
 The root [pyproject.toml](../pyproject.toml) configures discovery and markers
 using pytest 9's native `[tool.pytest]` table.
 
-To run everything against existing builds, omit `-m` from the artifact command
-above. For checks that do not require firmware builds, use `-m contracts`.
+For checks that do not require firmware builds, use `-m contracts`.
 Use `-k NAME` to filter cases and `--junitxml=build/project-tests.xml` for CI reports.
 Firmware CI runs common contracts, integrity regressions and MSC artifact
-tests after each FreeRTOS board build, and runs PIO models only after SDIO_PIO
-FreeRTOS builds. The local validation runner additionally builds and tests
-both bare-metal transports.
+tests after each normal FreeRTOS board build; PR jobs also build a
+benchmark- and wireless-disabled variant for every board/transport pair. PIO
+models run only after SDIO_PIO FreeRTOS builds. The local validation runner
+builds the four FreeRTOS board/transport combinations; it does not build the
+bare-metal smoke targets.
 
 Run [validate.sh](../tools/validation/validate.sh) from the repository root for
 shell syntax checks, these project tests, Ceedling tests, PIO models and

@@ -1,9 +1,15 @@
 # PicoForge Firmware Architecture
 
+[Documentation](../README.md) / [Reference](README.md)
+
 PicoForge is firmware for RP2040 and RP2350 boards. It provides board management, USB control, optional SD-card
 storage, and optional wireless services for W boards. This document describes the top-level structure and the
 runtime ownership rules that connect those capabilities. The linked references own protocol layouts, hardware
 requirements, settings persistence, and detailed driver behavior.
+
+On this page: [layers](#firmware-layers) / [boot and runtime](#boot-and-runtime) /
+[dependency rules](#layer-responsibilities) / [storage lifecycle](#storage-ownership-lifecycle) /
+[worker state](#storage-worker-state) / [validation](#testing-and-validation).
 
 ## System Context
 
@@ -149,7 +155,7 @@ the resulting workload.
 The host tools use the stable USB identity and management reports to discover board capabilities and read telemetry.
 HID carries structured control and status; CDC carries the terminal session. Both are served by the USB owner task.
 The CLI command engine can also be attached to a TCP client on supported W boards, but only one transport owns the
-CLI session at a time. BLE provides a separate authenticated control path for supported LED and benchmark commands.
+CLI session at a time. BLE provides authenticated LED, reboot, and settings commands; benchmark execution is USB-only.
 
 HID and CLI commands call application/platform interfaces; they do not manipulate peripheral registers directly.
 Settings are staged and persisted for the next boot rather than reconfiguring active services. See the
@@ -179,19 +185,9 @@ wire behavior and forced-return safeguards.
 
 ## Layer Responsibilities
 
-Keep dependencies flowing toward hardware-facing services:
-
-1. **Host applications** implement their own UI and host OS integration. Direct is independent and shares no code
-   with the Python and .NET dashboard; Python and .NET may share their web frontend.
-2. **Application** owns product policy, command admission, and composition. It can depend on platform services and
-   integrations, but reusable lower layers do not depend on application code.
-3. **Platform services** own reusable device behavior and stable service interfaces, including storage lifecycle.
-   Platform storage adapts FatFs and the logical block-device interface to the selected media driver.
-4. **Drivers** implement reusable peripheral operations and hardware access. They do not own dashboard, command, or
-   product-specific policy.
-5. **Integrations** connect the Pico SDK and pinned external components to project-owned interfaces.
-6. **Board configuration** provides build-selected assignments and hardware identity; it is not a runtime backend
-   registry.
+The [layer map](#firmware-layers) defines ownership. Keep dependencies flowing from application code toward reusable
+platform, integration, and driver interfaces, never from those lower layers back into application headers.
+Host applications follow the [dashboard independence policy](../development/host-tools.md#direct-dashboard-independence).
 
 For board-specific pin choices, use `firmware/src/config/`. For a reusable peripheral driver, use
 `firmware/src/drivers/`. Keep platform services flat under `firmware/src/platform/`; group a driver only when its
@@ -341,6 +337,6 @@ Unused fill bytes are an observation, not certified margin because unwritten sta
 Use [firmware testing](../development/firmware-testing.md) for builds and hardware acceptance,
 [host development](../development/host-tools.md) for dashboard tests, and the
 [test ownership index](../../tests/README.md) for fixtures and suite boundaries. The
-[release guide](../deployment/release.md) owns current CI matrices, package contents, and publication. Historical
-software checks belong in [review records](../validation/records/static-review-remediation.md); their old matrix and
+[release guide](../development/releases.md) owns current CI matrices, package contents, and publication. Historical
+software checks belong in [review records](../evidence/records/static-review-remediation.md); their old matrix and
 command results are not current build instructions.

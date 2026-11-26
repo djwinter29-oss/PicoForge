@@ -1,5 +1,7 @@
 # USB HID Report Reference
 
+[Documentation](../README.md) / [Reference](README.md)
+
 This document is the authoritative HID wire contract. For CDC CLI behavior, see the
 [USB CDC CLI guide](../guides/console.md).
 

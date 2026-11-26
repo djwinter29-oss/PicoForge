@@ -1,5 +1,7 @@
 # Console Integration
 
+[Documentation](../README.md) / [Development](README.md)
+
 This reference owns the Embedded CLI dependency, command registration, CDC session lifecycle, buffers, and
 software validation. User commands and stalled-output recovery remain in [the console guide](../guides/console.md).
 
@@ -35,7 +37,7 @@ regressions when those boundaries change.
 
 ```sh
 tools/validation/setup-ceedling-testing.sh test:cli \
-    test:cli_groups test:cli_board test:cli_config test:cli_storage test:cli_fs test:usb_hid_wireless
+    test:cli_groups test:cli_board test:cli_config test:cli_storage test:cli_fs
 ```
 
 ## Integration

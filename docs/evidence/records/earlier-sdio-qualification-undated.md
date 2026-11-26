@@ -1,5 +1,7 @@
 # Earlier SDIO Qualification Observations (Undated)
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: not recorded. Migrated unchanged from the former "Previously Recorded Qualification" section of
 [SD-card driver design](../../reference/sdcard/driver.md); the observations pre-date the 2026-10-13 records.
 

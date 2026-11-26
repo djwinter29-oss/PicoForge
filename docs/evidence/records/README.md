@@ -1,9 +1,14 @@
 # Test and Review Records
 
+[Documentation](../../README.md) / [Evidence](../README.md)
+
 Dated, configuration-specific records. Each states its date, hardware/firmware configuration, and scope; none
 qualifies the current firmware or other cards unless it says so. Current design lives in
 [SD-card driver design](../../reference/sdcard/driver.md); current review dispositions in the
 [SD remediation matrix](../sd-review.md).
+
+Commands and artifact paths inside a record belong to its original revision. Use the
+[development workflows](../../development/README.md) for current commands.
 
 | Record | Kind |
 | --- | --- |

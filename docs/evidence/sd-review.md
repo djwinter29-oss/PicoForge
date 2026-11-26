@@ -1,5 +1,7 @@
 # SD Review Dispositions
 
+[Documentation](../README.md) / [Evidence](README.md)
+
 This page tracks unresolved evidence needs and retained design constraints, not a hardware pass.
 The [historical remediation record](records/sd-review-remediation.md) preserves the reviews based on `cc2816d`
 and `8419b1f`; their working-diff test counts and instrumentation statements do not describe the current revision.

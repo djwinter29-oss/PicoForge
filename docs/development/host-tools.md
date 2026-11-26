@@ -1,19 +1,21 @@
 # Host Tools Development
 
+[Documentation](../README.md) / [Development](README.md)
+
 Python and .NET serve the shared dashboard in `host/web/src`. Direct lives independently in `host/direct` and connects
 over WebHID or Web Bluetooth. For installation and everyday use, see the [Python](../../host/python/README.md),
 [.NET](../../host/dotnet/PicoForge/README.md), and [Direct](../../host/direct/README.md) host guides.
 
 Run commands below from the repository root.
 
-- [Launch a host](#run-a-host-application)
+- [Check prerequisites](#prerequisites)
 - [Choose where to edit](#shared-dashboard-changes)
 - [Run hardware-free tests](#run-host-tests)
-- [Check architecture and ownership contracts](#shared-frontend-and-protocol-boundaries)
+- [Check architecture and ownership contracts](#host-contracts-and-lifecycle)
 - [Measure performance](#performance-baselines)
 - Qualify hardware: [Python](#qualify-the-python-host-with-hardware) or [.NET](#qualify-the-net-host-with-hardware)
 
-## Run a Host Application
+## Prerequisites
 
 Install only the toolchain needed for your change:
 
@@ -21,30 +23,11 @@ Install only the toolchain needed for your change:
 |---|---|
 | Python host and repository contracts | Python 3.10+ |
 | .NET source host and tests | .NET 10 SDK |
-| Shared and Direct frontend unit tests | Node.js with the built-in test runner |
-| Direct USB use | WebHID-capable desktop browser and USB permission |
+| Shared and Direct frontend unit tests | Node.js 22+ with the built-in test runner |
 
-Choose one launcher:
-
-```sh
-tools/host/run-python.sh
-tools/host/run-dotnet.sh
-tools/host/run-direct.sh
-```
-
-Python and .NET default to <http://127.0.0.1:5000/>; run only one server on that port at a time. Direct defaults to
-<http://localhost:8000/>. On Linux, HID access may require the
-[permission setup script](../../tools/host/hid-permissions-setup.sh), followed by reconnecting the board.
-Use only one active HID monitor per board: separate host processes do not coordinate device readers.
-
-The Python launcher provisions its environment on first use. For an explicit source installation:
-
-```sh
-python3 -m pip install --editable host/python
-```
-
-See the [CDC CLI guide](../guides/console.md) for the USB console and
-[Wi-Fi TCP terminal](../guides/console.md#wi-fi-tcp-terminal) for bridge setup, limits and security.
+Source launch instructions belong to the [Python](../../host/python/README.md#run-from-a-source-checkout),
+[.NET](../../host/dotnet/PicoForge/README.md#run-from-source), and [Direct](../../host/direct/README.md#quick-start)
+guides. Set `PYTHON`, `NODE`, or `DOTNET` for non-default executable paths when using the host-test wrapper.
 
 ## Shared Dashboard Changes
 
@@ -124,7 +107,6 @@ tests. For a focused change, choose the relevant command:
 python3 -m unittest discover -s host/python/tests -v
 python3 -m uv lock --check --project host/python
 python3 -m pyright --project host/python/pyproject.toml
-node host/direct/tests/run-tests.mjs
 node host/web/tests/run-tests.mjs
 npx --yes --package typescript@5.9.3 tsc --project host/web/tsconfig.json
 dotnet test host/dotnet/PicoForge.sln --configuration Release --nologo --filter "Category!=Performance"
@@ -135,16 +117,9 @@ Shared frontend tests cover mounted interactions and boundary validation; Direct
 Prefer production-shaped replies and deterministic event/clock control over sleeps. Keep strict type contracts at
 API, command-state and draft boundaries; runtime validation remains necessary at peer boundaries.
 
-For repository contracts, including documentation links:
-
-```sh
-python3 -m pip install -r tests/requirements.txt
-python3 -m pytest tests -m contracts
-# Documentation-only change:
-python3 -m pytest tests/contracts/test_documentation_links.py
-```
-
-See the [test ownership index](../../tests/README.md) for cross-project prerequisites.
+For Direct's unit, bridge, type, and browser checks, use [Direct development](direct-dashboard.md).
+For cross-project checks and prerequisites, use the [repository contract instructions](../../tests/README.md#repository-contracts).
+Documentation-only changes use the [documentation checks](README.md#documentation-changes).
 
 ### Shared browser checks
 
@@ -189,10 +164,11 @@ Replace the expected version for stamped releases; on Windows use `Scripts` inst
 imports, compares the full installed asset payload, serves routes without hardware, and exercises imports and CLI entry
 points. .NET release smoke checks similarly run the extracted executable and compare its full dashboard payload.
 
-## Shared Frontend and Protocol Boundaries
+## Host Contracts and Lifecycle
 
-The [HID Report Reference](../reference/usb-hid.md) owns framing, validation, freshness and asynchronous-operation
-semantics. Keep shared UI behavior backend-neutral; browser-specific USB handling belongs in Direct.
+The [HID Report Reference](../reference/usb-hid.md) owns framing, validation, Input-report freshness, and
+asynchronous-operation semantics. Wireless polling/expiry is host policy, described in the client lifecycle sections.
+Keep shared UI behavior backend-neutral; browser-specific USB handling belongs in Direct.
 
 ### Shared API contract
 
@@ -226,6 +202,23 @@ Wi-Fi transport failures use fixed per-endpoint uncertainty messages. Console co
 detail and are logged as warnings. Expected configuration-read failures preserve identity/input diagnostics with
 `settings_supported: false` and `settings_message`; configuration-dependent writes stop, while LED and read-only
 Re-sync remain available. Unexpected parser/programming faults are internal errors, not degraded connected success.
+
+#### Self-test API
+
+Both native hosts accept `POST /api/self-test` and return HTTP 202 to acknowledge command delivery, not successful
+completion:
+
+```json
+{"action":"start","size_mib":32}
+```
+
+```json
+{"action":"cancel"}
+```
+
+Poll `GET /api/status` and its `self_test` object for the run's progress and outcome. Request rejection is reported
+by the command response; execution failure uses `error` and `filesystem_result`. Wire-level preflight, retained
+results, and error details are defined in the [HID reference](../reference/usb-hid.md#report-id-11-storage-benchmark-status).
 
 ### Command ownership and cancellation
 
@@ -288,6 +281,8 @@ is released between batches. Wireless polling is 500 ms during scan/test, 2 s no
 Wireless expires at 6 s without a successful refresh in both native hosts; failed reads do not extend freshness.
 Console idle timers are cancelled on disconnect/shutdown; a concurrent console close returns 409, an idle poll succeeds.
 
+Package version resolution uses installed `picoforge` metadata only when the imported package is inside that
+distribution's root; otherwise it uses the source fallback `0.0.0-debug`. Release packaging stamps both values.
 Keep runtime pins and `uv.lock` synchronized with `python3 -m uv lock --project host/python`.
 Contributor validators belong in `host/python/tests/requirements.txt`, not the shipped package.
 
@@ -326,6 +321,8 @@ Direct serves/tests without `host/web`, `host/python` or `host/dotnet`. Firmware
 contracts, not shared implementations. CI may run both independent suites.
 [Isolation contracts](../../tests/contracts/test_dashboard_isolation.py) check imports, packaging and byte-identical
 copies other than the favicon; near-copies remain a review concern.
+
+The [Direct development guide](direct-dashboard.md) owns its source map, polling/freshness policy, and checks.
 
 ## Performance Baselines
 
@@ -407,8 +404,8 @@ Host tests cannot establish real USB latency, CPU use or device handoff. Use rep
    Reconnect one uniquely and confirm monitor reuse without replay.
 8. Record worst report/UI latency, process CPU, reconnect results and errors. Failed steps remain qualification gaps.
 
-Store dated observations in [validation records](../validation/records/README.md) and outstanding coverage in
-[qualification gaps](../validation/qualification-gaps.md).
+Store dated observations in [validation records](../evidence/records/README.md) and outstanding coverage in
+[qualification gaps](../evidence/README.md).
 
 ## Qualify the .NET Host with Hardware
 
@@ -428,5 +425,5 @@ establish real freshness, multi-board CPU or storage durability. Use representat
    idle/multi-board CPU and reconnect results. Compare 10/50/100 ms polling only with otherwise equivalent builds,
    firmware, board, workloads and observation periods. Wakeup counts alone do not establish CPU reduction.
 
-Store dated observations in [validation records](../validation/records/README.md) and outstanding coverage in
-[qualification gaps](../validation/qualification-gaps.md). Failed checks are not qualified by passing unit tests.
+Store dated observations in [validation records](../evidence/records/README.md) and outstanding coverage in
+[qualification gaps](../evidence/README.md). Failed checks are not qualified by passing unit tests.

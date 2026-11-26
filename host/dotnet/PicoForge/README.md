@@ -1,5 +1,7 @@
 # PicoForge .NET Host
 
+[Documentation](../../../docs/README.md) / [Dashboard guides](../../../docs/guides/README.md#dashboards)
+
 Monitor PicoForge boards over USB HID and use the local dashboard at <http://127.0.0.1:5000/>.
 
 ## Run a Released Package
@@ -7,7 +9,7 @@ Monitor PicoForge boards over USB HID and use the local dashboard at <http://127
 1. Download the matching self-contained host archive from the
    [latest release](https://github.com/djwinter29-oss/PicoForge/releases/latest):
    Linux x64, Windows x64 or macOS ARM64. Verify its checksum and extract the entire archive; see
-   [download verification](../../../docs/deployment/release.md#using-downloads).
+   [download verification](../../../docs/getting-started.md#download-and-verify).
 2. Install native HID dependencies if needed:
    - Debian/Ubuntu: `sudo apt install libhidapi-hidraw0`; configure
      [HID permissions](../../../tools/host/hid-permissions-setup.sh) and reconnect the board.
@@ -63,7 +65,7 @@ Python and .NET share the frontend in `host/web/src`; Direct is an independent i
 
 Before changing storage or persistent settings, read the relevant safety procedure:
 
-- [USB storage ownership and safe eject](../../../docs/guides/getting-started.md#5-try-sd-card-storage)
+- [USB storage ownership and safe eject](../../../docs/guides/storage.md#share-the-card-with-your-computer)
 - [Force-return risks](../../../docs/reference/usb-hid.md#msc-force-return-safety)
 - [Forced Save&Reboot and data-loss confirmation](../../../docs/reference/settings.md#forced-save-and-reboot)
 - [SD-card benchmark safety](../../../docs/guides/sdcard-benchmark.md)

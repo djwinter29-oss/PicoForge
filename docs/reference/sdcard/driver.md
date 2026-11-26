@@ -1,10 +1,13 @@
 # SD-Card Driver Design
 
+[Documentation](../../README.md) / [Reference](../README.md)
+
 This document describes the SD memory-card driver for RP2040 and
 RP2350. It is the reference for driver interfaces, transport workflows, and
 resource ownership. Wiring and electrical requirements remain in the
-[SD-card driver guide](../../guides/hardware.md#memory-and-storage-connections); filesystem
-commands and mounting policy remain in [the CDC CLI guide](../../guides/console.md).
+[hardware guide](../../guides/hardware.md#memory-and-storage-connections); filesystem commands are in the
+[console guide](../../guides/console.md), and mounting policy is owned by the
+[storage lifecycle](../architecture.md#storage-ownership-lifecycle).
 
 ## Guide
 
@@ -14,8 +17,8 @@ commands and mounting policy remain in [the CDC CLI guide](../../guides/console.
 | Protocol workflows | [Initialization](#initialization-workflow), [reads](#read-workflow), [writes](#write-workflow), [ownership](#ownership-workflow) |
 | Resources and performance | [Hardware resources](#hardware-resource-inventory), [status and MSC batching](#performance-controls-and-status) |
 | Test scope | [Validation limits](#validation-and-limits), [SD-card performance test](../../guides/sdcard-benchmark.md) |
-| Review status | [SD remediation matrix](../../validation/sd-review.md) |
-| History and measurements | [Historical records](#historical-records) and [test records](../../validation/records/README.md) |
+| Review status | [SD remediation matrix](../../evidence/sd-review.md) |
+| History and measurements | [Historical records](#historical-records) and [test records](../../evidence/records/README.md) |
 
 Sections above describe current implementation; dated measurements and review narratives live only in test records.
 
@@ -359,9 +362,9 @@ Ceedling tests run both bare-metal facade transports on the host, including
 byte-preserving transfers, recursive reservations, sync, and ownership rejection.
 See [firmware test guidance](../../../firmware/tests/README.md#host-behavior-regressions).
 [test_sd_ports.py](../../../tests/artifacts/test_sd_ports.py) inspects cross-build artifacts.
-`validate.sh` also builds both ports and transports for RP2040/RP2350 and inspects
-the bare-metal compilation database and ELF for kernel dependencies and a single
-selected port.
+`validate.sh` builds the four FreeRTOS board/transport combinations; it does not
+build the bare-metal smoke targets. Use the direct CMake build above and pass its
+directory to the artifact test as described in the [test ownership index](../../../tests/README.md#build-artifact-tests).
 
 ### Block API
 
@@ -507,7 +510,7 @@ The saved storage profile supplies the target for both SDIO and SPI. A 25 MHz ta
 For a 50 MHz target at or below 100 MHz SYSCLK, where SYSCLK / 4 cannot exceed 25 MHz, the driver stays at Default
 Speed and records the host limit. Above 100 MHz it requests 50 MHz and the transport clamps to its PIO ceiling (SYSCLK / 4):
 at most 37.5 MHz at 150 MHz CPU and up to 50 MHz at 250 MHz CPU. Actual operation depends on the board, card, wiring,
-and clock; see the [release guide](../../deployment/release.md).
+and clock; see the [release guide](../../development/releases.md).
 Otherwise it sends CMD6 check `0x00fffff1` and switch `0x80fffff1`, checks
 group-1 support, busy status and selected function. After DAT0 is ready, it leaves
 CLK running at the old rate for 1 ms before targeting up to 50 MHz. This bounded
@@ -520,7 +523,7 @@ confirmed. Runtime read/write errors never trigger speed negotiation or replay.
 
 Use the saved Default profile for Default-Speed operation or High-Speed to request negotiation.
 Neither profile changes voltage or makes an out-of-spec clock supported. Historical measurements are in the
-[test records](../../validation/records/README.md).
+[test records](../../evidence/records/README.md).
 
 The Default-Speed clock divider is a whole number of system cycles, rounded up so the bus never exceeds 25 MHz. At 150 and
 250 MHz SYSCLK, the transfer bus is exactly 25 MHz; at 125 MHz it is
@@ -591,7 +594,7 @@ settled edge used for payload rather than treating any asynchronous low level as
 the start bit. The [physical transport reference](physical-links.md#physical-link)
 defines Default-Speed and High-Speed sampling phases. Command responses retain
 falling-edge sampling and framing/CRC validation; see the historical
-[Class 4 read-only check](../../validation/records/sdcard-bringup-observations.md#class-4-read-only-bring-up-2026-10-15).
+[Class 4 read-only check](../../evidence/records/sdcard-bringup-observations.md#class-4-read-only-bring-up-2026-10-15).
 
 ## Write Workflow
 
@@ -605,7 +608,7 @@ CMD24 and CMD25 share TX DMA control-bit setup. CMD25 constructs those invariant
 bits once per call; payload DMA addresses/counts and completion/abort handling
 remain per sector. This reduces setup work but has no measured throughput claim.
 Successful native CMD25 streams remain open across consecutive facade writes.
-The [same-card A/B benchmark](../../validation/records/2026-10-15-cmd25-persistence.md)
+The [same-card A/B benchmark](../../evidence/records/2026-10-15-cmd25-persistence.md)
 measured 40.93% higher median write throughput with persistence, so this is
 unconditional behavior rather than a build option. Non-contiguous operations,
 synchronization, failures, removal, and reinitialization retain checked stream
@@ -804,7 +807,7 @@ driver bus-reset processing. GNU linker wrappers in `firmware/src/app/usb/usb_ms
 references from `usbd.c`; the vendored stack is unchanged and no ISR or enqueue-time hook mutates the cache. Rejected
 requests, skipped SETUP events, and DATA/ACK stages do not clear it. `python3 -m pytest tests -m contracts` checks
 the pinned source ordering; the Ceedling model does not link TinyUSB. Review details:
-[2026-10-15 follow-up](../../validation/records/2026-10-15-static-sd-review-followup.md).
+[2026-10-15 follow-up](../../evidence/records/2026-10-15-static-sd-review-followup.md).
 
 Cross-callback write aggregation is not implemented: TinyUSB's completion hook
 runs after CSW is queued, too late to fail the command on a flush error, and the
@@ -828,19 +831,6 @@ recipe on media without separate explicit authorization.
 
 Software models do not measure PIO/DMA scheduling, command gaps, or card busy time. Measure command gaps, CRC/copy,
 filesystem allocation (normal versus preallocated files), and card busy time when evaluating further optimizations.
-
-| Review improvement | Current status |
-| --- | --- |
-| Phase profiling and failure diagnostics | Removed: phase profiling had overlapping windows and no product consumer; the last failure is reported through `pf_storage_get_status()` |
-| Preserve batching after transient faults | Not implemented: a runtime failure invalidates the card, aborts the host, and refuses replay; later explicit or worker initialization resolves open streams only after a successful stop |
-| Remove initialization-only payload storage | Implemented for payload storage; initialization keeps its single-sector LBA 0 validation, and transfer CRC checks are retained |
-| Fuse CRC/payload copy | Opt-in `PF_SDIO_PIO_FUSED_COPY`, OFF by default; host tests compare both variants |
-| IRQ wait | Opt-in `PF_SDCARD_INTERRUPT_WAIT`, OFF by default; host tests cover adapter races |
-| SPI CMD18/CMD25 | Implemented with CS, stop, busy, and no-write-replay checks |
-| Cross-call native CMD25 persistence | Retained unconditionally; [same-card HIL](../../validation/records/2026-10-15-cmd25-persistence.md) measured 40.93% median write-throughput gain at 25 MHz with contiguous preallocation |
-| Contiguous-file comparison | Opt-in `PF_STORAGE_SELF_TEST_PREALLOCATE`, OFF by default; see [SD-card performance test](../../guides/sdcard-benchmark.md) |
-| Chained native receive buffers | Not implemented: enable only after profiles demonstrate meaningful inter-batch gaps, with overflow/cancellation/stop tests and an SRAM/DMA budget |
-| SPI bulk DMA | Not implemented: evaluate after CMD18/CMD25 measurements show CPU-bound payload transfers; requires RX/TX servicing and a defined completion/abort policy |
 
 The FreeRTOS [SD port](../../../firmware/src/drivers/sdcard/sd_port_freertos.c) requests the optional adapter through
 the common transport interface. Its physical implementation lives in
@@ -872,7 +862,7 @@ combinations, alternating order where practical; vary only these two options:
 | ON | ON | FreeRTOS IRQ wait |
 
 Keep the supported clock, card, filesystem, file size, and timing boundary fixed.
-The saved [CMD25 persistence A/B](../../validation/records/2026-10-15-cmd25-persistence.md)
+The saved [CMD25 persistence A/B](../../evidence/records/2026-10-15-cmd25-persistence.md)
 uses fused OFF and IRQ wait OFF in both variants (150 MHz CPU, 25 MHz SDIO,
 Release, preallocation ON); it measures persistence only. Earlier throughput
 records compare other source/configuration changes and do not supply a matched
@@ -887,38 +877,14 @@ are not assumed improvements, and no new hardware throughput claim is made.
 
 ## Ownership Workflow
 
-The [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle) is authoritative for startup,
-normal firmware use, automatic remount, and maintenance/recovery exceptions. Mounting belongs to the storage worker,
-not the driver or self-test. USB sharing is an explicit temporary ownership change.
-
-The raw SD driver exposes serialized card operations without application ownership policy.
-Acquire/release, owner-specific transfers and retained diagnostics live in `platform/storage/storage.h`;
-there is no arbitrary public owner setter. The storage service checks readiness and mounted state on acquisition.
-Application USB reserves the storage reservation across worker-idle and mount-state checks and acquisition.
-Release similarly requires checked host eject/synchronization. In the FreeRTOS
-application, a statically
-allocated FreeRTOS recursive mutex
-serializes those integration checks with the ownership transition.
-Explicit fault recovery is the exception to clean eject: the confirmed
-[CDC recovery workflow](../../guides/console.md#faulted-msc-recovery) revokes access to faulted MSC media
-before returning ownership and queues worker-only reinitialization. It never
-reports sync/eject success or replays writes. Its separate release operation rejects healthy media. Automatic mounting remains
-inhibited until a successful explicit `storage mount`; presence debounce continues.
-The recovery latch is runtime-only and resets on reboot. The workflow cannot
-repair filesystem damage or guarantee recovery from an unresolved card stream.
-The same mutex serializes all facade operations for both transports, including
-telemetry and removal cleanup. Presence service and ownership handoff reserve their whole
-check/action sequences; reconnect delays and command replies run outside the
-reservation. These reservations protect those specific sequences, not every
-FatFs transaction. The storage worker's exclusive workflow and busy gating
-protect filesystem operations across multiple facade calls; the per-call mutex
-alone cannot do that. Profile snapshots use the same mutex. Returning ownership sets a reinitialization
-request because the host may have changed the filesystem. See
-[HID report contract and MSC lifecycle](../usb-hid.md) for transition rules.
-
-Backend headers remain available to their implementation and focused transport
-tests. Application filesystem and MSC I/O must use the storage service; telemetry may query the serialized raw driver.
-Raw driver calls do not enforce application ownership. Backend calls additionally bypass task serialization.
+Application ownership and the default-mounted lifecycle are owned by the
+[storage architecture](../architecture.md#storage-ownership-lifecycle). The raw
+driver provides serialized card operations, not filesystem or USB ownership
+policy. Application filesystem and MSC I/O must use
+`platform/storage/storage.h`; telemetry may query the serialized raw driver.
+Backend calls bypass task serialization. See the [HID reference](../usb-hid.md)
+for USB ownership transitions and the [console recovery procedure](../../guides/console.md#faulted-msc-recovery)
+for faulted-media handling.
 
 ## Validation And Limits
 
@@ -940,7 +906,7 @@ Use the existing [test guidance](../../../firmware/tests/README.md) and
 
 Electrical behavior and sustained transfer results depend on the card, board, wiring, and clock; see
 [hardware setup](../../guides/hardware.md#sd-card-breakout), the
-[SD-card performance test](../../guides/sdcard-benchmark.md), and [test records](../../validation/records/README.md).
+[SD-card performance test](../../guides/sdcard-benchmark.md), and [test records](../../evidence/records/README.md).
 Read-only initialization does not exercise high-speed writes. Power-loss recovery, complete MSC lifecycles, and
 sustained endurance involve behavior beyond card initialization. CSD v1/v2 capacity must fit the 32-bit block
 contract; SDUC, 64-bit LBAs, asynchronous requests, and a one-bit native block backend are not
@@ -952,12 +918,12 @@ For board-level SD checks and controlled measurements, see the
 ## Historical Records
 
 Dated, configuration-specific observations and review follow-ups are kept out of this reference in
-[test records](../../validation/records/README.md); read each with its original firmware, card, and clock context.
+[test records](../../evidence/records/README.md); read each with its original firmware, card, and clock context.
 Most relevant:
 
-- [Earlier SDIO observations (undated)](../../validation/records/earlier-sdio-qualification-undated.md): card/clock throughput
+- [Earlier SDIO observations (undated)](../../evidence/records/earlier-sdio-qualification-undated.md): card/clock throughput
   table and why 50 MHz needs high-speed TX.
-- [2026-10-16 fixed-25-MHz follow-up](../../validation/records/2026-10-16-sdio-fixed-25mhz-followup.md): receive-integrity failures.
-- [2026-10-15 static SD review follow-up](../../validation/records/2026-10-15-static-sd-review-followup.md): MSC reset-sense review.
-- [2026-10-18 speed matrix](../../validation/records/2026-10-18-sdio-speed-matrix.md) and
-  [repeat](../../validation/records/2026-10-18-sdio-speed-matrix-repeat.md): latest controlled comparisons.
+- [2026-10-16 fixed-25-MHz follow-up](../../evidence/records/2026-10-16-sdio-fixed-25mhz-followup.md): receive-integrity failures.
+- [2026-10-15 static SD review follow-up](../../evidence/records/2026-10-15-static-sd-review-followup.md): MSC reset-sense review.
+- [2026-10-18 speed matrix](../../evidence/records/2026-10-18-sdio-speed-matrix.md) and
+  [repeat](../../evidence/records/2026-10-18-sdio-speed-matrix-repeat.md): latest controlled comparisons.

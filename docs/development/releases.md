@@ -1,6 +1,10 @@
 # Release and Publishing
 
-This deployment guide owns release readiness, GitHub Actions packaging, publication setup, and download verification.
+[Documentation](../README.md) / [Development](README.md)
+
+This maintainer guide owns release readiness, GitHub Actions packaging, and publication setup. For installing a
+downloaded package, use [Getting Started](../getting-started.md#download-and-verify) and the
+[dashboard guides](../guides/README.md#dashboards).
 
 ## GitHub Actions Workflow Overview
 
@@ -22,8 +26,8 @@ Treat a release as a versioned foundation, not a promise that every downstream w
 Before tagging:
 
 - Confirm the intended revision passes the relevant firmware, host, and repository checks described in
-  [firmware testing](../development/firmware-testing.md) and [host development](../development/host-tools.md).
-- Review [qualification gaps](../validation/qualification-gaps.md) and link applicable evidence in the release notes.
+  [firmware testing](firmware-testing.md) and [host development](host-tools.md).
+- Review [qualification gaps](../evidence/README.md) and link applicable evidence in the release notes.
   Distinguish implemented features from physical qualification.
 - Confirm the [README](../../README.md) and guides describe the packaged revision, supported configurations, and
   known access/safety restrictions.
@@ -57,10 +61,9 @@ Firmware packages are attached as ZIPs, preserving the board/transport distincti
 ### Host Packages
 
 Unreleased Python, .NET, and Direct dashboards display **App v0.0.0-debug** on the dashboard and console pages.
-Python's development package metadata uses `0.0.0.dev0` for PEP 440 compatibility; the displayed version comes from
-the package source, not potentially stale installed metadata. Release packaging stamps all three apps with the
-validated tag's `X.Y.Z`, displayed as **App vX.Y.Z**. The app version is separate from the connected board's firmware
-version. Source checkouts do not infer a release version from Git tags at runtime.
+Python's development package metadata uses `0.0.0.dev0` for PEP 440 compatibility. Release packaging stamps all three
+apps with the validated tag's `X.Y.Z`, displayed as **App vX.Y.Z**. The app version is separate from the connected
+board's firmware version. Source checkouts do not infer a release version from Git tags at runtime.
 
 The release also includes:
 
@@ -92,8 +95,9 @@ job to complete uploads. Publish corrections to distributed packages under a new
 
 Packaging is gated on the reusable host-validation workflow: Ceedling firmware tests, Python host tests on
 3.10 and 3.12, independent Direct and Python/.NET frontend tests, and .NET host tests.
-Each PR/release matrix entry performs one firmware build; runtime
-clock selection remains a boot setting and does not multiply CI artifacts.
+Each release matrix entry builds one firmware image. PR matrix entries build
+both the normal image and a benchmark- and wireless-disabled variant. Runtime
+clock selection remains a boot setting and does not multiply release artifacts.
 
 ## Publishing setup
 
@@ -117,23 +121,6 @@ binaries, or establish hardware qualification. Download and hosted-site links ma
 There is no branch/development publication path: manual PyPI/Pages dispatch also requires a public release tag.
 The PyPI job intentionally runs in the standalone `publish-pypi.yml` workflow because
 [PyPI does not support reusable workflows as Trusted Publishers](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
-
-## Using downloads
-
-Download the matching board/transport firmware or host archive from
-[the latest release](https://github.com/djwinter29-oss/PicoForge/releases/latest). Verify against `SHA256SUMS.txt`
-before extracting; for example, use `sha256sum --check SHA256SUMS.txt --ignore-missing` on Linux.
-
-Install Python with `python -m pip install picoforge` in a virtual environment, then run `picoforge web`.
-The wheel attached to the release can also be installed directly with pip.
-
-For native dependencies, archive extraction, launch commands, and unsigned-binary warnings, follow the
-[.NET host guide](../../host/dotnet/PicoForge/README.md).
-
-Use the [hosted Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome/Edge, or extract
-the Direct dashboard ZIP and run `python3 server.py --port 8000` from the extracted directory, then open
-<http://localhost:8000/>. Use the included server for the optional TCP console bridge.
-Localhost or HTTPS and device permission are required. Avoid competing dashboard connections to one board.
 
 ## Build and hardware limits
 

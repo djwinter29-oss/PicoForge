@@ -1,5 +1,7 @@
 # Demonstration Records
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 This document records interface observations within the project scope.
 The [README](../../../README.md) shows a clearly labeled simulated Direct dashboard preview; the earlier Python
 host observation is documented below. Demonstrations are not hardware qualification.
@@ -34,5 +36,5 @@ These notes record the observed interface and reported state, not performance or
 - Distinguish a successful walkthrough from broader reliability or compatibility qualification.
 
 Detailed measurements and reviews belong in the [test records](README.md).
-Outstanding reliability and compatibility limits remain in [qualification gaps](../qualification-gaps.md).
+Outstanding reliability and compatibility limits remain in [qualification gaps](../README.md).
 Screenshots and demonstrations do not close those gaps.

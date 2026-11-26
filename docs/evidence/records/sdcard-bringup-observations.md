@@ -1,5 +1,7 @@
 # SD-Card Bring-Up Observations
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Historical observations extracted from the physical-link reference. Each section retains its original configuration
 and limitations; these results do not qualify current firmware.
 

@@ -1,9 +1,11 @@
-# Qualification Gaps
+# Known Limits and Evidence
+
+[Documentation](../README.md)
 
 PicoForge's existing feature set is maintained, with hardware qualification still incomplete.
 A successful build or short test does not qualify sustained SD-card
 reliability, USB mass-storage compatibility, or power-loss recovery. Back up important card data before use and
-follow the [getting-started safety precautions](../guides/getting-started.md#before-you-connect).
+follow the [getting-started safety precautions](../getting-started.md#before-you-connect).
 
 ## Areas Not Fully Qualified
 

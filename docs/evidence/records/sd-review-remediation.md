@@ -1,5 +1,7 @@
 # Historical SD Review Remediation
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date not recorded. This preserves review and working-diff validation for the baselines identified below.
 It is not current implementation status or hardware qualification. Some instrumentation and source names have
 since changed; use [current SD review dispositions](../sd-review.md) and the linked references for current behavior.

@@ -1,5 +1,7 @@
 # Bluetooth LE Protocol
 
+[Documentation](../README.md) / [Reference](README.md)
+
 This reference owns the Bluetooth LE wire protocol of Pico W and Pico 2 W images: startup gating, advertising, the GATT
 layout, session unlock, per-command proofs, the 9-byte control form, and ATT error codes. Breaking wire changes use a
 new service UUID; compatible additions MAY retain this UUID. Byte 0 of each report and control payload remains its
@@ -9,6 +11,10 @@ integration](../development/wireless-integration.md). For user setup, see the [w
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described
 in BCP 14 (RFC 2119, RFC 8174) when, and only when, they appear in all capitals.
+
+On this page: [availability](#availability) / [GATT](#gatt-layout) / [unlock](#session-unlock) /
+[proofs](#command-proofs) / [control](#control-characteristic) / [errors](#att-errors) /
+[security limits](#security-properties).
 
 ## Availability
 

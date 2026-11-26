@@ -1,5 +1,7 @@
 # Firmware Build Configuration
 
+[Documentation](../README.md) / [Reference](README.md)
+
 Use this reference to select firmware components and choose the checks for that configuration.
 Run commands from the repository root after initializing the pinned submodules. Toolchain setup and normal
 build commands belong in [firmware development](../development/firmware-testing.md).
@@ -16,7 +18,8 @@ HID capability bit is cleared so dashboards disable its controls.
 
 `PF_ENABLE_WIRELESS` only has an effect on CYW43 boards (`pico_w`, `pico2_w`); other boards never link the radio.
 The W-board LED is wired to the radio chip, so a radio-free W image also clears capability bit 0 (LED) and rejects
-LED commands. On `pico2_w`, disabling wireless removes about 400 KB of flash and 68 KB of RAM.
+LED commands. Image-size savings depend on the board, build type, and other selected modules; no single size
+reduction is guaranteed.
 
 The wrapper reads `PF_ENABLE_STORAGE_BENCHMARK` and `PF_ENABLE_WIRELESS` from the environment when the flag is absent,
 accepts only `ON` or `OFF`, and passes both options on every run, so a reused build directory cannot keep a stale
@@ -58,7 +61,7 @@ All options live in [CMakeLists.txt](../../firmware/CMakeLists.txt). The CPU clo
 boot settings, not build options. `PF_SYS_CLK_MHZ` and `PF_SDIO_PIO_HIGH_SPEED` are retired and rejected by direct
 CMake configuration; for an older build directory add `-U PF_SYS_CLK_MHZ -U PF_SDIO_PIO_HIGH_SPEED` once. The wrapper
 clears them automatically. Flash the resulting UF2 as described in
-[getting started](../guides/getting-started.md#2-flash-the-board).
+[getting started](../getting-started.md#2-flash-the-board).
 
 ## Validate the Selected Variant
 

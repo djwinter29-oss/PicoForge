@@ -1,12 +1,15 @@
 # Console: USB and Wi-Fi
 
+[Documentation](../README.md) / [User guides](README.md)
+
 This guide owns terminal usage, CLI commands, and CDC/storage behavior. For interface roles and the
 authoritative HID contract, see the [USB HID report reference](../reference/usb-hid.md).
 
-USB CDC ACM is the interactive command interface. UART remains the independent
-debug-log transport. Normal storage commands do not change MSC ownership;
-explicit confirmed fault recovery is the exception described below. The periodic
-CDC greeting has been removed.
+USB CDC ACM is the interactive command interface. UART remains the independent debug-log transport. File operations
+do not change MSC ownership; use explicit storage commands or the dashboard for handoff.
+
+On this page: [terminal](#terminal) / [commands](#commands) / [settings](#board-configuration) /
+[files](#storage-and-filesystem-commands) / [TCP](#wi-fi-tcp-terminal) / [fault recovery](#faulted-msc-recovery).
 
 ## Terminal
 
@@ -27,10 +30,16 @@ The editor accepts at most 126 command-line bytes. Editor or receive-buffer over
 the next CR/LF and prints `ERR input overflow`; its accepted prefix is never executed. Backspace, history, and
 completion do not restore an overflowed command. Re-enter it after the error or reopen the session.
 
+## Commands
+
 `help` groups commands by name, with one indented subcommand per line. Prefix each subcommand with its group name:
 `get clock` under `board` means `board get clock`. Use `help <command>` or `<command> --help` to show only that group's
 usage. Angle brackets mark required arguments, square brackets mark optional arguments, and `|` separates choices.
 The web console uses the same eight-column tab stops as a normal terminal to preserve help indentation.
+
+Mutation replies use consistent prefixes: `OK` means completed, `QUEUED` means accepted but incomplete, `ERR` means
+rejected/failed, and `WARN` means partial output or an uncertain/partial result. Status and data replies have no
+prefix. A queued USB drive or benchmark response acknowledges admission, not completion.
 
 | Command | Behavior |
 | --- | --- |
@@ -63,16 +72,13 @@ The web console uses the same eight-column tab stops as a normal terminal to pre
 
 Recovery completion or failure is reported through the UART logger; neither outcome mounts a volume.
 
-### Board configuration
+`storage get benchmark` reports lifecycle names and numeric errors from the
+[benchmark API](../../firmware/src/app/storage/file_benchmark.h); `flags=1` means the test file remains after cleanup.
+Flags can be combined; bit 1 records that the caller's volume was mounted. A queued start can still fail worker
+preflight; inspect `request_error` as well as the run's `error`. Follow the
+[benchmark procedure](sdcard-benchmark.md) before starting a write test.
 
-Every group follows PicoPWM's `group verb parameters` convention: `get` reads, `set` changes a value, and other verbs
-are actions such as `board reboot` or `storage benchmark 64`. There are five groups: `board`, `config`, `storage`, `fs`
-and `radio`; use `help <group>` for its syntax. `storage` owns device management (status, USB drive ownership,
-formatting, benchmark, recovery and maintenance mounting), while `fs` works with files on the mounted volume.
-Use `board get version` for the firmware version.
-Mutation replies use consistent prefixes: `OK` means completed, `QUEUED` means accepted but incomplete, `ERR` means
-rejected/failed, and `WARN` means partial output or an uncertain/partial result. Status and data replies have no
-prefix. A queued USB drive or benchmark response acknowledges admission, not completion.
+## Board configuration
 
 ```text
 PicoForge> board get clock
@@ -104,17 +110,10 @@ USB storage, run `storage set usb off`, and wait for `storage get usb` to show `
 before saving. There is no CLI forced save or unsafe MSC return. Radio-disabled firmware rejects radio
 commands/settings. Benchmark-disabled firmware reports `ERR benchmark unavailable in this build`.
 
-`storage get benchmark` reports lifecycle names and numeric errors from the
-[benchmark API](../../firmware/src/app/storage/file_benchmark.h); `flags=1` means the test file remains after cleanup.
-Flags can be combined; bit 1 records that the caller's volume was mounted. `storage benchmark <MiB>` uses the existing
-mounted volume, never formats, and refuses an existing `PFTEST.BIN`. A queued start can still fail worker preflight;
-inspect `request_error` as well as the run's `error`. Cancellation is a request, not a completed cleanup.
+## Storage and filesystem commands
 
-### Storage and filesystem commands
-
-Mounting/unmounting is automatic during normal startup and USB drive handoff. `storage mount` and `storage unmount`
-remain maintenance commands for manual retry, safe removal, formatting and post-recovery inspection; they are not
-routine prerequisites. These are live operations, not saved boot settings under `config`.
+For automatic mounting, USB handoff, card removal, and mount failures, use the [storage guide](storage.md).
+`storage mount` and `storage unmount` are maintenance operations, not routine prerequisites or saved boot settings.
 
 Formatting is destructive and still requires an unmounted, Pico-owned volume. After backing up the card and safely
 ejecting/disabling USB storage, run `storage unmount` and wait for completion before `storage format --confirm`.
@@ -133,45 +132,70 @@ File content is displayed in chunks of up to 48 bytes, with
 non-printable bytes and backslashes escaped as `\xHH` to protect the terminal.
 Long directory names are clipped in listings.
 
-`storage get status` is available while USB owns the card and never sends commands to the card; `busy` means another
-storage operation held the media at the time of the snapshot. Card identity and backend details are exposed only
-through the HID dashboard.
-Every `fs` command is refused
-until the host safely ejects and disables MSC. Follow the authoritative
-[default-mounted storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle):
-mounting happens at startup, after insertion, and after normal MSC return, not on a self-test click or CDC connection.
-Wait for `mounted` status before reading/writing; `ready` means initialized but unmounted.
-Normal mount failures are retried five seconds after each attempt finishes, except when recovery blocks retries.
-Enabling MSC from the dashboard automatically queues `fs` volume unregistration on the sole storage worker;
-manual `storage unmount` is optional. A successful unmount pauses
-automatic mounting until the next insertion or return from MSC. `storage mount`
-remains available for a manual retry.
-
-When board support provides card detect, the storage worker debounces presence
-and retries card initialization and FatFs mounting after insertion. Removing a
-card while its filesystem is mounted unmounts and invalidates the old volume.
-It never formats or repairs a replacement card; unsupported or damaged
-filesystems can still fail to mount. Removing media during a write can corrupt
-the filesystem; unmount or safely eject before removal. Eject and disable
-MSC before swapping cards. If a card is removed while MSC owns it, safely eject
-the device and disable MSC after removal so firmware can resume polling.
+Every `fs` command is refused while USB owns the card. Wait for `mounted` status before reading/writing;
+`ready` means initialized but unmounted.
 
 Only one storage command can be outstanding. The CLI acknowledges that it was
 queued; this is not a success report. Wait for its result before the next storage
 command. FatFs results include their symbolic name and numeric code. A short
 write or sync/close failure is reported; a new or partially modified file may
-remain. Commands do not roll back writes. Only explicit fault recovery changes
-MSC ownership.
+remain. Commands do not roll back writes or change MSC ownership.
 
-### Wi-Fi TCP terminal
+Closing CDC discards the session's partial command, output, and history. Reopening
+starts a fresh prompt. A disconnected session stops further listing/cat output,
+but accepted mount/unmount and file changes finish safely, with files closed.
+The filesystem remains mounted across terminal sessions until explicitly unmounted.
+USB re-enumeration likewise resets the CLI session, but a pending storage command
+prevents MSC handoff until it is complete and its replies are drained.
+
+For a manual mount/read/unmount check, wait for each result:
+
+```text
+storage get status
+storage mount
+fs ls /
+fs stat /existing.txt
+fs cat /existing.txt 256
+fs df
+storage unmount
+```
+
+To exercise changes, use a disposable new path and wait for each result:
+
+```text
+storage mount
+fs mkdir /cli-test
+fs write /cli-test/new.txt "hello world"
+fs append /cli-test/new.txt " more text"
+fs mv /cli-test/new.txt /cli-test/renamed.txt
+fs rm /cli-test/renamed.txt --confirm
+storage unmount
+```
+
+These modification commands change the card. The example leaves the empty
+`/cli-test` directory in place because directory removal is deliberately unavailable.
+
+FatFs currently has no RTC integration: newly modified files receive the fixed
+timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
+board's current time. The tested SPI CLI workflow and its limits are recorded
+in the [historical SD-card bring-up observations](../evidence/records/sdcard-bringup-observations.md#historical-sd-card-qualification);
+they are not current hardware qualification.
+
+## Wi-Fi TCP terminal
 
 Pico W and Pico 2 W boards with Wi-Fi and the saved **TCP CLI enabled** switch on serve the same CLI as a raw TCP
 stream on port 2323. Find the board IP in the dashboard's live diagnostics, or use `picoforge-<USB serial>.local`
 with an mDNS-capable host resolver on the same multicast-capable LAN.
-Use a dashboard console for an authenticated connection. A plain PuTTY or `nc` session is not sufficient:
-every client must answer a one-use HMAC challenge within ten seconds, using a previously saved Control key.
-Custom clients must implement [TCP CLI authorization](../development/wireless-integration.md#tcp-cli-authorization).
+Save a [Control key](wireless.md#configuration-and-operation) before using the TCP CLI. Dashboard consoles authenticate
+without entering the key in the console or sending it to the local bridge: USB clients request a fixed-purpose proof
+from the board; Direct over BLE signs with its already-unlocked session key. Keep Direct's matching dashboard connected
+while its console connects or reconnects; see [page lifecycle](../../host/direct/README.md#page-lifecycle).
+Custom clients must implement [TCP CLI authorization](../development/wireless-integration.md#tcp-cli-authorization)
+and answer each one-use challenge within ten seconds.
 After authentication, use raw terminal mode with local echo and line editing disabled; the CLI owns both.
+
+TCP is unencrypted. Any authenticated client can run every CLI command, including destructive commands.
+Use only a trusted LAN.
 
 In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
 firmware reports that the TCP CLI is serving. Clicking it opens a separate web console tab and connects
@@ -182,32 +206,9 @@ Each Python or .NET dashboard process allows one active console session at a tim
 USB board.
 Browser requests have bounded deadlines; disconnect aborts pending requests, and input with an uncertain delivery
 result is never automatically resent.
-The local host relays bounded raw bytes over TCP, using same-origin HTTP long-polling between browser and host; browsers
-cannot open raw TCP sockets themselves. Python and .NET targets come only from the selected USB board's wireless
-status, not a user-supplied host or port. The Direct dashboard also provides this console when hosted locally with
-its included bridge; its hosted static site does not. Direct targets come from the connected board's live wireless
-status. Once the TCP session is authenticated, the dashboard connection can close.
-
-#### Direct dashboard authentication
-
-A saved Control key still gates the TCP CLI; removing the second prompt does not disable that requirement. Direct
-reuses the dashboard's existing board authentication: a Bluetooth session already accepted the key to unlock BLE
-and keeps it as a non-extractable WebCrypto key for that session; over USB, firmware creates a fixed-purpose proof
-through Feature `20` opcode `13`. Direct verifies that the TCP challenge UID matches the connected board.
-The console receives only
-the one-use proof, never the Control key. Entering the same key again would not add a separate factor or strengthen
-the challenge-response check.
-
-The matching dashboard tab must stay connected when the console connects or reconnects. The console sends each fresh
-challenge to its original same-origin dashboard through `postMessage`; the dashboard accepts only console windows it
-opened and checks both the original board UID and the current challenge UID before returning the one-use proof.
-The console's Connect button supports reconnecting in the same tab; reopening from the dashboard is required if that
-dashboard closes, reloads, or changes boards. Direct's page-navigation and history-restoration behavior is documented
-in its [dashboard lifecycle](../../host/direct/README.md#page-lifecycle). The URL contains only the board's private
-IPv4 address, not a pairing secret. The Direct bridge accepts loopback, same-origin requests and forwards the proof;
-it does not authenticate
-local OS users or processes. Treat a shared computer as trusted. If no matching dashboard responds, the console
-fails closed and asks you to connect the board there; it does not fall back to a key-entry field.
+The local host relays bounded raw bytes over TCP; browsers use the local bridge because they cannot open raw TCP
+sockets. Python and .NET select a target from the connected board's wireless status, not a user-supplied host or port.
+Direct provides the console only when hosted locally with its included bridge; its hosted static site does not.
 
 The web console supports the Embedded CLI's cursor movement, character insertion/deletion and saved cursor escapes.
 It keeps at most 1000 lines of 512 columns; it is not a general-purpose VT100/color terminal. Input is limited to
@@ -219,19 +220,8 @@ TCP session receives a busy line and its input is discarded. A second TCP client
 the owning connection ends the session and cancels its pending output, exactly like dropping DTR. TCP keepalive
 drops a vanished client after about 50 seconds idle.
 
-TCP authentication is always required; without a saved Control key no proof can succeed, so save a key before using
-the TCP CLI. Clients must answer a one-use challenge within ten seconds. The Python and .NET dashboards request a narrowly scoped proof from the selected
-board over USB HID; the key is not entered in or sent through the browser. The Direct dashboard reuses its matching live
-USB or already-authenticated Bluetooth connection to provide the same fixed-purpose proof; keep the dashboard connected
-until the console connects. The key is never entered in the console or sent to the local bridge. Raw PuTTY/`nc` sessions
-need a client that implements the proof described in the [wireless
-integration](../development/wireless-integration.md#tcp-cli-authorization). Rejected proofs are rate-limited for two
-seconds. The firmware closes an otherwise authenticated session after 15 minutes without traffic; keepalive still
-detects a vanished peer after about 50 seconds. Authentication gates admission but does not encrypt TCP; commands and
-output remain readable to a LAN observer. Anyone who can connect can run every CLI command, including `--confirm`
-destructive ones. Use only a trusted LAN. Firmware logs include the peer IP for connections, successful/rejected proofs,
-cooldown refusals, challenge failures, and authentication or idle timeouts. Keys, proofs and command contents are not
-included in these connection logs.
+Rejected proofs are rate-limited for two seconds. The firmware closes authenticated sessions after 15 minutes without
+traffic.
 
 ## Faulted MSC Recovery
 
@@ -265,46 +255,6 @@ all fail. For that faulted state only:
 Reinitialization retains checked cleanup of unresolved native streams; it can
 fail and leave the card uninitialized. Recovery does not abandon a stream on a
 present card or fabricate durability guarantees.
-
-Closing CDC discards the session's partial command, output, and history. Reopening
-starts a fresh prompt. A disconnected session stops further listing/cat output,
-but accepted mount/unmount and file changes finish safely, with files closed.
-The filesystem remains mounted across terminal sessions until explicitly unmounted.
-USB re-enumeration likewise resets the CLI session, but a pending storage command
-prevents MSC handoff until it is complete and its replies are drained.
-
-Read-only bring-up sequence:
-
-```text
-storage get status
-storage mount
-fs ls /
-fs stat /existing.txt
-fs cat /existing.txt 256
-fs df
-storage unmount
-```
-
-To exercise changes, use a disposable new path and wait for each result:
-
-```text
-storage mount
-fs mkdir /cli-test
-fs write /cli-test/new.txt "hello world"
-fs append /cli-test/new.txt " more text"
-fs mv /cli-test/new.txt /cli-test/renamed.txt
-fs rm /cli-test/renamed.txt --confirm
-storage unmount
-```
-
-These modification commands change the card. The example leaves the empty
-`/cli-test` directory in place because directory removal is deliberately unavailable.
-
-FatFs currently has no RTC integration: newly modified files receive the fixed
-timestamp `2026-01-01 00:00:00`. `fs stat` reports the stored timestamp, not the
-board's current time. See
-[the hardware validation record](hardware.md#sd-card-breakout)
-for the tested SPI CLI workflow and remaining qualification limits.
 
 ## Stalled output
 

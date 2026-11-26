@@ -1,5 +1,7 @@
 # Pico 2 SDIO Speed Matrix
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: 2026-10-18. Firmware commit: `9e569e4c379077482318165cb76332f92e91fd09`.
 
 ## Conclusion

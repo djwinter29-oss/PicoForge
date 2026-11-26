@@ -1,5 +1,7 @@
 # SD-Card Driver and Physical Links
 
+[Documentation](../../README.md) / [Reference](../README.md)
+
 The SD-card driver and its physical link engines for RP2040 and RP2350 live in
 [`firmware/src/drivers/sdcard/`](../../../firmware/src/drivers/sdcard). This document is the
 reference for physical transport ownership, lifecycle, and shared-pin constraints. Transport-specific protocol
@@ -136,7 +138,7 @@ two system cycles per bus period, so its divider cannot be below 2.0 and the fas
 
 Host timing models sweep SYSCLK from 100 to 300 MHz for divider parity, rounding and limits. Historical card
 measurements, with their tested configurations, are listed in the
-[test records](../../validation/records/README.md).
+[test records](../../evidence/records/README.md).
 
 Released-line clock generation takes a count at the current rate and a caller deadline. The SD host supplies the
 400 kHz initialization rate, 80 clocks, command deadlines and DAT0 wait policy; clock generation does not select them.
@@ -193,7 +195,7 @@ make filesystem data durable.
 
 See [hardware setup](../../guides/hardware.md#memory-and-storage-connections) for the authoritative wiring,
 electrical requirements, and breakout. Dated bring-up observations are preserved in
-[bring-up records](../../validation/records/sdcard-bringup-observations.md), not current operating instructions.
+[bring-up records](../../evidence/records/sdcard-bringup-observations.md), not current operating instructions.
 
 ## Timing Model and Measurements
 
@@ -204,4 +206,4 @@ Host C tests cover descriptor helpers and statically linked lifecycle/wire calls
 physical-driver header independence. Use the existing [test guidance](../../../tests/README.md) for commands.
 Electrical margins, card compatibility, sustained throughput, and power-loss behavior depend on the card, board,
 wiring, firmware, and operating conditions. See the [hardware setup guide](../../guides/hardware.md) and
-configuration-specific [test records](../../validation/records/README.md).
+configuration-specific [test records](../../evidence/records/README.md).

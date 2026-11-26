@@ -1,11 +1,16 @@
 # Boot Settings Design
 
+[Documentation](../README.md) / [Reference](README.md)
+
 PicoForge keeps a small set of **next-boot settings** in one reserved flash sector: the system clock profile, the
 shared SD-card speed profile, the wireless service switches and the private wireless credentials. They are changed at
 runtime, saved as one verified record, and take effect only at the next boot. This document owns the record format,
 the load/stage/save lifecycle, flash safety and how each setting is applied. The wire encoding of the settings
 commands is owned by the [USB HID reference](usb-hid.md); radio behavior is in
 [wireless integration](../development/wireless-integration.md).
+
+On this page: [RAM lifecycle](#ram-copy-lifecycle) / [saving](#saving) / [record format](#record-format) /
+[clock](#system-clock) / [SD speed](#sd-card-speed) / [forced save](#forced-save-and-reboot).
 
 | Setting | Values | Default | Applied by |
 | --- | --- | --- | --- |
@@ -319,38 +324,12 @@ corrupt the filesystem. Safely eject through the host OS first whenever possible
 Confirmation rechecks ownership, capability and idle storage, requires the same ownership state shown in the
 warning, and never silently changes the operation.
 
-```mermaid
-sequenceDiagram
-    participant H as Host dashboard
-    participant U as USB owner task
-    participant S as Storage and MSC
-    participant B as boot_config
-    H->>U: Feature 20 opcode 5 with force flag
-    U-->>H: Pending
-    U->>U: Wait for Pending GET and settle, or 500 ms
-    U->>S: Recheck gates, sync device-side storage, detach USB
-    alt Sync or detach fails
-        U-->>H: Failed - no flash save, no reboot
-    else Storage reserved
-        U->>B: Stage original request, then save
-        alt Save verified
-            U-->>H: Reconnect HID without MSC - Completed with original transaction
-            U->>U: Wait for result GET or 5 s, then 1 s grace, then reboot
-        else Save failed
-            U->>S: Reconnect host access
-            U-->>H: Failed - no reboot, flash may have changed
-        end
-    end
-```
-
 `POST /api/settings` accepts an optional boolean `confirm_data_loss`, default `false`; only explicit `true` requests
 the forced path. Confirmation does not bypass busy work, self-tests, ownership transitions, sync failures or detach
-failures. Hosts verify the original transaction after reconnect without resending the save. The wire details are in
-the [confirmed save lifecycle](usb-hid.md#confirmed-save-and-reboot-while-shared).
-
-Device-side sync cannot flush the computer's cached writes. This is an explicitly accepted unsafe interruption, not
-a safe-eject guarantee or filesystem repair. After a successful reboot, MSC defaults off and automatic mounting
-resumes.
+failures. Device-side sync cannot flush the computer's cached writes; forced save is an explicitly accepted unsafe
+interruption, not a safe-eject guarantee or filesystem repair. The [HID reference](usb-hid.md#confirmed-save-and-reboot-while-shared)
+owns wire sequencing, result polling and reconnect behavior. After a successful reboot, MSC defaults off and automatic
+mounting resumes.
 
 ## Tests
 
