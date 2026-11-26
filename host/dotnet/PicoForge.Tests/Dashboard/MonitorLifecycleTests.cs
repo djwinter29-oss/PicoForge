@@ -353,7 +353,7 @@ public sealed class MonitorLifecycleTests
         {
             monitor.Attach(client, new(failure != "disconnected", null, client.ReadInfo(),
                 BoardConfiguration: client.ReadConfiguration(), Wireless: failure == "missing" ? null : wireless));
-            if (failure == "stale") clock.Advance(TimeSpan.FromSeconds(5));
+            if (failure == "stale") clock.Advance(TimeSpan.FromSeconds(6));
         }
         using var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));

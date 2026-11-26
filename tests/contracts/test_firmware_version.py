@@ -89,6 +89,8 @@ def test_firmware_scripts_pass_version_to_cmake(tmp_path, environment_version, a
     )
     assert f"-DPF_FIRMWARE_VERSION={expected}" in log.read_text().splitlines()
     assert "-DPF_ENABLE_STORAGE_BENCHMARK=ON" in log.read_text().splitlines()
+    if script == "build.sh":
+        assert "-DPF_ENABLE_WIRELESS=ON" in log.read_text().splitlines()
     configure_arguments = log.read_text().splitlines()
     for option in ("PF_SYS_CLK_MHZ", "PF_SDIO_PIO_HIGH_SPEED"):
         index = configure_arguments.index(option)
@@ -131,3 +133,61 @@ def test_build_script_rejects_legacy_build_dimensions(option, value):
                             capture_output=True, text=True)
     assert result.returncode != 0
     assert f"Unknown argument: {option}" in result.stderr
+
+
+def _fake_build_tools(tmp_path):
+    sdk = tmp_path / "sdk/external"
+    sdk.mkdir(parents=True)
+    (sdk / "pico_sdk_import.cmake").touch()
+    kernel = tmp_path / "kernel/portable/ThirdParty/GCC/RP2040"
+    kernel.mkdir(parents=True)
+    (kernel / "FreeRTOS_Kernel_import.cmake").touch()
+    cmake = tmp_path / "cmake"
+    cmake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "$CMAKE_ARGUMENT_LOG"\n')
+    cmake.chmod(0o755)
+    log = tmp_path / "arguments"
+    env = dict(os.environ, PATH=f"{tmp_path}:{os.environ['PATH']}", CMAKE_ARGUMENT_LOG=str(log),
+               PICO_SDK_PATH=str(sdk.parent), FREERTOS_KERNEL_PATH=str(kernel.parents[3]))
+    for name in ("PF_ENABLE_STORAGE_BENCHMARK", "PF_ENABLE_WIRELESS"):
+        env.pop(name, None)
+    return env, log
+
+
+@pytest.mark.parametrize(("arguments", "environment", "benchmark", "wireless"), [
+    (["--benchmark", "OFF"], {}, "OFF", "ON"),
+    (["--wireless", "OFF"], {}, "ON", "OFF"),
+    ([], {"PF_ENABLE_STORAGE_BENCHMARK": "OFF", "PF_ENABLE_WIRELESS": "OFF"}, "OFF", "OFF"),
+    (["--benchmark", "ON"], {"PF_ENABLE_STORAGE_BENCHMARK": "OFF"}, "ON", "ON"),
+])
+def test_build_script_selects_optional_modules(tmp_path, arguments, environment, benchmark, wireless):
+    env, log = _fake_build_tools(tmp_path)
+    subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), "--build-dir", str(tmp_path / "build"), *arguments],
+                   env={**env, **environment}, check=True, capture_output=True, text=True)
+    configure_arguments = log.read_text().splitlines()
+    assert f"-DPF_ENABLE_STORAGE_BENCHMARK={benchmark}" in configure_arguments
+    assert f"-DPF_ENABLE_WIRELESS={wireless}" in configure_arguments
+
+
+@pytest.mark.parametrize(("option", "value"), [("--benchmark", "off"), ("--wireless", "1")])
+def test_build_script_rejects_invalid_module_selection_before_configuring(tmp_path, option, value):
+    env, log = _fake_build_tools(tmp_path)
+    result = subprocess.run(["sh", str(ROOT / "tools/firmware/build.sh"), option, value],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert f"{option} must be ON or OFF" in result.stderr
+    assert not log.exists()
+
+
+def test_load_script_forwards_benchmark_selection(tmp_path):
+    env, log = _fake_build_tools(tmp_path)
+    build = tmp_path / "build"
+    build.mkdir()
+    elf = build / "pico_forge.elf"
+    elf.touch()
+    (build / "pico_forge_elf.txt").write_text(f"{elf}\n")
+    probe = tmp_path / "openocd"
+    probe.write_text("#!/bin/sh\nexit 0\n")
+    probe.chmod(0o755)
+    subprocess.run(["sh", str(ROOT / "tools/firmware/load.sh"), "--build-dir", str(build), "--benchmark", "OFF",
+                    "--openocd-exe", str(probe)], env=env, check=True, capture_output=True, text=True)
+    assert "-DPF_ENABLE_STORAGE_BENCHMARK=OFF" in log.read_text().splitlines()

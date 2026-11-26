@@ -1,5 +1,7 @@
 # Static review remediation validation
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Historical record, not current validation. The table and findings below describe the checks run on the working-tree
 edits made on top of `bde8d7e` before they were committed as `ac4ae7a`; the former "edits remain uncommitted"
 statement was true only at that time. Later changes (for example the DeviceMonitor command-write locking and the

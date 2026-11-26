@@ -225,7 +225,8 @@ void pf_hid_build_identity_report(pf_hid_identity_report_t *report)
     report->firmware_patch = PF_FIRMWARE_VERSION_PATCH;
     report->mcu = pf_system_mcu_id();
     report->board_model = board_model();
-    report->capabilities = PF_HID_CAP_LED | PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
+    report->capabilities = PF_HID_CAP_REBOOT | PF_HID_CAP_SETTINGS | PF_HID_CAP_FORCE_SAVE;
+    if (PF_BOARD_LED_AVAILABLE) report->capabilities |= PF_HID_CAP_LED;
 #if PF_ENABLE_WIRELESS
     report->capabilities |= PF_HID_CAP_WIRELESS;
 #endif

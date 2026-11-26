@@ -1,5 +1,7 @@
 # Fixed-25-MHz SDIO Follow-up
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: 2026-10-16. Migrated unchanged from [SD-card driver design](../../reference/sdcard/driver.md).
 
 **Scope:** the connected 128 GB SB128 card on the fixed-clock implementation at a 25 MHz transfer target. These checks

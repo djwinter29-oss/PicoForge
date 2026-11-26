@@ -1,5 +1,7 @@
 # Static SD Review Follow-up
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: 2026-10-15. Migrated unchanged from [SD-card driver design](../../reference/sdcard/driver.md). This is a source-review
 record; no hardware measurement was made. Current behavior is summarized in the design's
 [MSC reset sense](../../reference/sdcard/driver.md#msc-batching-and-validation-boundary) paragraph.

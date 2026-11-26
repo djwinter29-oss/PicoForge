@@ -12,11 +12,22 @@
 #include "app/wireless/wireless.h"
 #endif
 
+#if !PF_BOARD_LED_AVAILABLE
+/** @brief Reject LED writes because the radio driver that owns the LED is not linked. */
+static bool led_unavailable(bool on)
+{
+    (void)on;
+    return false;
+}
+#endif
+
 const pf_led_board_t pf_led_board = {
     .gpio = PF_BOARD_LED_GPIO,
     .active_high = !PICO_DEFAULT_LED_PIN_INVERTED,
 #if PF_ENABLE_WIRELESS
     .put = pf_wireless_led_put,
+#elif !PF_BOARD_LED_AVAILABLE
+    .put = led_unavailable,
 #endif
 };
 

@@ -1,5 +1,7 @@
 # Historical Benchmark Observations
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Extracted from the benchmark guide. These observations retain their historical configuration and cleanup behavior;
 current operating instructions remain in the [benchmark guide](../../guides/sdcard-benchmark.md).
 

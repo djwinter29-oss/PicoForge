@@ -1,76 +1,98 @@
 # PicoForge .NET Host
 
-The .NET 10 host monitors the vendor HID interface and serves the shared local dashboard at `http://127.0.0.1:5000/` by default. Override the port with `tools/host/run-dotnet.sh --port PORT`; only one dashboard server can bind to port 5000 at a time.
+[Documentation](../../../docs/README.md) / [Dashboard guides](../../../docs/guides/README.md#dashboards)
 
-Python and .NET share their own frontend, but must not share any code with Direct. See the
-[Direct independence policy](../../../docs/development/host-tools.md#direct-dashboard-independence).
+Monitor PicoForge boards over USB HID and use the local dashboard at <http://127.0.0.1:5000/>.
+
+## Run a Released Package
+
+1. Download the matching self-contained host archive from the
+   [latest release](https://github.com/djwinter29-oss/PicoForge/releases/latest):
+   Linux x64, Windows x64 or macOS ARM64. Verify its checksum and extract the entire archive; see
+   [download verification](../../../docs/getting-started.md#download-and-verify).
+2. Install native HID dependencies if needed:
+   - Debian/Ubuntu: `sudo apt install libhidapi-hidraw0`; configure
+     [HID permissions](../../../tools/host/hid-permissions-setup.sh) and reconnect the board.
+   - macOS: `brew install hidapi`.
+3. Run `PicoForge.exe` on Windows or `./PicoForge` on Linux/macOS, then open <http://127.0.0.1:5000/>.
+   Pass `--port 5001` if another application uses port 5000.
+
+Packages include the .NET runtime and dashboard assets; no .NET SDK/runtime installation is required.
+Binaries are unsigned; follow local security policy and run
+only trusted, verified downloads if SmartScreen or Gatekeeper warns.
+
+## Run from Source
+
+Install the .NET 10 SDK, then run from the repository root:
 
 ```sh
+tools/host/run-dotnet.sh
+# Or:
 dotnet run --project host/dotnet/PicoForge/PicoForge.csproj
 ```
 
-Select a default board at launch with `tools/host/run-dotnet.sh --serial SERIAL` or
-`tools/host/run-dotnet.sh --device-path HID_PATH`. The options are mutually exclusive; without either, the first
-discovered board is selected. Use **Rescan** to refresh the board list.
+The launcher checks Linux HID permissions and forwards application options:
 
-`GET /api/boards` discovers attached boards. The dashboard's **Rescan** and board selector choose one, and
-status/command requests include its ID as `?board=<id>`. `GET /api/status` returns the selected board's hardware
-identity, runtime telemetry, LED state, SD-card information, and MSC state. `POST /api/led` sets the selected
-board's LED; `POST /api/settings` saves supported boot settings and verifies HID readback.
-Serial-identified boards retain their monitor for at least 30 seconds after disappearing from a successful rescan,
-allowing brief USB reconnects without losing selection. Active commands postpone retirement; uncertain outcomes keep
-the monitor until confirmed re-sync or shutdown. Cleanup must finish before a replacement can open.
-Boards without serial numbers use their HID device
-path as identity and become eligible for removal on the first successful rescan where they are absent. A path-only
-identity cannot distinguish a different serial-less board reusing that path unless a rescan observes the gap.
-`POST /api/msc` accepts `{"enabled":true}` or `{"enabled":false}`. Current firmware keeps CDC, HID and MSC connected;
-MSC reports no medium while Pico owns the card. Safely eject before disabling to return the card to PicoForge.
-Persistent errors, invalid reports, permission failures and uncertain command outcomes remain errors.
-`POST /api/self-test` starts or cancels the SD-card test and acknowledges HID delivery with HTTP 202.
-See [the performance-test guide](../../../docs/guides/sdcard-benchmark.md) for safety and metric definitions.
-Run with `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
-The dashboard's **Return to Pico** action requires explicit data-loss confirmation and requests Pico-side
-host-access revocation/remount without any host OS eject command. See the
-[force-return design](../../../docs/reference/usb-hid.md#msc-force-return-safety) for its
-one-attempt remount policy and host-cache risks. The safe-disable API remains available for manual-eject clients.
-If a HID write times out or its result cannot be matched, the dashboard marks the command outcome uncertain and blocks
-further writes rather than replaying or overwriting the result.
-**Enable USB drive** also opens a storage-handoff confirmation dialog; Cancel or Escape sends no command.
-Local settings edits are permitted while shared. Capability bit 6 enables confirmed forced **Save&Reboot**,
-including a host-cache data-loss warning; `POST /api/settings` requests it only with `confirm_data_loss:true`.
-Device sync and detach must succeed before saving, and the original result is verified after reconnect without
-SET replay. See the [forced-save policy](../../../docs/reference/settings.md#forced-save-and-reboot).
-Self-tests and transitions still block saving; standalone reboot remains blocked while USB owns storage.
+```sh
+tools/host/run-dotnet.sh --port 5001
+tools/host/run-dotnet.sh --serial SERIAL
+tools/host/run-dotnet.sh --device-path HID_PATH
+```
 
-## Source Layout
+Serial and device-path selection are mutually exclusive. Without either, the first discovered board is selected.
 
-- `Hosting/` — application startup and dependency registration.
-- `Protocol/` — HID report models, validation, and wireless report codecs.
-- `Hid/` — USB HID transport and serialized device monitoring.
-- `Dashboard/` — board selection, grouped status/wireless endpoints, and TCP console bridge.
+## Connect and Check
 
-The folders organize implementation by responsibility while retaining the existing `PicoForge` namespace.
-See the [.NET lifecycle design](../../../docs/development/host-tools.md#net-host-lifecycle) for retirement, shutdown,
-cleanup failures, configuration diagnostics, pending-reboot gates, console deadlines and production-pipeline test ownership.
-Build and publish always copy the current `host/web/src` assets into `wwwroot`; the .NET host serves those files,
-not a separate dashboard implementation. Automatic self-test-wait and unsaved-settings notices are not shown.
-**Boot configuration** contains settings applied at startup; live Wi-Fi connection details appear only in Live diagnostics.
-Wireless uses the version-1 [Report 12 and Feature 20 contract](../../../docs/reference/usb-hid.md).
-Report 2 supplies all saved service switches; it is cached per HID handle and re-read after a settings save or
-reconnect, so a Wi-Fi poll reads only Report 12. Omitted credentials are not staged. Tested saves commit the staged
-pair without restaging it. Status and scan entries include escaped `ssid` labels and lossless `ssid_hex`; test/save
-requests accept `ssid_hex` for opaque network names. A successful test returns a conservative 600-second countdown;
-fresh firmware staging flags remain authoritative. Removed password/auth-mode/reconnect diagnostics are not invented.
-TCP CLI access always requires the saved Control key and the board's fixed opcode-13 proof.
-The shared dashboard and HID/API checks run with
-`dotnet test host/dotnet/PicoForge.Tests/PicoForge.Tests.csproj`; asset checks require the source checkout.
-These host tests do not validate physical USB detach/reconnect or storage durability.
-The [storage lifecycle](../../../docs/reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
-startup, keeps healthy firmware-owned storage mounted, and automatically remounts after normal safe USB return.
-USB sharing temporarily grants the host exclusive access; firmware file operations and self-test are unavailable.
-Wait for fresh mounted status after return, not merely HID reconnection. Start uses the existing mount and checks
-free space before accepting temporary writes; that scan can delay progress, but is not a mount-only action.
-Wait for its command result rather than clicking again. Self-test cleanup leaves the filesystem mounted.
-Board monitoring starts asynchronously on first access, so the first status response can briefly show that it is
-waiting for HID while identity and configuration are read in the background. The monitor polls every 100 ms and
-reuses input and feature report buffers per HID client to reduce idle wakeups and recurring allocations.
+Connect a board running PicoForge firmware with a data-capable USB cable. Open the dashboard, use **Rescan**, and select
+the intended board. Identity/configuration may briefly show as waiting while monitoring starts; Live diagnostics should
+then show current board identity and available telemetry. Storage and radio details depend on board capabilities.
+
+Use only one dashboard/HID monitor per board; close competing Python, .NET or Direct connections.
+Python and .NET share the frontend in `host/web/src`; Direct is an independent implementation under the
+[Direct independence policy](../../../docs/development/host-tools.md#direct-dashboard-independence).
+
+## Troubleshooting and Safety
+
+| Symptom | Action |
+|---|---|
+| Server cannot start on port 5000 | Stop the other server or pass `--port 5001`. |
+| Board is missing or HID access fails | Check the data cable, firmware, native HID dependency and Linux permissions; reconnect and Rescan. |
+| Board is waiting, stale or disconnected | Allow initial discovery, check USB access and close competing monitors. Do not treat stale telemetry as current. |
+| Duplicate identity warning | Leave only the intended board attached and Rescan; absence alone does not clear quarantine. |
+| Command outcome is uncertain | Use **Re-sync** and follow recovery instructions. Do not repeat the write to guess whether it succeeded. |
+| Wi-Fi cleanup is required | Follow **Clear Wi-Fi test** recovery; unrelated writes remain blocked until cleanup succeeds. |
+| Native HID cleanup fails | Restart the host; it deliberately does not open a replacement handle after failed cleanup. |
+
+Before changing storage or persistent settings, read the relevant safety procedure:
+
+- [USB storage ownership and safe eject](../../../docs/guides/storage.md#share-the-card-with-your-computer)
+- [Force-return risks](../../../docs/reference/usb-hid.md#msc-force-return-safety)
+- [Forced Save&Reboot and data-loss confirmation](../../../docs/reference/settings.md#forced-save-and-reboot)
+- [SD-card benchmark safety](../../../docs/guides/sdcard-benchmark.md)
+- [Wi-Fi TCP console setup and security](../../../docs/guides/console.md#wi-fi-tcp-terminal)
+
+## Develop and Test
+
+| Folder | Responsibility |
+|---|---|
+| `Hosting/` | Startup and dependency registration |
+| `Protocol/` | HID models, validation and codecs |
+| `Hid/` | HID transport and serialized monitoring |
+| `Dashboard/` | Board selection, HTTP endpoints and TCP console bridge |
+
+Build/publish copies current `host/web/src` assets into `wwwroot`; edit shared source, not generated copies.
+Run hardware-free tests from the repository root:
+
+```sh
+dotnet test host/dotnet/PicoForge.sln --configuration Release --filter "Category!=Performance"
+```
+
+For API exploration, set `ASPNETCORE_ENVIRONMENT=Development` to expose `/openapi/v1.json`.
+Requests select a board with `?board=<id>` from `GET /api/boards`; `GET /api/status` returns its current snapshot.
+The [host development guide](../../../docs/development/host-tools.md) owns shared frontend checks,
+[API contracts](../../../docs/development/host-tools.md#shared-api-contract),
+[command ownership](../../../docs/development/host-tools.md#command-ownership-and-cancellation) and
+[.NET lifecycle design](../../../docs/development/host-tools.md#net-host-lifecycle).
+The [HID reference](../../../docs/reference/usb-hid.md) owns the wire protocol.
+Passing host tests does not establish physical USB/storage reliability; use the
+[.NET hardware procedure](../../../docs/development/host-tools.md#qualify-the-net-host-with-hardware).

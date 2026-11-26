@@ -1,5 +1,7 @@
 # Firmware Development and Testing
 
+[Documentation](../README.md) / [Development](README.md)
+
 This guide summarizes firmware build and test workflows for RP2040 and RP2350. The canonical C test placement and
 hardware limits are in [firmware test guidance](../../firmware/tests/README.md) and the
 [test ownership index](../../tests/README.md). System and layer boundaries are in the
@@ -8,6 +10,10 @@ clients, while physical USB behavior remains a hardware-qualification item. The
 [HID Report Reference](../reference/usb-hid.md) is authoritative for the current contract.
 W-board host checks and target builds do not qualify physical Wi-Fi/BLE; the
 [wireless and BLE board checks](#wireless-and-ble-board-checks) are required for physical qualification.
+
+On this page: [prerequisites](#prerequisites) / [build](#build-firmware) /
+[unit tests](#firmware-unit-tests) / [repository checks](#repository-validation) /
+[board checks](#hardware-validation).
 
 ## Prerequisites
 
@@ -38,6 +44,10 @@ Use a different `--build-dir`
 when comparing configurations. The default image uses the SDK stock clock. A successful cross-build does not qualify
 physical USB, GPIO, card timing, or storage reliability.
 
+Enable or disable optional modules with `--benchmark ON|OFF` and `--wireless ON|OFF` (both default ON). For module
+effects, transport/port dependencies and configuration-specific checks, use the
+[build configuration reference](../reference/build-configuration.md).
+
 ## Firmware Unit Tests
 
 Ceedling tests exercise host-testable C modules with Unity, CMock, and scoped SDK/RTOS fakes. Initialize the Embedded
@@ -55,6 +65,18 @@ Run one focused test by its file basename, without `.c`:
 tools/validation/setup-ceedling-testing.sh test:test_sd_protocol
 ```
 
+The Embedded CLI checkout is required even for configuration validation; the wrapper does not fetch it.
+The wrapper provisions gcovr using `uv` when available or Python with venv support. For direct `ceedling` commands,
+add your user gem `bin` directory to `PATH` and run from the repository root.
+
+For HTML and Cobertura coverage under `build/ceedling/artifacts/gcov/gcovr/`:
+
+```sh
+tools/validation/coverage-firmware.sh
+```
+
+Coverage requires at least one unit test.
+
 Tests belong under `firmware/tests/`, mirroring the production source subtree. Keep test ownership with the module or
 application service whose behavior is under test. The firmware test guide documents naming, fixtures, coverage, and
 the boundary between host fakes and real hardware behavior.
@@ -62,16 +84,12 @@ the boundary between host fakes and real hardware behavior.
 ## Repository Validation
 
 Repository contracts cover cross-project configuration and build artifacts; they are distinct from firmware unit
-tests. Install their Python test dependencies, then run the contract subset:
-
-```sh
-python3 -m pip install -r tests/requirements.txt
-python3 -m pytest tests -m contracts
-```
+tests. Use the [repository contract instructions](../../tests/README.md#repository-contracts) for prerequisites
+and the standalone command.
 
 The local validation wrapper runs shell checks, repository contracts, Ceedling checks and tests, SDIO PIO
 timing models, the `pico`/`pico2` × SDIO/SPI FreeRTOS build matrix, and MSC artifact checks.
-PR/release workflows additionally build `pico_w` and `pico2_w`; see the [release guide](../deployment/release.md).
+PR/release workflows additionally build `pico_w` and `pico2_w`; see the [release guide](releases.md).
 
 ```sh
 tools/validation/validate.sh
@@ -159,7 +177,7 @@ transport, host OS, and access point configuration. Do not use production creden
    configurations. Verify storage admission remains exclusive, capture task stack high-water observations, and
    record any USB, radio, or storage failures.
 
-Record results in the [validation records](../validation/records/README.md). Partial runs and untested combinations
+Record results in the [validation records](../evidence/records/README.md). Partial runs and untested combinations
 remain qualification gaps; host checks and target builds do not substitute for these board checks.
 
 #### Direct Dashboard Board Checks
@@ -190,7 +208,7 @@ Do not record Control keys or Wi-Fi passwords. Use test credentials and backed-u
 
 Use controlled diagnostic/fault fixtures for deterministic failures; do not interrupt production writes to induce
 them. Keep browser-mock results separate from physical observations. An unavailable board, browser, or fault fixture
-is `not-run`, not a pass, and remains in the [qualification gaps](../validation/qualification-gaps.md).
+is `not-run`, not a pass, and remains in the [qualification gaps](../evidence/README.md).
 
 ### Boot Settings Board Checks
 

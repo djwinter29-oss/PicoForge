@@ -323,7 +323,8 @@ target_link_libraries(pico_forge
     pf_boot_config
 )
 
-if(PICO_CYW43_SUPPORTED)
+option(PF_ENABLE_WIRELESS "Include Wi-Fi, BLE and the TCP CLI on CYW43 wireless boards" ON)
+if(PICO_CYW43_SUPPORTED AND PF_ENABLE_WIRELESS)
     target_sources(pico_forge PRIVATE
         src/app/wireless/wireless.c
         src/app/wireless/wifi/wifi.c

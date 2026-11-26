@@ -1,5 +1,7 @@
 # Pico 2 SDIO Speed Matrix Repeat
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: 2026-10-18. Tested firmware commit: `35779bd404d2f8ab5185a912b331449a1a45d191`.
 
 ## Conclusion
@@ -94,9 +96,11 @@ These build directories now contain this repeat's images, not the previous matri
 | cpu250-ds | `61c9de1590aaf326d0032e3fdecb920baa1ebb91636de711c757db3bb45a061b` |
 | cpu250-hs | `ab6fb91c22b6c8f6d535a699f28e3257087a5ef5f98cdb477112d4a0682bfcf7` |
 
-Raw results, per-run JSON snapshots, before/after CDC diagnostics and configure/build/flash logs are retained in
-the Copilot session's `files/sdio-matrix-repeat-35779bd/`; the runner is `files/test_sdio_matrix_repeat.py`.
-The earlier matrix evidence remains separate.
+**Evidence availability:** the tables, configuration and artifact hashes above are the durable repository record.
+Raw snapshots, diagnostics, logs and the runner were stored in a private session directory and are not available
+from this repository. They could not be recovered during the documentation cleanup. Independent reanalysis is
+limited to the published summaries. The [earlier matrix](2026-10-18-sdio-speed-matrix.md) is a separate measurement,
+not substitute raw evidence for this repeat.
 
 ## Limits
 

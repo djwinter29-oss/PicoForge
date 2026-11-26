@@ -1,21 +1,19 @@
 # Firmware Unit Tests
 
-Ceedling 1.1.10 with Unity and CMock is configured by the repository-root `project.yml`. Tests target host-testable
+[Development](../../docs/development/README.md) / [Test ownership](../../tests/README.md)
+
+Ceedling with Unity and CMock is configured by the repository-root [project.yml](../../project.yml). Tests target host-testable
 application, board, driver, integration and platform code, and mirror the corresponding subtree under
 `firmware/src/`. The source/include root is `firmware/src/`; the Pico SDK-bound `main.c` is explicitly excluded from
 host source collection.
 
-Install Ruby 3 or newer and GCC/gcov, then run the setup wrapper from the repository root. The wrapper uses `uv` if available or Python 3.10+ with venv support to provision gcovr:
+For prerequisites, setup, run commands, and coverage, use the
+[firmware test workflow](../../docs/development/firmware-testing.md#firmware-unit-tests). This page owns test
+placement and fixture rules.
 
-```sh
-git submodule update --init firmware/third_party/embedded-cli
-tools/validation/setup-ceedling-testing.sh
-```
+## Test Placement
 
-The source submodule is required even for Ceedling configuration validation; the setup wrapper does not fetch it.
-
-The wrapper runs Ceedling from the repository root. To use `ceedling test:all` directly, add your user gem `bin`
-directory to `PATH` and run it from the root. Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
+Name test files `test_<source_basename>[_<scenario>].c` beneath the matching
 source subtree. For example, [sd_protocol.c](../src/drivers/sdcard/sd_protocol.c) is covered by
 [test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c) and
 [test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c). Keep related scenario tests alongside it.
@@ -26,8 +24,6 @@ together with the raw driver and execution port for both SPI and SDIO; they are 
 The layout contract in [test_validation_integrity.py](../../tests/test_validation_integrity.py) checks every Ceedling
 test against a C module in the matching source directory. Scenario suffixes are allowed; they do not create a new
 production module. Support fixtures and standalone smoke programs are not Ceedling test modules.
-
-Run `tools/validation/coverage-firmware.sh` to execute `gcov:all` and generate HTML and Cobertura reports under `build/ceedling/artifacts/gcov/gcovr/`. Coverage requires at least one unit test.
 
 Wireless radio and staging host checks compile the production modules with
 [`support/wireless/lifecycle.inc`](support/wireless/lifecycle.inc)'s SDK model:
@@ -63,10 +59,10 @@ protocol and platform unit tests. Tests mirror the production source tree:
 | USB memory reports, self-test admission and MSC callback behavior | [app/usb](app/usb) |
 | Interval CPU accounting, first-sample availability and 64-bit runtime deltas | [integration/freertos](integration/freertos) |
 
-The volume lifecycle test is [test_fatfs_volume.c](platform/storage/test_fatfs_volume.c), matching
-[fatfs_volume.c](../src/platform/storage/fatfs_volume.c). It binds a caller-supplied block device through
-`pf_fatfs_volume_*` APIs without SD initialization or driver mocks. Application command/automount tests cover
-SD initialization failure before binding, and already-mounted commands avoid reinitializing live media.
+## Fixture Boundaries and Special Checks
+
+The [volume lifecycle test](platform/storage/test_fatfs_volume.c) binds a caller-supplied block device through
+`pf_fatfs_volume_*` APIs without SD initialization or driver mocks.
 [Block-device tests](platform/storage/test_block_device.c) reject each missing callback and test the transfer-byte
 ceiling on a real 32-bit host build. The latter is explicitly ignored on 64-bit hosts. On x86 Linux with GCC multilib
 and 32-bit libc development support installed, run it without changing the normal Ceedling configuration:
@@ -77,51 +73,22 @@ ceedling --mixin='={project: {build_root: build/ceedling-block32}, flags: {test:
 
 The callbacks only record dispatch, so the byte-count boundary test does not allocate or access gigabytes of memory.
 
-Shared CRC7, command-frame, CSD and address-conversion tests live in
-[test_sd_protocol.c](drivers/sdcard/test_sd_protocol.c); native wire-codec tests remain in
-[test_sd_protocol_native.c](drivers/sdcard/test_sd_protocol_native.c).
 Production transport code lives in [sdio/](../src/drivers/sdcard/sdio) and [spi/](../src/drivers/sdcard/spi).
 The existing native-init and SPI behavior suites compile `sd_backend_sdio.c` and `sd_backend_spi.c` respectively;
 both implementations use the shared `sd_backend.h` contract. Physical-engine layer checks exclude the protocol and
 board-binding files even though they now share these directories.
-The PIO allocation fake matches the SDK's signed `pio_add_program()` result and can fail a selected acquisition.
-Engine tests cover initialization rollback, partial TX acquisition, command restoration failure and subsequent retry.
-Clock-reconfiguration tests distinguish unchanged-bus planner rejection from RX allocation failure after a divider
-change, requiring an unhealthy state followed by explicit restoration at the newly selected timing.
-Native TX tests check card CRC/write rejection diagnostics, including failed cleanup, without payload replay.
 Both fused-copy variants compile the same consolidated protocol implementation in their
 [disabled](drivers/sdcard/test_sd_protocol_copy_fused0.c) and
 [enabled](drivers/sdcard/test_sd_protocol_copy_fused1.c) tests.
-Bare-metal artifact checks also verify that SPI links no native codecs or CRC tables, and that the native fused-copy
-option reaches the consolidated protocol compilation.
-[SPI behavior tests](drivers/sdcard/test_sd_spi.c) inject selection failures across command, register, single-block,
-multi-block and sync paths, requiring zero subsequent bus activity. Native tests verify one-time callback binding
-and preserved stream recovery. Optional wait setup is tested with
-[SD media/FreeRTOS reservation integration](platform/storage/test_storage_media_freertos_serialization_sdio.c).
-Storage tests cover manual CS and raw byte validation, arbitrary released-line clock counts/deadlines, short/long native
-response byte packing and partial failure capture. The SD host test retains the exact 80-clock, low-speed
-initialization check.
 Common descriptor tests live in [test_sd_link.c](drivers/sdcard/link/test_sd_link.c). Static lifecycle and raw byte/wire
 validation tests run against the concrete [SPI](drivers/sdcard/spi/test_spi.c) and
 [SDIO-PIO](drivers/sdcard/sdio_pio/test_sdio_pio.c) backends. SPI protocol tests use compile-time call substitution
-for clock and selection failures rather than mutable operation tables. Cross-layer HID/card-unavailable scenarios are
-owned by
+for clock and selection failures rather than mutable operation tables. Cross-layer HID/card-unavailable scenarios belong to
 [test_usb_hid_sd_responsiveness.c](app/usb/test_usb_hid_sd_responsiveness.c), matching the HID source module.
 
-The SPI and native protocol suites exercise the same `pf_sd_backend_*` API with their respective implementations.
 Board suites compile shared setup with the selected SPI or SDIO binding. Storage/MSC integration fixtures implement
 the common backend contract and use `PF_TEST_SDCARD_TRANSPORT` only to choose the test scenario; production selection
 belongs entirely to CMake.
-
-Run all C behavior tests with:
-
-```sh
-ceedling test:all
-```
-
-Use `ceedling test:TEST_FILE_NAME` for one test file, without the `.c` suffix.
-`tools/validation/validate.sh` invokes the same Ceedling suite, plus shell
-syntax checks, firmware builds and the remaining Python validation.
 
 Reusable hardware/RTOS fakes and private translation-unit fixtures live under
 [support](support). Tests select scoped fake-header paths with

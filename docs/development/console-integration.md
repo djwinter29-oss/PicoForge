@@ -1,5 +1,7 @@
 # Console Integration
 
+[Documentation](../README.md) / [Development](README.md)
+
 This reference owns the Embedded CLI dependency, command registration, CDC session lifecycle, buffers, and
 software validation. User commands and stalled-output recovery remain in [the console guide](../guides/console.md).
 
@@ -31,12 +33,8 @@ Validate a complete request before changing state, keep each synchronous respons
 and report request admission separately from asynchronous completion. Full top-level help must fit that reserve too.
 The transport pauses CLI dispatch during pending HID save/reboot or benchmark admission, and services CDC/Wi-Fi while
 draining reboot acknowledgements. Add command contract tests in `firmware/tests/app/cli`, plus ownership/transport
-regressions when those boundaries change.
-
-```sh
-tools/validation/setup-ceedling-testing.sh test:cli \
-    test:cli_groups test:cli_board test:cli_config test:cli_storage test:cli_fs test:usb_hid_wireless
-```
+regressions when those boundaries change. Run the focused CLI command under
+[Validation](#validation) after updating command behavior.
 
 ## Integration
 

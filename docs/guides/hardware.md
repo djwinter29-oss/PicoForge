@@ -1,24 +1,12 @@
 # Hardware Setup
 
+[Documentation](../README.md) / [User guides](README.md)
+
 This guide owns board wiring, power, debug connections, and the SD-card breakout setup.
 Supported builds target Pico, Pico W, Pico 2, and Pico 2 W. Choose one SD transport at build time. Expansion GPIO examples below
 describe available hardware functions, not implemented application features.
 
 ## Board and Build Selection
-
-Board GPIO assignments use `uint8_t`; `UINT8_MAX` (`255`) means no pin. An absent LED is disabled, an absent UART
-TX/RX direction is passed to the SDK as `-1`, and absent card detect assumes a card is present without reading GPIO.
-All SPI and SDIO bus signals are required: an unassigned bus pin is rejected during initialization. SDK GPIO
-arguments and GPIO bit masks retain their SDK-defined widths.
-
-[config.h](../../firmware/src/config/config.h) keeps the SDK-derived LED selection and UART/LED fallback macros;
-[board.c](../../firmware/src/config/board.c) defines the corresponding assignment objects.
-
-[board_spi.c](../../firmware/src/config/board_spi.c) and [board_sdio.c](../../firmware/src/config/board_sdio.c) define
-the complete SPI and SDIO-PIO assignments. Each groups its bus pins, byte-sized controller index, and card-detect
-GPIO/polarity. CMake compiles only the selected assignment source alongside its matching transport binding;
-there is no separate selector macro, shared SD-board struct, or union. Reusable engines receive bus signals only;
-the SD binding manages card detection.
 
 | Item | Selection |
 | --- | --- |
@@ -27,6 +15,11 @@ the SD binding manages card detection.
 | MCU | RP2040 on Pico/Pico W; RP2350 on Pico 2/Pico 2 W |
 | Reference power | USB through the board's USB connector |
 | Optional clock profile | Saved profiles apply at reboot; builds use the SDK stock clock. Runtime clock changes do not raise core voltage. Out-of-spec profiles need board qualification; see [clock safety](../reference/settings.md#system-clock). |
+
+Basic USB monitoring needs no SD breakout. For storage, start with the
+[pin map](#memory-and-storage-connections) and [breakout requirements](#sd-card-breakout).
+GPIO and SD signals are **3.3 V only**; share ground and power off before changing wiring.
+Developers changing assignments should follow [board configuration](../reference/architecture.md#drivers-and-board-configuration).
 
 ## Debug and Monitoring
 
@@ -83,10 +76,8 @@ automatic hardware CS. SDIO has no CS signal.
   window directly.
 - The SD-SPI driver holds GPIO-controlled CS low across each complete card transaction, including data and
   busy-response phases. Verify CS timing, clock, and data with a logic analyzer during board validation.
-- SDIO has no CS signal. In SD-SPI mode, the driver controls the breakout's DAT3/CS line on GP7 as ordinary GPIO;
-  no automatic hardware CS is used.
 - Pin names follow the breakout guide below. Historical operations are preserved in
-  [bring-up records](../validation/records/sdcard-bringup-observations.md); they do not qualify current firmware.
+  [bring-up records](../evidence/records/sdcard-bringup-observations.md); they do not qualify current firmware.
 
 ## Lab Hardware Examples
 
@@ -104,8 +95,8 @@ GP7 drives CS in that mode. Board support can construct either transport configu
 signal on GP8 using the breakout's pull-up, without an MCU pull. Both drivers explicitly disable inherited MCU pulls
 when the external DET pull-up is selected. The breakout and driver both provide SDIO data pull-ups, so check their
 combined strength. The storage worker initializes and mounts detected cards according to
-[the mounting policy](../reference/architecture.md#storage-ownership-lifecycle). SPI uses CMD18/CMD25 for multi-sector requests and CMD17/CMD24
-for single sectors. Card capability negotiation and the saved storage speed target are defined by the
+[the mounting policy](../reference/architecture.md#storage-ownership-lifecycle). Card capability negotiation and the
+saved storage speed target are defined by the
 [SPI transfer-clock policy](../reference/sdcard/driver.md#spi-transfer-clock); this is not a guaranteed 50 MHz bus.
 Mode changes require protocol reinitialization. When switching from SPI to native SDIO, fully remove card power:
 an MCU reset alone can leave the card latched in SPI mode. Fixed wiring does not imply hot switching.

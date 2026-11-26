@@ -1,5 +1,7 @@
 # Independent SD / MSC follow-up audit
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Base: `performance-enhancement`, `06a12fe0e557dd4fb9ff25ad805f155b608df582`.
 Workspace-write sandbox remained in place. No hardware access, commit, or push.
 The prior `2026-10-15-sd-msc-review-host.md` record is preserved unchanged.

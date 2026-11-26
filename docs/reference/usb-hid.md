@@ -1,7 +1,21 @@
 # USB HID Report Reference
 
+[Documentation](../README.md) / [Reference](README.md)
+
 This document is the authoritative HID wire contract. For CDC CLI behavior, see the
 [USB CDC CLI guide](../guides/console.md).
+
+## Find a Contract
+
+| Need | Section |
+| --- | --- |
+| Discovery, framing and report inventory | [Report IDs](#report-ids), [connection flow](#connection-and-read-flow) |
+| Identity and configuration | [Report 1](#report-id-1-device-identity--capabilities), [Report 2](#report-id-2-board-configuration) |
+| Runtime and storage | [Report 3](#report-id-3-board-telemetry), [Report 10](#report-id-10-storage-status), [Report 11](#report-id-11-storage-benchmark-status) |
+| Commands and results | [Report 20](#report-id-20-control-command--result) |
+| Wireless status | [Report 12](#report-id-12-wireless-status) |
+| Storage safety | [Forced save](#confirmed-save-and-reboot-while-shared), [arbitration](#cross-interface-resource-arbitration), [force return](#msc-force-return-safety) |
+| Host implementation | [Polling and validation](#host-polling-and-validation), [freshness](#input-freshness) |
 
 ## Report ID Allocation
 
@@ -141,14 +155,14 @@ Capability bits:
 
 | Bit | Meaning |
 | ---: | --- |
-| 0 | Board identification LED available. |
+| 0 | Board identification LED available; clear on radio-free W-board builds, whose LED is on the radio. |
 | 1 | Confirmed standalone reboot available. |
 | 2 | Persistent boot-configuration save available. |
 | 3 | SPI storage transport selected for this firmware build. |
 | 4 | SDIO-PIO storage transport selected for this firmware build. |
 | 5 | Storage benchmark control and status available. |
 | 6 | Explicitly confirmed settings save/reboot while USB owns storage. |
-| 7 | Wi-Fi/BLE hardware and firmware capability. |
+| 7 | Wi-Fi/BLE hardware and firmware capability; clear when built with `PF_ENABLE_WIRELESS=OFF`. |
 
 `capabilities` contains bits 0-7. `capabilities_extension` contains bits 8-15, with bit 0 representing capability
 bit 8. All extension bits are currently unassigned and must be zero; hosts must ignore unknown bits.
@@ -654,9 +668,10 @@ progress and terminal status. Opcode `9` and `11` completion means a Wi-Fi test 
 owns its progress and terminal status. For standalone reboot, completion means reset was scheduled, not that the
 host observed a successful reboot.
 
-An accepted opcode `3` transition waits for the matching Feature `20` result GET to finish before disconnecting HID.
+An accepted opcode `3` transition waits for the matching Feature `20` result GET before applying ownership changes.
 If the host does not read the result, the transition proceeds after a bounded 500 ms grace period. This allows the
-host to observe acceptance without making ownership depend indefinitely on a GET.
+host to observe acceptance without making ownership depend indefinitely on a GET. CDC, HID and MSC stay connected;
+only the MSC medium availability changes.
 
 USB Feature `20` has its own result slot and transaction-ID sequence; the
 [Bluetooth control characteristic](bluetooth.md#control-characteristic) keeps separate ones, and neither replaces
@@ -720,11 +735,12 @@ Entries are read with opcode `12`; each request supplies the generation and inde
 out-of-range reads. The strongest 18 unique SSIDs are retained. Report `12` is a current snapshot, not an atomic
 snapshot with Report `2` or Feature `20`.
 
-Hosts poll Feature `12` every 500 ms while a Wi-Fi test or scan is active and every 2 seconds otherwise. A status
-snapshot is stale after three polling intervals (1.5 seconds while active; 6 seconds otherwise); hosts must display
-stale status as such and must not enable an operation based on stale staged flags or scan state.
+Polling cadence and maximum snapshot age are host policy, not fields or deadlines in this report.
+Hosts must distinguish stale status and must not authorize operations using stale staged flags or scan state.
+See the [Python host design](../development/host-tools.md#python-host-design) and
+[.NET host lifecycle](../development/host-tools.md#net-host-lifecycle) for their schedules and expiry rules.
 
-### Confirmed Save and Reboot While Shared
+## Confirmed Save and Reboot While Shared
 
 Opcode `5`, flag bit 0 clear, retains the normal firmware-owned storage requirement. Flag bit 0 set is only valid
 with MSC enabled and requires capability bit 6 plus an explicit host data-loss confirmation. Both paths reject
@@ -751,7 +767,7 @@ SET or infer completion from reconnection. Timeout, mismatched identity, or inva
 and blocks further writes. The [settings safety policy](settings.md#forced-save-and-reboot) explains confirmation
 and host-cache risks.
 
-### Cross-Interface Resource Arbitration
+## Cross-Interface Resource Arbitration
 
 Storage arbitration is device-wide, not per USB interface. One storage transaction or background storage lifecycle
 owns the shared SD-card/filesystem resource at a time. This includes CDC filesystem commands (including reads), HID
@@ -768,7 +784,7 @@ response handling. No request may access the SD card through firmware while MSC 
 replace the per-transport HID result-slot rule: hosts still serialize writes on each transport, and the device also
 rejects conflicting work originating from CDC.
 
-### MSC Force-Return Safety
+## MSC Force-Return Safety
 
 MSC is disabled at boot; firmware automatically mounts configured media according to the
 [storage lifecycle](architecture.md#storage-ownership-lifecycle). Only explicit USB enable transfers ownership;
@@ -870,27 +886,27 @@ compatibility; see the [settings record format](settings.md#record-format).
 Conformance tests cover:
 
 1. **Reports**
-   - [ ] Report types and lengths, API report-ID framing, field validation, stale telemetry, configuration
+   - Report types and lengths, API report-ID framing, field validation, stale telemetry, configuration
      cross-field rules, storage-state validity and ownership transitions, profile validation, and build-selected
      transport behavior.
-   - [ ] Reserved Report `12` flag validation, benchmark result retention, Feature `12` stale-status behavior,
+   - Reserved Report `12` flag validation, benchmark result retention, Feature `12` stale-status behavior,
      CID decoding, and the PicoUART report prefix.
 2. **Commands**
-   - [ ] Command validation and results, global detail-value mapping and status applicability, and storage Busy
+   - Command validation and results, global detail-value mapping and status applicability, and storage Busy
      details for opcodes `2`, `3`, and `5`.
-   - [ ] Wireless staging flags and `staged_state` (including implicit password clear and expiry), test-generation
+   - Wireless staging flags and `staged_state` (including implicit password clear and expiry), test-generation
      initialization and wrap, staged-state expiry status, and scan generation and index validation.
-   - [ ] Opcode `2` staged-value discard warning; opcode `5` commit mask and expiry-marker clearing by successful
+   - Opcode `2` staged-value discard warning; opcode `5` commit mask and expiry-marker clearing by successful
      saves or reboot; opaque SSID round-tripping and host escaping.
-   - [ ] Control-key requirements for TCP CLI service and opcode `13`, atomic credential commit, test/scan exclusion,
+   - Control-key requirements for TCP CLI service and opcode `13`, atomic credential commit, test/scan exclusion,
      and staging and opcode `10` behavior during scans.
-   - [ ] USB result-slot replacement and replay rejection.
+   - USB result-slot replacement and replay rejection.
 3. **Precedence**
-   - [ ] Error-precedence pairs: envelope rejection preserves the result slot; Unsupported precedes malformed
+   - Error-precedence pairs: envelope rejection preserves the result slot; Unsupported precedes malformed
      arguments; Busy precedes stateful preconditions; request-only validation is distinct from state-dependent
      validation.
 4. **Concurrency**
-   - [ ] Cross-transport resource arbitration and USB forced-save SET suppression.
+   - Cross-transport resource arbitration and USB forced-save SET suppression.
 
 Bluetooth checks, including its cross-transport Busy results, are listed in the
 [Bluetooth LE conformance list](bluetooth.md#conformance).

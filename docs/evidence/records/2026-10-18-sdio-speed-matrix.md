@@ -1,5 +1,7 @@
 # Pico 2 SDIO Speed Matrix
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 Date: 2026-10-18. Firmware commit: `9e569e4c379077482318165cb76332f92e91fd09`.
 
 ## Conclusion
@@ -107,8 +109,10 @@ The [performance-test procedure](../../guides/sdcard-benchmark.md) describes hos
 | cpu250-ds | `f157d6d3a44d2312dabe4a4d775d88aa9811b45bf42f579660471c3097ac7136` |
 | cpu250-hs | `ee254ea41d4ef1aa48ec764ce56da81bd7ac69c965829c13e4f32452ebe471d2` |
 
-Raw JSON snapshots, before/after CDC diagnostics, build/flash logs and the matrix runner are retained in the
-Copilot session's `files/sdio-matrix/` and `files/test_sdio_matrix.py`; they are not committed repository fixtures.
+**Evidence availability:** the tables, configuration and artifact hashes above are the durable repository record.
+Raw snapshots, diagnostics, logs and the runner were stored in a private session directory and are not available
+from this repository. They could not be recovered during the documentation cleanup. Independent reanalysis is
+therefore limited to the published summaries; do not treat the missing captures as accessible supporting artifacts.
 
 ## Limits and next qualification
 

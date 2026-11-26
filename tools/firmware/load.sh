@@ -17,13 +17,14 @@ FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SDCARD_TRANSPORT="${PF_SDCARD_TRANSPORT:-SDIO_PIO}"
 SKIP_BUILD=0
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
+BENCHMARK="${PF_ENABLE_STORAGE_BENCHMARK:-ON}"
 
 usage() {
     cat <<'EOF'
 Usage: tools/firmware/load.sh [options]
 
 Build and flash PicoForge to a Pico using a CMSIS-DAP debug probe.
-Builds use build.sh, which explicitly enables the storage benchmark; --skip-build leaves the image unchanged.
+Builds use build.sh with the selected benchmark module; --skip-build leaves the image unchanged.
 Rebuilding clears retired clock/speed CMake options; clock and SD speed now use saved dashboard profiles.
 
 Options:
@@ -40,6 +41,7 @@ Options:
 --sdcard-transport NAME     SDIO_PIO or SPI (default: SDIO_PIO)
 --skip-build                 Flash an existing ELF without building
 --firmware-version VERSION   Firmware version for builds (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
+--benchmark ON|OFF           Storage benchmark module for builds (default: PF_ENABLE_STORAGE_BENCHMARK or ON)
 --help                       Show this help
 EOF
 }
@@ -98,6 +100,10 @@ while [ "$#" -gt 0 ]; do
             FIRMWARE_VERSION="$2"
             shift 2
             ;;
+        --benchmark)
+            BENCHMARK="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -142,7 +148,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ -n "$FREERTOS_KERNEL_PATH_VALUE" ]; then
         set -- "$@" --freertos-kernel-path "$FREERTOS_KERNEL_PATH_VALUE"
     fi
-    set -- "$@" --sdcard-transport "$SDCARD_TRANSPORT"
+    set -- "$@" --sdcard-transport "$SDCARD_TRANSPORT" --benchmark "$BENCHMARK"
     "$@"
 fi
 

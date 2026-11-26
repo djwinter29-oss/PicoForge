@@ -1,43 +1,35 @@
-# Reading the Documentation
+# Documentation
 
-The [project README](../README.md#documentation) is the documentation index and capability overview.
-Start with [getting started](guides/getting-started.md); do not begin with old measurement records.
+[Project overview](../README.md)
 
-## Reading Order
+**First time here?** Follow [Getting Started](getting-started.md) to flash a board and check its first connection.
+You do not need an SD card for board monitoring.
 
-1. **Use the device:** [hardware](guides/hardware.md), your dashboard's guide, then the
-   [console](guides/console.md), [wireless](guides/wireless.md), or
-   [storage benchmark](guides/sdcard-benchmark.md) procedure you need.
-2. **Understand the foundation:** [project scope](../README.md#project-scope), [architecture](reference/architecture.md),
-   then the relevant reference. These describe implemented behavior, not a feature roadmap.
-3. **Maintain and validate:** [firmware testing](development/firmware-testing.md) or
-   [host development](development/host-tools.md), followed by [qualification gaps](validation/qualification-gaps.md).
-4. **Publish:** use the [release procedure](deployment/release.md). Historical passes do not qualify a new revision.
+## Choose Your Task
 
-## Document Ownership
-
-Keep each topic in one authoritative document; other guides link to it rather than copy its tables or procedures.
-
-| Topic | Authoritative location |
+| I want to... | Start here |
 | --- | --- |
-| Wiring, electrical limits, board and breakout connections | [Hardware guide](guides/hardware.md) |
-| Runtime, storage ownership, automount and worker admission | [Architecture](reference/architecture.md) |
-| Clock profiles, flash settings and forced-save safety | [Settings](reference/settings.md) |
-| USB management report layouts and command semantics | [USB HID reference](reference/usb-hid.md) |
-| Radio execution, credential extension, provisioning and TCP CLI authorization | [Wireless integration](development/wireless-integration.md) |
-| BLE advertising, GATT layout, authorization and command form | [Bluetooth LE protocol](reference/bluetooth.md) |
-| SD protocol, block interfaces and recovery | [SD driver](reference/sdcard/driver.md) |
-| PIO/SPI engine lifecycle and wire timing | [Physical links](reference/sdcard/physical-links.md) |
-| CLI commands and terminal use | [Console guide](guides/console.md) |
-| CLI dependency, registration and transport internals | [Console integration](development/console-integration.md) |
-| Benchmark safety, timing boundaries and interpretation | [Benchmark guide](guides/sdcard-benchmark.md) |
-| Direct dashboard independence and host checks | [Host development](development/host-tools.md) |
-| Build/test commands and hardware acceptance | [Firmware testing](development/firmware-testing.md) |
-| GitHub Actions release packaging, publication and download verification | [Release and publishing](deployment/release.md) |
-| Current evidence gaps and SD review dispositions | [Qualification gaps](validation/qualification-gaps.md), [SD review](validation/sd-review.md) |
-| Dated observations, measurements and superseded reviews | [Records](validation/records/README.md) |
+| Use the board, dashboards, storage, or wireless | [User guides](guides/README.md) |
+| Build firmware, change code, run tests, or publish a release | [Development](development/README.md) |
+| Look up a setting, protocol, interface, or ownership rule | [Technical reference](reference/README.md) |
+| Check what has been tested and what remains unqualified | [Known limits and evidence](evidence/README.md) |
 
-`guides/` contains operating procedures, `reference/` implementation contracts, `development/` maintenance workflows,
-`deployment/` release and publishing procedures, and `validation/` evidence and its limits.
-Records retain their original configuration and may mention retired
-commands or build options; use current guides to operate the current firmware.
+## Shortcuts
+
+- [Choose a dashboard](guides/README.md#dashboards)
+- [Enable or disable firmware modules](reference/build-configuration.md#optional-modules)
+- [Share an SD card with the computer](guides/storage.md#share-the-card-with-your-computer)
+- [Open the command console](guides/console.md#terminal)
+- [Find the right test suite](../tests/README.md)
+- [Report a security issue](../SECURITY.md)
+
+## Keeping These Docs Maintainable
+
+- Keep the project overview in the root README; use this page for navigation.
+- Give each procedure or contract one home. Link to it from other audiences' pages instead of copying it.
+- Put operating steps in user guides, code/test workflows in development, and exact contracts in reference.
+  Component READMEs own installation and everyday use; test READMEs own suite placement and fixture rules.
+- Repeat short safety warnings where the action happens, not complete state machines or setup recipes.
+- Keep current instructions separate from dated evidence. Preserve the revision, configuration, and limits of each record.
+- Use descriptive lowercase hyphenated filenames and add a section-index link when adding a page. See
+  [documentation checks](development/README.md#documentation-changes).

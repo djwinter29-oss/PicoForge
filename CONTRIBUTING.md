@@ -22,25 +22,20 @@ downstream projects and follow the [project scope](README.md#project-scope) and 
 
 ## Build and Test
 
-Firmware changes require the Pico SDK and FreeRTOS submodules:
+Use the workflow for the code you changed; each owns its prerequisites and commands:
 
-```sh
-git submodule update --init --recursive
-tools/validation/validate.sh
-```
-
-The validation script checks shell syntax, runs available Ceedling tests, and builds both `pico` and `pico2`. For host-only firmware unit tests, run `tools/validation/setup-ceedling-testing.sh test:all`; for coverage, run `tools/validation/coverage-firmware.sh`.
-
-Host application tests are hardware-free and run with:
-
-```sh
-python3 -m pip install --editable host/python
-tools/validation/test-host.sh
-```
-
-The host test script requires Python 3.10+, Node.js 22+, and .NET 10. Set `PYTHON`, `NODE`, or `DOTNET` when using non-default executable paths.
+| Change | Validation |
+| --- | --- |
+| Firmware | [Firmware development and testing](docs/development/firmware-testing.md) |
+| Python/.NET or shared dashboard | [Host tools development](docs/development/host-tools.md#run-host-tests) |
+| Direct dashboard or bridge | [Direct development](docs/development/direct-dashboard.md) |
+| Documentation | [Documentation checks](docs/development/README.md#documentation-changes) |
+| Cross-project contracts or validation tools | [Test ownership and inputs](tests/README.md) |
 
 Add focused tests for non-trivial hardware-independent behavior. Physical SD-card, USB enumeration, GPIO, timing, and temperature behavior require an identified board and must not be claimed from host tests or cross-builds alone.
+
+Follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities through the [security policy](SECURITY.md),
+not a public issue.
 
 ## Pull Requests
 

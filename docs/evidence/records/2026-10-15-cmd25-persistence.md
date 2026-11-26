@@ -1,5 +1,7 @@
 # Cross-call CMD25 persistence A/B benchmark
 
+[Documentation](../../README.md) / [Evidence](../README.md) / [Records](README.md)
+
 ## Decision
 
 Keep cross-call native CMD25 persistence unconditionally. The temporary A/B

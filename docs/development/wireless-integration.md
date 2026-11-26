@@ -1,5 +1,7 @@
 # Wireless Integration
 
+[Documentation](../README.md) / [Development](README.md)
+
 This document owns shared radio execution, Wi-Fi, credential persistence, provisioning security, and TCP CLI
 authorization. Everything specific to Bluetooth is in the [Bluetooth LE protocol](../reference/bluetooth.md).
 For user setup and restrictions, see [the wireless guide](../guides/wireless.md).
@@ -18,11 +20,12 @@ static-allocation policy, and never invokes FatFs from a radio callback. On W im
 startup core before initializing the SDK at boot: poll-context checks and CYW43 IRQ ownership require it. The same task
 drives the CYW43 LED. Non-wireless builds keep the existing all-core task affinity. Storage ownership remains exclusive.
 
-All supported boards advertise LED control. `config/board.c` selects direct GPIO for Pico/Pico 2 and a CYW43 writer
-for W boards at build time. The wireless owner initializes the chip and clears its LED even with both radios disabled.
-LED writes fail explicitly if that initialization failed; LED support
-is not a dynamically detected capability. HID capability and telemetry fields advertise the LED behavior in the
-current report contract.
+Pico/Pico 2 use direct GPIO for the LED. W-board LED control uses CYW43 and is
+available only when wireless support is compiled in; a radio-free W image has
+no LED capability. The wireless owner initializes the chip and clears its LED
+even with both radios disabled. LED writes fail explicitly if initialization
+failed; support is not dynamically detected. See the [build configuration](../reference/build-configuration.md)
+and [HID capability contract](../reference/usb-hid.md) for the advertised capabilities.
 
 Only the boot configuration service writes flash; Bluetooth keeps no persistent state (see
 [pairing and bonding](../reference/bluetooth.md#pairing-and-bonding)).
@@ -114,8 +117,9 @@ Feature `20` opcode `13` over USB or signs with the non-extractable key from its
 the one-use proof crosses to the console and local bridge; the Control key is not sent there. If no matching Direct
 dashboard is connected, the console refuses to connect rather than prompting for the key. Standalone TCP clients
 must compute the proof themselves. Feature `20` opcode `13` does not provide a general signing operation. See the
-[console guide](../guides/console.md#direct-dashboard-authentication) for the rationale and local-machine
+[console guide](../guides/console.md#wi-fi-tcp-terminal) for the rationale and local-machine
 considerations. Authenticated or not, the listener accepts one CLI client, closes sessions idle for 15 minutes, and
 is exposed only on the saved Wi-Fi network. The TCP stream itself is not encrypted.
+Connection logs include the peer IP and authentication outcomes, but not keys, proofs or command contents.
 lwIP uses 4-byte heap alignment for Cortex-M packet-buffer stores. Its TCP budget is an 8 KiB heap, three PCBs,
 1460-byte MSS, and 2 x MSS send and window buffers.

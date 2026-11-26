@@ -1,18 +1,16 @@
 # SD-Card Performance Test
 
+[Documentation](../README.md) / [User guides](README.md)
+
 This guide owns the benchmark's safety rules, execution workflow, measurement boundaries, and result interpretation.
 For card-driver behavior, see the [SD-card driver design](../reference/sdcard/driver.md);
 for wiring and transport constraints, see [SD-card physical links](../reference/sdcard/physical-links.md).
 
-The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
-It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
-self-test. The [storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
-startup and after normal USB return independently of Start; healthy firmware-owned storage stays mounted.
-HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
-The numeric state/error values retain their documented assignments: wire state 2 (`preparing`) means the worker is
-preparing an accepted run against the existing mount, and wire error 5 (`card`) means the selected media is unavailable.
+The host UI/API calls this benchmark a self-test. It uses the already-mounted volume; Start does not mount it.
+See the [storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle) for mounting policy and the
+[HID reference](../reference/usb-hid.md#report-id-11-storage-benchmark-status) for report layouts and numeric errors.
 
-Current source-review dispositions and remaining qualification: [SD remediation matrix](../validation/sd-review.md).
+Current source-review dispositions and remaining qualification: [SD remediation matrix](../evidence/sd-review.md).
 
 The firmware can write a dedicated file, read it back, verify every byte, and
 report average filesystem write/read speeds over HID. The Python and .NET
@@ -21,14 +19,9 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 
 ## Running
 
-The benchmark is optional: CMake defaults `PF_ENABLE_STORAGE_BENCHMARK` to `OFF`. The development
-`tools/firmware/build.sh` script explicitly enables it; `tools/firmware/load.sh` delegates builds to that script
-(loading with `--skip-build` does not change the existing image).
-For a benchmark-free image, configure directly with CMake using `-DPF_ENABLE_STORAGE_BENCHMARK=OFF` and build
-with `cmake --build <build-dir>`; do not rebuild that configuration through the development script.
-Disabled builds omit the benchmark implementation and its 32 KiB buffer, clear the HID self-test capability,
-reject start/cancel commands as unsupported, and do not publish self-test reports. Host interfaces use that
-capability to disable self-test controls. Normal storage, filesystem commands, and MSC remain available.
+The benchmark is an optional module: the build wrapper includes it unless `--benchmark OFF` is given; direct CMake
+builds omit it by default. See [build configuration](../reference/build-configuration.md#optional-modules).
+Without benchmark support, dashboards disable its controls; normal storage, filesystem commands and MSC remain available.
 
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Wait for automatic mounting and fresh mounted-filesystem status. If mounting fails or was deliberately suppressed,
@@ -41,7 +34,10 @@ capability to disable self-test controls. Normal storage, filesystem commands, a
    no existing file is replaced and no mount-only step occurs. Free-space scanning can delay acceptance and byte
    progress, particularly on large filesystems; do not submit a second Start while its command result is pending.
 6. Wait for **Passed**, **Failed**, or **Cancelled**; Cancel requests cleanup and
-   does not make ownership available until the worker finishes.
+   does not make ownership available until the current I/O and worker cleanup finish.
+
+Rejected starts leave the previous result visible; check the command error rather than interpreting an old Passed
+result as a new completed run.
 
 Do not reset, unplug, remove the card, or change transport while the test runs.
 This test writes to the SD card and contributes to card wear. Back up important data
@@ -90,7 +86,8 @@ phases display no speed rather than an infinite or invented value.
   this is not a distinct wire phase.
 
 These are application-level filesystem throughput measurements, not raw wire
-bandwidth. SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to
+bandwidth. Only progress and results go to the host; benchmark file data stays on the board/card path.
+SDIO contiguous writes use CMD25 and reads use CMD18 batches of up to
 64 sectors; single-sector tails use CMD17/CMD24. SPI multi-sector requests use
 CMD18/CMD25 transactions and single sectors use CMD17/CMD24. Results depend on card, transport, bus speed,
 allocation state, and runtime load. The implementation does not qualify
@@ -109,60 +106,16 @@ free space, and is not a raw-driver benchmark. The driver has no phase profiling
 per-phase timing, see
 [performance controls and status](../reference/sdcard/driver.md#performance-controls-and-status).
 
-## CMD25 Persistence Decision
+## Implementation and Checks
 
-Native SDIO CMD25 persistence and checked stream recovery are defined by the
-[driver write workflow](../reference/sdcard/driver.md#write-workflow).
-The [controlled A/B record](../validation/records/2026-10-15-cmd25-persistence.md) preserves the measured decision and
-its configuration-specific limits; it is not a universal throughput guarantee.
-
-The storage worker performs all FatFs operations; the USB task owns HID/CDC.
-Progress is copied under a short FreeRTOS critical section and emitted through
-HID Input report `11` every 500 ms when the board advertises self-test capability. Start is preflighted by the
-storage worker while it owns admission; the prior result remains visible until the file/path and free-space checks
-succeed. Cancellation is checked between chunks and before creation; a current I/O operation completes before
-cleanup. The 8 KiB
-worker stack allocation remains unchanged. The test uses a 32 KiB static buffer;
-SDIO batched reads use an additional 33,280-byte (32.5 KiB) static wire buffer.
-The SDIO CRC lookup tables occupy another 8 KiB. No benchmark
-data is sent through HID or CDC.
-
-## API
-
-Both local hosts accept `POST /api/self-test` and return HTTP 202 to acknowledge
-command delivery, not successful completion:
-
-```json
-{"action":"start","size_mib":32}
-```
-
-```json
-{"action":"cancel"}
-```
-
-Poll `/api/status` and its `self_test` object for an accepted run. Request rejection is reported by the command
-response, including its Feature `20` detail; execution failure uses `error` and `filesystem_result`.
-The HID command result reports Pending while start preflight runs, then Completed when the test is accepted or Failed
-for preflight I/O, card, space, or existing-path errors. Input report `11` retains the previous test result for
-rejected starts and carries progress after acceptance. Storage status is reported independently in Input report `10`.
-See the [HID Report Reference](../reference/usb-hid.md) for the wire contract.
-
-## Validation
-
-Host-independent engine tests cover deterministic writes/readback, corruption,
-short writes, cancellation, existing-file rejection, insufficient space, sync
-and close failures, and failed cleanup:
-
-```sh
-tools/validation/setup-ceedling-testing.sh test:test_file_benchmark
-```
-
-Host tests cover report layout/validation, average calculations, start/cancel
-encoding, API status codes and OpenAPI generation, mounted-volume admission, progress,
-cleanup messages, and direct-client event handling. Run them through
-`tools/validation/test-host.sh` using the configured Python environment.
+- [Self-test HTTP API](../development/host-tools.md#self-test-api) and
+  [HID reports](../reference/usb-hid.md#report-id-11-storage-benchmark-status)
+- [Driver write workflow](../reference/sdcard/driver.md#write-workflow) and
+  [resource budget](../reference/sdcard/driver.md#peripheral-and-memory-budget)
+- [Benchmark build options and focused checks](../reference/build-configuration.md#validate-the-selected-variant)
 
 ## Measurement Records
 
-Configuration-specific [benchmark observations](../validation/records/benchmark-observations.md) and
-[test records](../validation/records/README.md) preserve earlier results; they do not qualify current firmware.
+Configuration-specific [benchmark observations](../evidence/records/benchmark-observations.md) and
+the [CMD25 A/B record](../evidence/records/2026-10-15-cmd25-persistence.md) preserve earlier results; they do not
+qualify current firmware. See [all records](../evidence/records/README.md) for other configurations.

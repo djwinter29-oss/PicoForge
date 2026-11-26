@@ -1,5 +1,7 @@
 # Wireless Setup and Operation
 
+[Documentation](../README.md) / [User guides](README.md)
+
 Wi-Fi and Bluetooth LE are optional on Pico W and Pico 2 W; their radio switches default to enabled. Wi-Fi normally
 joins its saved network, while the dashboard can temporarily test a candidate profile. BLE can advertise only when
 enabled with a saved Control key. Other board images do not provide wireless controls. Radio switches and persisted
@@ -35,8 +37,11 @@ The Control key authenticates commands; it is not a Bluetooth pairing password a
 ### Save and dashboard differences
 
 **Save&Reboot** commits radio switches and staged credentials with the other boot settings, then reboots after
-verified persistence. Disabling a configured radio erases its saved credentials. Credential changes require the
-ordinary save path and cannot use forced save while the host owns USB storage; safely eject first. See the
+verified persistence. In dashboard configuration, disabling a configured radio also erases its saved credentials.
+By contrast, `config set wifi=disabled` or `config set bluetooth=disabled` in the
+[CDC console](console.md#board-configuration) changes only the service switch and preserves saved credentials.
+Credential changes require the ordinary dashboard save path and cannot use forced save while the host owns USB
+storage; safely eject first. See the
 [forced-save policy](../reference/settings.md#forced-save-and-reboot).
 
 Python and .NET manage the selected USB-attached board and do not connect over BLE. Direct supports USB and BLE, with
@@ -52,4 +57,4 @@ the [Bluetooth protocol](../reference/bluetooth.md) and [settings design](../ref
 
 Host checks and target builds do not qualify physical radio behavior. Follow the
 [wireless and BLE board checks](../development/firmware-testing.md#wireless-and-ble-board-checks) and review current
-[qualification gaps](../validation/qualification-gaps.md) before relying on a hardware configuration.
+[qualification gaps](../evidence/README.md) before relying on a hardware configuration.
