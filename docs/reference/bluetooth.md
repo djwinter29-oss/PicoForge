@@ -236,8 +236,6 @@ sequenceDiagram
     C->>P: Read 0014 - match transaction ID and opcode
 ```
 
-Mermaid `sequenceDiagram` message lines treat semicolons as statement separators; use a dash in message text instead.
-
 ## Control Characteristic
 
 Writes to `0014` use a 9-byte form, not a truncated USB Feature `20` report. Status, error and detail values match

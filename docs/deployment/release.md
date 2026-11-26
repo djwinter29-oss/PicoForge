@@ -127,16 +127,12 @@ before extracting; for example, use `sha256sum --check SHA256SUMS.txt --ignore-m
 Install Python with `python -m pip install picoforge` in a virtual environment, then run `picoforge web`.
 The wheel attached to the release can also be installed directly with pip.
 
-For the .NET host, extract the entire archive and run `PicoForge.exe` (Windows x64) or `./PicoForge`
-(Linux x64/macOS ARM64), then open <http://127.0.0.1:5000/>. No .NET SDK/runtime installation is required.
-Pass `--port 5001` if port 5000 is occupied. Linux still needs native HIDAPI (`libhidapi-hidraw0` on Debian/Ubuntu)
-and [HID permissions](../development/host-tools.md); macOS needs HIDAPI (`brew install hidapi`).
-Unsigned binaries may trigger Windows SmartScreen or macOS Gatekeeper warnings; no code-signing/notarization is claimed.
-Only run trusted, verified downloads and follow local security policy.
+For native dependencies, archive extraction, launch commands, and unsigned-binary warnings, follow the
+[.NET host guide](../../host/dotnet/PicoForge/README.md).
 
 Use the [hosted Direct dashboard](https://djwinter29-oss.github.io/PicoForge/) in desktop Chrome/Edge, or extract
-the Direct dashboard ZIP and run
-`python -m http.server 8000 --directory PATH_TO_EXTRACTED_SITE`, then open <http://localhost:8000/>.
+the Direct dashboard ZIP and run `python3 server.py --port 8000` from the extracted directory, then open
+<http://localhost:8000/>. Use the included server for the optional TCP console bridge.
 Localhost or HTTPS and device permission are required. Avoid competing dashboard connections to one board.
 
 ## Build and hardware limits
@@ -149,11 +145,10 @@ This stabilizes the date input, not a guarantee of bit-for-bit reproducibility a
 The SDK defaults are 125 MHz on RP2040 and 150 MHz on RP2350. The dashboard can apply supported runtime clocks;
 150 MHz is an overclock on RP2040, and 250 MHz is an overclock on both MCUs; runtime clock changes never
 alter the core voltage. Accepted SDK clock configuration does not establish hardware safety.
-SDIO High-Speed negotiation defaults to ON for new builds and is explicitly ON in release builds. It requests the
-highest supported safe planned rate up to 50 MHz, clamped by the PIO ceiling of SYSCLK/4: at most 37.5 MHz at
-150 MHz CPU, and up to 50 MHz at 250 MHz CPU. Unsupported High Speed or failed faster-bus validation retains the
-bounded 25 MHz safe fallback policy; failed fallback aborts initialization. Actual rates depend on card support and
-divider planning. SPI follows its separate card-rate and divider policy. See [SD design](../reference/sdcard/driver.md).
+Storage speed is a saved runtime profile, not a release-build switch. With no valid saved record, the target is
+25 MHz; flashing a release does not erase existing settings. See [SD-card speed](../reference/settings.md#sd-card-speed)
+for requested versus effective clocks and [build configuration](../reference/build-configuration.md) for compile-time
+options. The `-HS` suffix retained on SDIO release package names is not a guarantee of the active speed profile.
 
 Product release remains blocked on allocation/owner approval of a USB identity. `0xCAFE:0x4011` is the documented
 development VID/PID and remains unchanged; it must not be represented as an allocated product identity.

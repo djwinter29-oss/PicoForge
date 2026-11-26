@@ -4,13 +4,9 @@ This guide owns the benchmark's safety rules, execution workflow, measurement bo
 For card-driver behavior, see the [SD-card driver design](../reference/sdcard/driver.md);
 for wiring and transport constraints, see [SD-card physical links](../reference/sdcard/physical-links.md).
 
-The application implementation lives in `app/storage/file_benchmark.c/.h` and uses `pf_file_benchmark_*` APIs.
-It operates on the already-mounted SD-card volume; the existing host UI/API calls it a
-self-test. The [storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle) mounts the filesystem at
-startup and after normal USB return independently of Start; healthy firmware-owned storage stays mounted.
-HID Input report `11` carries state and progress; Feature report `20`, opcode `4`, starts or cancels it.
-The numeric state/error values retain their documented assignments: wire state 2 (`preparing`) means the worker is
-preparing an accepted run against the existing mount, and wire error 5 (`card`) means the selected media is unavailable.
+The host UI/API calls this benchmark a self-test. It uses the already-mounted volume; Start does not mount it.
+See the [storage lifecycle](../reference/architecture.md#storage-ownership-lifecycle) for mounting policy and the
+[HID reference](../reference/usb-hid.md#report-id-11-storage-benchmark-status) for report layouts and numeric errors.
 
 Current source-review dispositions and remaining qualification: [SD remediation matrix](../validation/sd-review.md).
 
@@ -21,14 +17,9 @@ byte counts, average MiB/s, verification results, and cleanup errors.
 
 ## Running
 
-The benchmark is optional: CMake defaults `PF_ENABLE_STORAGE_BENCHMARK` to `OFF`. The development
-`tools/firmware/build.sh` script explicitly enables it; `tools/firmware/load.sh` delegates builds to that script
-(loading with `--skip-build` does not change the existing image).
-For a benchmark-free image, configure directly with CMake using `-DPF_ENABLE_STORAGE_BENCHMARK=OFF` and build
-with `cmake --build <build-dir>`; do not rebuild that configuration through the development script.
-Disabled builds omit the benchmark implementation and its 32 KiB buffer, clear the HID self-test capability,
-reject start/cancel commands as unsupported, and do not publish self-test reports. Host interfaces use that
-capability to disable self-test controls. Normal storage, filesystem commands, and MSC remain available.
+The benchmark is an optional module: the build wrapper includes it unless `--benchmark OFF` is given; direct CMake
+builds omit it by default. See [build configuration](../reference/build-configuration.md#optional-modules).
+Without benchmark support, dashboards disable its controls; normal storage, filesystem commands and MSC remain available.
 
 1. Keep the card owned by Pico: safely eject and disable MSC if it is enabled.
 2. Wait for automatic mounting and fresh mounted-filesystem status. If mounting fails or was deliberately suppressed,

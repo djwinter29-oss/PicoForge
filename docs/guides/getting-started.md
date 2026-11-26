@@ -30,17 +30,16 @@ tools/firmware/build.sh --board pico2 --sdcard-transport SDIO_PIO
 Choose `--board pico` for the original Pico and `--board pico2` for Pico 2. The build script also accepts `pico_w`
 and `pico2_w`; use firmware that matches your board. Choose `--sdcard-transport SPI` or `SDIO_PIO` to match your
 breakout wiring. Transport is selected at build time, not when connecting a dashboard.
+Add `--benchmark OFF` or `--wireless OFF` to leave out
+[optional modules](../reference/build-configuration.md#optional-modules).
 
 The build creates a separate directory for each board/transport pair, such as `build/firmware-pico2-SDIO_PIO/`.
 Stock-clock Pico 2 builds produce a dated image named `pico_forge_rp2350_150_<YYYYMMDD>.uf2`; Pico builds use
 `pico_forge_rp2040_125_<YYYYMMDD>.uf2`. See the [release guide](../deployment/release.md) for published packages and
-build configurations. The build script enables the storage self-test; direct CMake builds disable it by default.
-Builds automatically clear the retired `PF_SYS_CLK_MHZ` and `PF_SDIO_PIO_HIGH_SPEED` options from reused CMake
-caches, including builds invoked by `tools/firmware/load.sh`. Select clock and SD-speed profiles through the
-[dashboard settings](../reference/settings.md#host-dashboard-settings), not build options.
-
-Publication links may be unavailable before the first successful publication. Maintainers should follow the
-[release setup](../deployment/release.md#publishing-setup) before announcing downloads.
+build configurations. The build script enables the storage self-test. For smaller benchmark-free images and other
+supported component choices, see [build configuration](../reference/build-configuration.md).
+Select clock and SD-speed profiles through the [dashboard settings](../reference/settings.md#host-dashboard-settings),
+not build options.
 
 ## 2. Flash the Board
 
@@ -103,6 +102,9 @@ and recovery path. Radio switches default enabled; Wi-Fi needs a network and BLE
 Python and .NET dashboards both default to port 5000; run one at a time or choose another port. Use only one
 dashboard connection per board at a time. On Linux, if HID access is denied, run
 `tools/host/hid-permissions-setup.sh`, then reconnect the board and restart the dashboard.
+
+Before using controls, confirm that the dashboard identifies the intended board/MCU and serial and shows advancing
+uptime with fresh status. An absent SD card is expected when no storage hardware is connected.
 
 ## 5. Try SD-Card Storage
 

@@ -43,6 +43,14 @@
 #define PF_BOARD_LED_GPIO UINT8_MAX
 #endif
 
+#if defined(CYW43_WL_GPIO_LED_PIN) && !PF_ENABLE_WIRELESS
+/** Wireless-board LED is on the radio chip, so a radio-free image has no LED. */
+#define PF_BOARD_LED_AVAILABLE 0
+#else
+/** Board LED is reachable through a GPIO or the linked radio driver. */
+#define PF_BOARD_LED_AVAILABLE 1
+#endif
+
 #ifndef PF_CONFIG_SDCARD_INTERRUPT_WAIT
 #define PF_CONFIG_SDCARD_INTERRUPT_WAIT 0
 #endif

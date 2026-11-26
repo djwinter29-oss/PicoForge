@@ -100,6 +100,16 @@ Board assignments live in `firmware/src/config/`. They are selected at build tim
 configuration by the firmware, not dynamically probed pin maps. Keep application-specific pin choices there rather
 than embedding them in reusable drivers.
 
+`config.h` keeps SDK-derived LED selection and UART/LED fallback macros; `board.c` defines their assignment objects.
+`board_spi.c` and `board_sdio.c` define complete transport-specific bus/controller and card-detect assignments.
+CMake links only the selected assignment and matching binding; reusable physical engines receive bus signals,
+while the SD binding handles detection.
+
+Assignments use `uint8_t`, with `UINT8_MAX` (`255`) meaning no pin. An absent LED is disabled; absent UART directions
+are passed to the SDK as `-1`. Without card detect, media is assumed present until I/O establishes otherwise.
+All selected SPI/SDIO bus signals are required and validated during initialization. SDK GPIO arguments and masks
+retain their SDK-defined widths. See [build configuration](build-configuration.md) before changing component selection.
+
 ## Boot and Runtime
 
 `main()` applies the saved system clock before initializing the remaining services. It then initializes logging,

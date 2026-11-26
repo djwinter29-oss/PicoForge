@@ -11,6 +11,8 @@ PICO_SDK_PATH_VALUE="${PICO_SDK_PATH:-}"
 FREERTOS_KERNEL_PATH_VALUE="${FREERTOS_KERNEL_PATH:-}"
 SDCARD_TRANSPORT="${PF_SDCARD_TRANSPORT:-SDIO_PIO}"
 FIRMWARE_VERSION="${PF_FIRMWARE_VERSION:-0.0.0-dev}"
+BENCHMARK="${PF_ENABLE_STORAGE_BENCHMARK:-ON}"
+WIRELESS="${PF_ENABLE_WIRELESS:-ON}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -42,6 +44,14 @@ while [ "$#" -gt 0 ]; do
             SDCARD_TRANSPORT="$2"
             shift 2
             ;;
+        --benchmark)
+            BENCHMARK="$2"
+            shift 2
+            ;;
+        --wireless)
+            WIRELESS="$2"
+            shift 2
+            ;;
         --help)
             cat <<'EOF'
 Usage: tools/firmware/build.sh [options]
@@ -54,13 +64,25 @@ Options:
     --pico-sdk-path PATH
     --freertos-kernel-path PATH  Override firmware/third_party/FreeRTOS-Kernel
     --firmware-version VERSION  Firmware version (default: PF_FIRMWARE_VERSION or 0.0.0-dev)
-    This development build explicitly enables the storage benchmark (CMake default: OFF).
+    --benchmark ON|OFF  Storage benchmark module (default: PF_ENABLE_STORAGE_BENCHMARK or ON)
+    --wireless ON|OFF   Wi-Fi/BLE/TCP CLI module on _w boards (default: PF_ENABLE_WIRELESS or ON)
+    Every run sets both module options, so a reused build directory cannot keep a stale selection.
     Reused CMake caches have retired clock/speed options cleared; profiles are saved through the dashboard.
 EOF
             exit 0
             ;;
         *)
             echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+for module in "--benchmark=$BENCHMARK" "--wireless=$WIRELESS"; do
+    case "${module#*=}" in
+        ON|OFF) ;;
+        *)
+            echo "${module%%=*} must be ON or OFF, not '${module#*=}'." >&2
             exit 1
             ;;
     esac
@@ -117,7 +139,8 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
     -DFREERTOS_KERNEL_PATH="$FREERTOS_KERNEL_PATH_VALUE" \
     -DPICO_BOARD="$BOARD" \
     -DPF_FIRMWARE_VERSION="$FIRMWARE_VERSION" \
-    -DPF_ENABLE_STORAGE_BENCHMARK=ON \
+    -DPF_ENABLE_STORAGE_BENCHMARK="$BENCHMARK" \
+    -DPF_ENABLE_WIRELESS="$WIRELESS" \
     -DPF_SDCARD_PORT=FREERTOS \
     -DPF_SDCARD_TRANSPORT="$SDCARD_TRANSPORT"
 cmake --build "$BUILD_DIR" --parallel ${CMAKE_BUILD_PARALLEL_LEVEL:+"$CMAKE_BUILD_PARALLEL_LEVEL"}

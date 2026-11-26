@@ -50,19 +50,24 @@ def test_led_polarity_writer_readiness_and_gpio_validation(tmp_path, defines):
     subprocess.run([str(binary)], check=True)
 
 
-@pytest.mark.parametrize("wireless", [False, True], ids=["gpio-board", "wireless-board"])
-def test_board_led_assignment_initializes(tmp_path, wireless):
-    """W boards have no LED GPIO, so the real board.c must attach the CYW43 writer or boot panics before USB."""
+@pytest.mark.parametrize(("board_header", "wireless"), [
+    ("#define PICO_DEFAULT_LED_PIN 25\n", False),
+    ("#define CYW43_WL_GPIO_LED_PIN 0\n", True),
+    ("#define CYW43_WL_GPIO_LED_PIN 0\n", False),
+], ids=["gpio-board", "wireless-board", "radio-free-wireless-board"])
+def test_board_led_assignment_initializes(tmp_path, board_header, wireless):
+    """W boards have no LED GPIO: board.c must attach the CYW43 writer, or a rejecting writer without the radio."""
     compiler = shutil.which("gcc")
     if compiler is None:
         pytest.skip("gcc is required for the host-side board LED check")
     (tmp_path / "pico").mkdir()
-    (tmp_path / "pico/stdlib.h").write_text("" if wireless else "#define PICO_DEFAULT_LED_PIN 25\n")
+    (tmp_path / "pico/stdlib.h").write_text(board_header)
     (tmp_path / "harness.c").write_text(r"""
 #include <assert.h>
 #include <stddef.h>
 #include "hardware/gpio.h"
 #include "platform/led.h"
+#include "config/config.h"
 #include "app/wireless/wireless.h"
 void gpio_init(uint gpio) { (void)gpio; }
 void gpio_set_dir(uint gpio, bool out) { (void)gpio; (void)out; }
@@ -72,7 +77,9 @@ int main(void)
 {
     assert(pf_led_init());
 #if PF_ENABLE_WIRELESS
-    assert(pf_led_board.put == pf_wireless_led_put);
+    assert(PF_BOARD_LED_AVAILABLE && pf_led_board.put == pf_wireless_led_put);
+#elif defined(CYW43_WL_GPIO_LED_PIN)
+    assert(!PF_BOARD_LED_AVAILABLE && pf_led_board.put != NULL && !pf_led_set(true) && !pf_led_is_on());
 #else
     assert(pf_led_board.put == NULL && pf_led_board.gpio == 25u);
 #endif

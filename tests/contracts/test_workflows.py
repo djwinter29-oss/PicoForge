@@ -37,6 +37,13 @@ def test_build_matrices_and_compatible_artifact_checks():
                         str(ROOT / ".github/workflows" / name)], check=True)
 
 
+def test_pr_check_builds_every_matrix_variant_with_optional_modules_disabled():
+    workflow = (ROOT / ".github/workflows/pr-check.yml").read_text()
+    step = workflow.split("- name: Build module-disabled firmware", 1)[1].split("- name:", 1)[0]
+    assert "--benchmark OFF --wireless OFF" in step
+    assert "--build-dir build/firmware-minimal" in step
+
+
 def test_hid_report_reference_documents_filesystem_storage_field():
     doc = (ROOT / "docs/reference/usb-hid.md").read_text()
     section = " ".join(doc.split("## Report ID 10: Storage Status", 1)[1].split("\n## ", 1)[0].split())

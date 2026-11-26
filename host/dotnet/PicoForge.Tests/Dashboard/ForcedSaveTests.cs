@@ -370,7 +370,7 @@ public sealed class ForcedSaveTests
         Assert.Null(monitor.Snapshot.SelfTest);
         Assert.True(monitor.Snapshot.StorageStale);
         Assert.True(monitor.Snapshot.SelfTestStale);
-        time.Advance(TimeSpan.FromMilliseconds(3499));
+        time.Advance(TimeSpan.FromMilliseconds(4499));
         Assert.Null(monitor.Snapshot.WirelessError);
         time.Advance(TimeSpan.FromMilliseconds(1));
         Assert.Equal("Wireless status is stale; wait for a fresh report", monitor.Snapshot.WirelessError);

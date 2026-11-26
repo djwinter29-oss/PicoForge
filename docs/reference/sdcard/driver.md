@@ -438,7 +438,7 @@ flowchart TD
     Identify --> Select[CMD7 select and wait for DAT0 ready]
     Select --> Width[CMD13 ready TRAN; CRC-checked SCR; ACMD6 four-bit mode]
     Width --> Speed[Set 25 MHz target; CMD13 and CRC-checked LBA 0]
-    Speed --> Policy{High-Speed build option enabled and the transport can exceed 25 MHz}
+    Speed --> Policy{Saved High-Speed profile and transport can exceed 25 MHz}
     Policy -->|No| Ready[Initialized card and telemetry]
     Policy -->|Yes| Switch[CMD6 check and switch; validate group 1 support and selection]
     Switch -->|Unavailable but card operational| Ready
@@ -707,17 +707,8 @@ High-Speed request is limited to 37.5 MHz. Negotiation and the controlled defaul
 and [storage wiring](../../guides/hardware.md#memory-and-storage-connections) for header
 pin numbers and electrical details.
 
-| Resource | SDIO-PIO | SD-SPI |
-| --- | --- | --- |
-| Controller | PIO0 | SPI0 |
-| GP2 | CLK | SCK |
-| GP3 | CMD | MOSI / card CMD |
-| GP4 | DAT0 | MISO / card DAT0 |
-| GP5 | DAT1 | No driver signal; remains connected/reserved by wiring |
-| GP6 | DAT2 | No driver signal; remains connected/reserved by wiring |
-| GP7 | DAT3 | GPIO-controlled CS / card DAT3 |
-| GP8 | Card detect | Card detect |
-| Detect polarity and bias | Active high, breakout bias, no MCU pull | Same |
+The [hardware pin map](../../guides/hardware.md#memory-and-storage-connections) owns signal assignments;
+the [breakout section](../../guides/hardware.md#sd-card-breakout) owns detect polarity and electrical bias.
 
 The two columns are alternative configurations, not concurrently active buses.
 Native DAT0-DAT3 must be ascending consecutive GPIOs in logical lane order.
@@ -899,27 +890,6 @@ are not assumed improvements, and no new hardware throughput claim is made.
 The [default-mounted storage lifecycle](../architecture.md#storage-ownership-lifecycle) is authoritative for startup,
 normal firmware use, automatic remount, and maintenance/recovery exceptions. Mounting belongs to the storage worker,
 not the driver or self-test. USB sharing is an explicit temporary ownership change.
-
-```mermaid
-sequenceDiagram
-    participant FW as Storage owner task
-    participant Card as Storage service
-    participant USB as USB/MSC integration
-    participant Host as USB host
-    FW->>Card: Startup initialization (MSC disabled)
-    FW->>FW: Mount existing filesystem - keep mounted for firmware use
-    FW->>Card: Firmware block operations and sync
-    Host->>USB: Explicit enable USB drive request
-    FW->>FW: Finish work, close files, unmount filesystem
-    USB->>Card: pf_storage_msc_acquire after integration checks
-    Host->>USB: Sector read/write or synchronize
-    USB->>Card: pf_storage_msc_read / write / sync
-    Note over FW,Card: Firmware block operations return NOT_READY during MSC ownership
-    Host->>USB: Safely eject and allow removal
-    USB->>Card: pf_storage_msc_release after checked eject/sync
-    Card-->>FW: Reinitialization request available
-    FW->>FW: Invalidate cached filesystem state, reinitialize and automatically remount
-```
 
 The raw SD driver exposes serialized card operations without application ownership policy.
 Acquire/release, owner-specific transfers and retained diagnostics live in `platform/storage/storage.h`;

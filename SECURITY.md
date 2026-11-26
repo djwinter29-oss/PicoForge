@@ -16,7 +16,8 @@ If private vulnerability reporting is unavailable for this repository, contact t
 
 Destructive USB HID maintenance commands are intended only for trusted local USB hosts with access to the device;
 they are not authenticated against hostile local processes. Forced MSC return bypasses host eject after device-side
-sync and can lose writes still cached by the host. Self-test/benchmark requires firmware ownership and a mounted volume
-and can delete an existing file at the reserved path `/PFTEST.BIN` before creating, verifying, and cleaning up its test file.
+sync and can lose writes still cached by the host. Self-test/benchmark requires firmware ownership and a mounted volume.
+It refuses an existing `/PFTEST.BIN`; it creates, verifies, and removes only its own temporary file. Back up card data
+and follow the [benchmark safeguards](docs/guides/sdcard-benchmark.md).
 
 Do not commit production credentials, signing keys, customer data, or private device identifiers. The development USB VID/PID in this project is not a production identity. Hardware validation claims must state the board revision and test setup; host-only tests and cross-builds do not establish hardware security or electrical safety.

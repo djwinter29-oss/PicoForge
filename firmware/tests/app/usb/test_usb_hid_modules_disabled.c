@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2026 Ji Dong
 
+/* Module-disabled variant: no benchmark and no radio on a CYW43 board (see project.yml). */
 #include "unity.h"
 #include <stdio.h>
 #include <string.h>
@@ -21,6 +22,14 @@ void setUp(void)
 }
 
 void tearDown(void) { TEST_ASSERT_FALSE(reserved); }
+
+void test_radio_free_wireless_board_advertises_neither_wireless_nor_its_radio_led(void)
+{
+    pf_hid_identity_report_t identity;
+    pf_hid_build_identity_report(&identity);
+    TEST_ASSERT_EQUAL_UINT8(0u, identity.capabilities & (PF_HID_CAP_WIRELESS | PF_HID_CAP_LED));
+    TEST_ASSERT_TRUE(identity.capabilities & PF_HID_CAP_FORCE_SAVE);
+}
 
 void test_disabled_benchmark_is_not_advertised_and_feature_report_is_unavailable(void)
 {

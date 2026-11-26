@@ -113,13 +113,15 @@ Bluetooth also runs only with a saved control key, and that key does not encrypt
 
 ## Documentation
 
-See the [documentation index](docs/README.md) for reading order and authoritative document ownership.
+This is the project overview and documentation index. See the [reading guide](docs/README.md) for reading order,
+folder conventions, and authoritative document ownership.
 
 - **Use PicoForge:** [getting started](docs/guides/getting-started.md) ·
   [hardware setup](docs/guides/hardware.md) · [Direct](host/direct/README.md) ·
   [Python](host/python/README.md) · [.NET](host/dotnet/PicoForge/README.md) ·
   [console](docs/guides/console.md) · [wireless](docs/guides/wireless.md)
 - **Build and develop:** [architecture](docs/reference/architecture.md) ·
+  [build configuration and optional modules](docs/reference/build-configuration.md) ·
   [settings](docs/reference/settings.md) · [SD-card driver](docs/reference/sdcard/driver.md) ·
   [USB HID reference](docs/reference/usb-hid.md) · [Bluetooth LE protocol](docs/reference/bluetooth.md) ·
   [host tools](docs/development/host-tools.md) ·

@@ -78,7 +78,7 @@ internal sealed class DeviceMonitor : BackgroundService, IDeviceMonitor
     private const int TelemetryMaximumAgeMs = 750;
     private const int StorageMaximumAgeMs = 1500;
     private const int SelfTestMaximumAgeMs = 1500;
-    private const int WirelessMaximumAgeMs = 5000;
+    private const int WirelessMaximumAgeMs = 6000;
     private readonly Func<IHidClient> createClient;
     private readonly ILogger<DeviceMonitor> logger;
     private readonly TimeProvider time;

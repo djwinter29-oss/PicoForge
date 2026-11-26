@@ -38,6 +38,10 @@ Use a different `--build-dir`
 when comparing configurations. The default image uses the SDK stock clock. A successful cross-build does not qualify
 physical USB, GPIO, card timing, or storage reliability.
 
+Enable or disable optional modules with `--benchmark ON|OFF` and `--wireless ON|OFF` (both default ON). For module
+effects, transport/port dependencies and configuration-specific checks, use the
+[build configuration reference](../reference/build-configuration.md).
+
 ## Firmware Unit Tests
 
 Ceedling tests exercise host-testable C modules with Unity, CMock, and scoped SDK/RTOS fakes. Initialize the Embedded

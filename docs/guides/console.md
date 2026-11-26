@@ -168,11 +168,10 @@ MSC ownership.
 Pico W and Pico 2 W boards with Wi-Fi and the saved **TCP CLI enabled** switch on serve the same CLI as a raw TCP
 stream on port 2323. Find the board IP in the dashboard's live diagnostics, or use `picoforge-<USB serial>.local`
 with an mDNS-capable host resolver on the same multicast-capable LAN.
-In PuTTY choose connection type **Raw**, host `<board IP>` (or the mDNS name), port `2323`, and
-set **Terminal > Local echo** and **Local line editing** to **Force off**; the CLI echoes and edits input itself.
-PuTTY's default **Auto** enables both for Raw connections, which shows each command twice and sends it only on Enter,
-so Tab completion and history keys do not work. Save the settings as a named session. On Linux,
-`nc <board IP> 2323` also works after `stty raw -echo` in the local terminal.
+Use a dashboard console for an authenticated connection. A plain PuTTY or `nc` session is not sufficient:
+every client must answer a one-use HMAC challenge within ten seconds, using a previously saved Control key.
+Custom clients must implement [TCP CLI authorization](../development/wireless-integration.md#tcp-cli-authorization).
+After authentication, use raw terminal mode with local echo and line editing disabled; the CLI owns both.
 
 In the Python and .NET dashboards, the connected **SSID (IP)** label in Live diagnostics becomes a link when the
 firmware reports that the TCP CLI is serving. Clicking it opens a separate web console tab and connects

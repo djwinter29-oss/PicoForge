@@ -52,6 +52,12 @@ jobs:
           tools/firmware/build.sh --board "${{ matrix.board }}"
           --sdcard-transport "${{ matrix.transport }}" --build-dir build/firmware
 
+      - name: Build module-disabled firmware
+        run: >-
+          tools/firmware/build.sh --board "${{ matrix.board }}"
+          --sdcard-transport "${{ matrix.transport }}" --build-dir build/firmware-minimal
+          --benchmark OFF --wireless OFF
+
       - name: Install project test dependencies
         run: python3 -m pip install --requirement tests/requirements.txt
 
