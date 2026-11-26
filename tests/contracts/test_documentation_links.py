@@ -19,6 +19,7 @@ DOCUMENTS = sorted({
     ROOT / "SECURITY.md",
     ROOT / "tests/README.md",
     ROOT / "firmware/tests/README.md",
+    ROOT / "firmware/third_party/fatfs/README.md",
 })
 pytestmark = pytest.mark.contracts
 

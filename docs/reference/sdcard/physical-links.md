@@ -3,9 +3,10 @@
 [Documentation](../../README.md) / [Reference](../README.md)
 
 The SD-card driver and its physical link engines for RP2040 and RP2350 live in
-[`firmware/src/drivers/sdcard/`](../../../firmware/src/drivers/sdcard). This document is the
-reference for physical transport ownership, lifecycle, and shared-pin constraints. Transport-specific protocol
-sources live beside their physical engines; their card policy and filesystem integration are documented elsewhere:
+[`firmware/src/drivers/sdcard/`](../../../firmware/src/drivers/sdcard). The complete source map and protocol module
+ownership are in the [SD-card driver architecture](driver.md#architecture). This document is the reference for
+physical transport ownership, lifecycle, and shared-pin constraints. Card policy and filesystem integration are
+documented elsewhere:
 
 - [SD-card design](driver.md): initialization, commands, registers, CRC validation,
   addressing, and sector/stream policy.
@@ -14,20 +15,6 @@ sources live beside their physical engines; their card policy and filesystem int
 - [Console guide](../../guides/console.md): filesystem commands.
 
 ## Physical Link
-
-```text
-drivers/sdcard/
-  sd*.c / sd*.h          shared facade, contracts, board setup, protocol helpers and execution ports
-  sd_link.h / .c        common declarations, descriptor validation and presence helpers
-  spi/sd_link_spi.h     SPI CS and byte exchange declarations
-  sdio/sd_link_sdio.h   SD CMD/DAT declarations
-  spi/sd_backend_spi.c / sd_spi_internal.h / sd_board_spi.c
-  spi/spi.h / spi.c / spi_pins.h
-  sdio/sd_backend_sdio.c / sd_sdio_internal.h / sd_board_sdio.c
-  sdio/sd_sdio_host.h / sd_sdio_host.c
-  sdio/sdio_pio.h / sdio_pio.c / sdio_pio_pins.h / sdio_pio.pio
-  sdio/sdio_pio_wait_freertos.c
-```
 
 The [common link interface](../../../firmware/src/drivers/sdcard/sd_link.h) contains descriptor/presence helpers,
 physical lifecycle, clock and platform services. Pin types belong to the concrete engines. Wire operations are separate
@@ -62,11 +49,6 @@ or runtime backend discovery. The descriptor retains context, signaling mode and
 The bus result/mode constants use `PF_SD_LINK_*`; SD wire diagnostics use
 `PF_SD_LINK_SDIO_*`. Callers must use these names; no compatibility aliases are provided.
 Device configuration members named `transport` remain unchanged.
-
-| Physical mode | Implementation | Device configurations |
-| --- | --- | --- |
-| SPI | [spi.h](../../../firmware/src/drivers/sdcard/spi/spi.h), [spi.c](../../../firmware/src/drivers/sdcard/spi/spi.c) | SD-SPI |
-| Native SD PIO | [sdio_pio.h](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.h), [sdio_pio.c](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.c), [PIO programs](../../../firmware/src/drivers/sdcard/sdio/sdio_pio.pio) | Native four-bit SD memory cards |
 
 SD-SPI uses manual CS and byte exchange so response, token, busy-polling and multiblock boundaries stay unchanged.
 

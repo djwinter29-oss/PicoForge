@@ -8,7 +8,8 @@ Direct has its own code, bridge, assets, and tests; follow the
 
 Run commands below from the repository root.
 
-On this page: [source layout](#source-layout) / [freshness](#polling-and-freshness) /
+On this page: [source layout](#source-layout) / [lifecycle and recovery](#page-lifecycle-and-recovery) /
+[freshness](#polling-and-freshness) /
 [unit and type checks](#host-tests-and-type-checks) / [browser checks](#browser-checks) /
 [hardware checks](#hardware-qualification).
 
@@ -31,6 +32,21 @@ single-flight queue rejects overlaps rather than buffering stale intents. Render
 malformed bridge acknowledgments remain errors rather than replay triggers. Wireless forms own staging and
 cancellation; the view renders a snapshot. The terminal is a bounded firmware-CLI renderer, not a general-purpose
 terminal emulator.
+
+## Page Lifecycle and Recovery
+
+Navigating away releases board resources and closes the console TCP session. A history-cache return starts
+disconnected, clears drafts and console scrollback, and does not replay commands or terminal input.
+
+Pending-operation journals live in the current tab's `sessionStorage` and contain only allowlisted
+transaction/profile/commit-mask or generation facts. They never contain SSIDs, passwords, or Control keys.
+Missing, inaccessible, or invalid journal storage blocks writes; recovery does not survive ending the tab's
+session.
+
+Async form results are fenced by their originating session, connection generation, and draft lifecycle, so stale
+completions cannot clear newer drafts. Clipboard feedback checks the key's local revision without retaining
+another secret copy. After reconnect, a forced save may be reported as verified same-session recovery only when
+no newer settings or wireless draft exists.
 
 ## Polling and Freshness
 

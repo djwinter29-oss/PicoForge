@@ -33,6 +33,13 @@ The same check applies to downloaded host archives. If packages are not yet publ
 
 Install Git with submodule support, CMake, Ninja, and `arm-none-eabi-gcc`.
 
+Clone the repository and enter the checkout:
+
+```sh
+git clone https://github.com/djwinter29-oss/PicoForge.git
+cd PicoForge
+```
+
 From the repository root:
 
 ```sh

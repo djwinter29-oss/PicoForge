@@ -55,6 +55,13 @@ OS in a secure context, such as HTTPS or localhost. The hosted site is static; i
 The chooser opens even for previously authorized devices so you can select the intended board. Cancel leaves the
 dashboard disconnected. Browser permission cannot override another application's HID access.
 
+On Linux, if HID access is denied, run the [HID permission setup script](../../tools/host/hid-permissions-setup.sh)
+from a source checkout, reconnect the board, then restart the dashboard:
+
+```sh
+tools/host/hid-permissions-setup.sh
+```
+
 For BLE-capable boards, first provision a Control key over USB. Then choose **Bluetooth**, enter the saved key,
 and scan for the board. See [wireless setup](../../docs/guides/wireless.md).
 
@@ -164,17 +171,9 @@ remount. See the [storage lifecycle](../../docs/reference/architecture.md#storag
 
 Navigating away releases board resources and closes the console's TCP session. Returning through the browser's
 history cache reloads into a disconnected state: drafts and console scrollback are cleared; reconnect explicitly.
-Commands and terminal input are never automatically replayed.
-
-Pending-operation journals remain in the current tab's `sessionStorage` for same-board reconciliation.
-They contain allowlisted transaction/profile/commit-mask or generation facts, never SSIDs, passwords, or Control
-keys. Missing, inaccessible, or invalid journal storage blocks writes. Keep the tab open while resolving an
-uncertain operation; recovery does not survive ending the tab's session.
-
-Async form results belong to their originating session, connection generation, and draft lifecycle. Old
-completions cannot clear newer post-reconnect drafts. Clipboard feedback also checks the key's local revision,
-without retaining another secret copy. A forced save may report verified same-session recovery after reconnect
-only when no newer settings or wireless draft exists.
+Commands and terminal input are never automatically replayed. Pending-operation recovery uses temporary data in
+the current tab; keep the tab open while resolving an uncertain result. Ending the tab discards that recovery
+context. Recovery data does not contain SSIDs, passwords, or Control keys.
 
 The Wi-Fi expiry countdown updates locally once per second and notifies Save readiness without waiting for another
 board report. Expired credentials must be tested again.

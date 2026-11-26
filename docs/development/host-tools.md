@@ -12,6 +12,9 @@ Run commands below from the repository root.
 - [Choose where to edit](#shared-dashboard-changes)
 - [Run hardware-free tests](#run-host-tests)
 - [Check architecture and ownership contracts](#host-contracts-and-lifecycle)
+  - [Shared API contract](#shared-api-contract)
+  - [Python host design](#python-host-design)
+  - [.NET host lifecycle](#net-host-lifecycle)
 - [Measure performance](#performance-baselines)
 - Qualify hardware: [Python](#qualify-the-python-host-with-hardware) or [.NET](#qualify-the-net-host-with-hardware)
 
@@ -176,6 +179,12 @@ Keep shared UI behavior backend-neutral; browser-specific USB handling belongs i
 `memory`/`board_configuration` fields, removed fields and removed routes; both native hosts test it.
 `GET /api/boards` discovers boards; status and commands address one using `?board=<id>`.
 `GET /api/status` supplies identity, settings, telemetry, storage, self-test and wireless observations.
+
+| Route family | Contract owner |
+|---|---|
+| `GET /api/boards`, `GET /api/status` | This section. |
+| `POST /api/settings` | [Boot settings](../reference/settings.md#host-dashboard-settings). |
+| `POST /api/wireless`, `/api/wireless/scan`, `/api/wireless/test`, `/api/wireless/cancel`, `/api/control/resync` | [Wireless integration](wireless-integration.md#provisioning-lifecycle). |
 
 - `memory` owns `msc` and `filesystem_format`; `board_configuration` owns next-boot settings and boot-time `stored_*`
   values. The shared UI normalizes this shape for presentation. Python CLI `picoforge status` alone retains deprecated

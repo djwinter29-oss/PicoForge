@@ -115,6 +115,8 @@ Header/implementation pairing follows ownership rather than requiring one C file
 | `sd_sdio_internal.h` / `sd_spi_internal.h` diagnostics | The corresponding selected protocol backend. |
 | `sd_sdio_host.h` | `sd_sdio_host.c`, with small response-checking helpers inline in the header. |
 
+### Serialization and Resource Lifecycle
+
 The idle hook is configured before transfers and deliberately has no facade forwarding wrapper or locking.
 It does not change transport selection, ownership or polling behavior.
 
@@ -122,6 +124,8 @@ The SDIO host is non-reentrant even with separate host structs: its 64-sector re
 All command/data, diagnostic and physical-engine access requires the SD reservation or equivalent single-context
 serialization. The optional FreeRTOS adapter binds one PIO and one waiter, reserves notification slot 1, and keeps
 its startup-core shared IRQ handler installed for firmware lifetime, including engine deinit/reinit.
+
+### Failure and Configuration Boundaries
 
 PIO instruction allocation uses the SDK's signed acquisition result directly, without redundant preliminary
 space queries. Failed TX setup releases a partially acquired clock program and leaves command-mode restoration
@@ -143,6 +147,8 @@ for authoritative physical ownership and configuration details.
 The execution port requests optional waits through `pf_sd_link_enable_wait`, without PIO/IRQ knowledge.
 `pf_sd_port_init` returns `bool`; callers must handle failure when optional waits were requested. Application
 startup reports this as a fatal setup error rather than silently ignoring a failed wait binding.
+
+### Protocol Ownership
 
 The native host owns negotiated bus width, stream state, and response diagnostics; CID and capacity are retained
 directly in card information rather than duplicated in separate globals. Native transfer helpers take sector addresses
@@ -198,6 +204,7 @@ The driver layout above ends at raw sectors. Integration above it lives in these
 | Media lifecycle, automount/recovery, diagnostics and firmware/USB ownership | [storage.c](../../../firmware/src/platform/storage/storage.c), [storage.h](../../../firmware/src/platform/storage/storage.h) |
 | Filesystem-independent sectors and geometry | [block_device.h](../../../firmware/src/platform/storage/block_device.h) |
 | FatFs lifecycle / disk-I/O binding | [fatfs_volume.c](../../../firmware/src/platform/storage/fatfs_volume.c), [fatfs_disk.c](../../../firmware/src/platform/storage/fatfs_disk.c) |
+| Upstream FatFs source, patches and license | [FatFs integration note](../../../firmware/third_party/fatfs/README.md) |
 
 Application policy lives in [app/storage/](../../../firmware/src/app/storage): the sole storage-owner task handles USB
 command sessions and runs the storage service's debounce/automount and recovery policy. The fixed-file benchmark lives
@@ -574,10 +581,22 @@ successful stop. CRC errors, timeouts, missing/malformed responses, and failed
 stops return an I/O error without latching batching off or changing the clock.
 The card is invalidated after a failed read; a later initialization request
 starts again at 400 kHz and returns to the same fixed target. The failed read
-is not replayed. SPI holds CS across a CMD18 transaction,
-stops with CMD12, discards CMD12's stuff byte, and waits for ready before release.
-An explicit illegal-command response permits single-sector fallback; other
-failures are not replayed.
+is not replayed. SPI holds CS across a CMD18 transaction, stops with CMD12,
+discards CMD12's stuff byte, and waits for ready before release. An explicit
+illegal-command response permits single-sector fallback; other failures are
+not replayed. In SPI, a single-block command that returns a non-zero R1 keeps
+initialization because the card is known to be in command mode. A lost R1 or
+any failed read data phase (token timeout/error, short read, or CRC mismatch)
+invalidates initialization because the card's transfer state cannot be proven
+restored. Recovery is reinitialization; failed reads are not retried.
+
+For CMD18, a response timeout or malformed response does not prove the command
+was never sent. Every validated multi-block read attempt cleans up RX/DMA and
+attempts CMD12, including those response failures. A failed stop retains an
+unresolved read flag; the host rejects new reads and non-stop commands.
+Card-layer recovery first closes that state successfully before identification
+or retry. Exhausted stop recovery leaves initialization invalid and subsequent
+I/O blocked. A confirmed removal may abandon this state without a card command.
 
 The PIO programs have no timeouts of their own: the command, data, and busy
 waits are bounded by the host (100 ms for a command response, 1 s for data
@@ -655,13 +674,11 @@ failing block, may already be programmed. CMD12 terminates the stream; it is not
 at which blocks can reach media. Every failed native CMD24 write invalidates
 initialization, including ordinary card rejection, even if command-mode
 restoration succeeds; explicit reinitialization is required. In SPI, a
-single-block command that returns a non-zero R1 keeps initialization (the card
-is known to be in command mode), but a lost R1 or any failed read data phase
-(token timeout/error, short read, CRC mismatch) invalidates it because the
-card's transfer state cannot be proven restored; failed writes follow the rules
-above. Recovery is reinitialization; failed transfers are not retried. Failed host
-restoration explicitly invalidates readiness, including after a single-block write;
-sync cannot report success. `pf_sd_sdio_host_recover()` resolves both pending
+single-block write that returns a non-zero R1 keeps initialization because the
+card is known to be in command mode; a lost R1 invalidates it. Failed writes
+follow the rules above and are not retried. Failed host restoration explicitly
+invalidates readiness, including after a single-block write; sync cannot report
+success. `pf_sd_sdio_host_recover()` resolves both pending
 streams and host restoration failure. Its false result retains either unresolved
 stream state or the explicit unusable-host flag. Reinitialization retries restoration
 before identification, without replaying the uncertain write. Single-sector and
@@ -679,14 +696,6 @@ only when the worker has confirmed absence and raw detect still reports absence;
 removal prevention still blocks release. Present media still requires eject and
 successful sync. Ownership return requests reinitialization, and debounced
 reinsertion permits the firmware worker to initialize and mount again.
-
-CMD18 response timeout or malformed response does not prove the command was never
-sent. Every validated multi-block read attempt cleans up RX/DMA and attempts CMD12,
-including those response failures. A failed stop retains an unresolved read flag;
-the host rejects new reads and non-stop commands. Card-layer recovery first closes
-that state successfully before identification or retry. Exhausted stop recovery
-leaves initialization invalid and subsequent I/O blocked. A confirmed removal may
-abandon this state without a card command.
 
 SPI multi-block writes use the 0xFC block token and 0xFD stop token. They are
 closed within each call, not kept open across calls. Illegal-command fallback

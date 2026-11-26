@@ -37,8 +37,11 @@ The Control key authenticates commands; it is not a Bluetooth pairing password a
 ### Save and dashboard differences
 
 **Save&Reboot** commits radio switches and staged credentials with the other boot settings, then reboots after
-verified persistence. Disabling a configured radio erases its saved credentials. Credential changes require the
-ordinary save path and cannot use forced save while the host owns USB storage; safely eject first. See the
+verified persistence. In dashboard configuration, disabling a configured radio also erases its saved credentials.
+By contrast, `config set wifi=disabled` or `config set bluetooth=disabled` in the
+[CDC console](console.md#board-configuration) changes only the service switch and preserves saved credentials.
+Credential changes require the ordinary dashboard save path and cannot use forced save while the host owns USB
+storage; safely eject first. See the
 [forced-save policy](../reference/settings.md#forced-save-and-reboot).
 
 Python and .NET manage the selected USB-attached board and do not connect over BLE. Direct supports USB and BLE, with
